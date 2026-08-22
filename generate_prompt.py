@@ -5,8 +5,14 @@ Samples a few task types (task_types.yaml), a length instruction
 (prompt_length.yaml), a persona (personas.txt), a writing style
 (writing_styles.txt), and a handful of domains (domains.txt), renders prompt.j2
 with them, asks Claude to write a prompt (picking a domain and task type from
-the offered ones), and saves the result under prompts/ together with a
-.meta.yaml sidecar recording the sampled parameters.
+the offered ones), and saves the result together with a .meta.yaml sidecar
+recording the sampled parameters.
+
+Each invocation creates a fresh batch directory prompts/batch_NNN/ holding the
+generated prompts, a batch.yaml with the run parameters, and an inputs/
+snapshot of the parameter files as they were at startup (the script reads them
+only once, so mid-run edits never affect a running batch). Prompt numbering is
+global across all batches.
 
 Usage:
     .venv/bin/python generate_prompt.py [-n NUM_PROMPTS] [--num-domains K] [--model MODEL]
@@ -15,7 +21,9 @@ Usage:
 import argparse
 import random
 import re
+import shutil
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,9 +35,26 @@ REPO_ROOT = Path(__file__).resolve().parent
 PROMPTS_DIR = REPO_ROOT / "prompts"
 
 SYSTEM_PROMPT = (
-    "You write prompts for a dataset. Reply with the prompt text only -- "
-    "no preamble, no commentary, and no quotation marks around the prompt."
+    "You write prompts for a dataset. You may use web search and web fetch to "
+    "check details or dig up in-the-weeds material before writing. Your final "
+    "reply must be the prompt text only -- no preamble, no commentary, and no "
+    "quotation marks around the prompt."
 )
+
+WEB_TOOLS = [
+    {"type": "web_search_20260209", "name": "web_search"},
+    {"type": "web_fetch_20260209", "name": "web_fetch"},
+]
+
+# Files snapshotted into each batch's inputs/ directory for provenance.
+INPUT_FILES = [
+    "prompt.j2",
+    "domains.txt",
+    "personas.txt",
+    "writing_styles.txt",
+    "task_types.yaml",
+    "prompt_length.yaml",
+]
 
 
 def load_lines(filename):
@@ -49,13 +74,30 @@ def load_inputs():
     return domains, personas, writing_styles, task_types, length_instructions
 
 
-def next_output_path():
+def create_batch_dir():
+    existing = [
+        int(m.group(1))
+        for p in PROMPTS_DIR.glob("batch_*")
+        if (m := re.fullmatch(r"batch_(\d+)", p.name))
+    ]
+    # batch_000 is reserved for prompts generated before batches existed.
+    n = max(existing, default=0) + 1
+    while True:
+        batch_dir = PROMPTS_DIR / f"batch_{n:03d}"
+        try:
+            batch_dir.mkdir(parents=True)
+            return batch_dir
+        except FileExistsError:
+            n += 1
+
+
+def next_output_path(batch_dir):
     indices = [
         int(m.group(1))
-        for p in PROMPTS_DIR.glob("prompt_*.txt")
+        for p in PROMPTS_DIR.glob("**/prompt_*.txt")
         if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
     ]
-    return PROMPTS_DIR / f"prompt_{max(indices, default=0) + 1:05d}.txt"
+    return batch_dir / f"prompt_{max(indices, default=0) + 1:05d}.txt"
 
 
 def main():
@@ -76,9 +118,14 @@ def main():
     parser.add_argument("--model", default="claude-sonnet-5")
     parser.add_argument(
         "--effort",
-        default="xhigh",
+        default="max",
         choices=["low", "medium", "high", "xhigh", "max"],
-        help="reasoning effort for the generating model (default: xhigh)",
+        help="reasoning effort for the generating model (default: max)",
+    )
+    parser.add_argument(
+        "--no-web-tools",
+        action="store_true",
+        help="don't give the generating model web search/fetch tools",
     )
     args = parser.parse_args()
 
@@ -89,7 +136,28 @@ def main():
     template = env.get_template("prompt.j2")
     client = anthropic.Anthropic()
 
-    PROMPTS_DIR.mkdir(exist_ok=True)
+    batch_dir = create_batch_dir()
+    inputs_dir = batch_dir / "inputs"
+    inputs_dir.mkdir()
+    for name in INPUT_FILES:
+        shutil.copy2(REPO_ROOT / name, inputs_dir / name)
+    (batch_dir / "batch.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "batch": batch_dir.name,
+                "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "model": args.model,
+                "effort": args.effort,
+                "web_tools": not args.no_web_tools,
+                "num_prompts": args.num_prompts,
+                "num_domains": args.num_domains,
+                "num_task_types": args.num_task_types,
+            },
+            sort_keys=False,
+        )
+    )
+    print(f"writing batch to {batch_dir.relative_to(REPO_ROOT)}")
+
     for _ in range(args.num_prompts):
         sampled_task_types = random.sample(
             task_types, k=min(args.num_task_types, len(task_types))
@@ -108,14 +176,35 @@ def main():
             prompt_writing_style=writing_style,
         )
 
-        response = client.messages.create(
-            model=args.model,
-            max_tokens=16000,
-            thinking={"type": "adaptive", "display": "summarized"},
-            output_config={"effort": args.effort},
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": meta_prompt}],
-        )
+        request = {
+            "model": args.model,
+            "max_tokens": 32000,
+            "thinking": {"type": "adaptive", "display": "summarized"},
+            "output_config": {"effort": args.effort},
+            "system": SYSTEM_PROMPT,
+        }
+        if not args.no_web_tools:
+            request["tools"] = WEB_TOOLS
+
+        # Server tools can pause long turns (stop_reason "pause_turn"); resume
+        # by passing the accumulated assistant content back.
+        messages = [{"role": "user", "content": meta_prompt}]
+        assistant_blocks = []
+        try:
+            for _ in range(5):
+                with client.messages.stream(**request, messages=messages) as stream:
+                    response = stream.get_final_message()
+                assistant_blocks.extend(response.content)
+                if response.stop_reason != "pause_turn":
+                    break
+                messages = [
+                    {"role": "user", "content": meta_prompt},
+                    {"role": "assistant", "content": assistant_blocks},
+                ]
+        except anthropic.APIError as e:
+            print(f"warning: API error, skipping this prompt: {e}", file=sys.stderr)
+            time.sleep(30)
+            continue
         if response.stop_reason != "end_turn":
             print(
                 f"warning: skipping response with stop_reason={response.stop_reason!r}",
@@ -123,21 +212,30 @@ def main():
             )
             continue
 
+        # The model sometimes narrates before tool calls ("I'll research...");
+        # only text after the last tool-use/tool-result block is the prompt.
+        cut = -1
+        for i, block in enumerate(assistant_blocks):
+            if block.type not in ("text", "thinking"):
+                cut = i
         prompt_text = "".join(
-            block.text for block in response.content if block.type == "text"
+            block.text for block in assistant_blocks[cut + 1 :] if block.type == "text"
         ).strip()
         reasoning_summary = "\n\n".join(
             block.thinking
-            for block in response.content
+            for block in assistant_blocks
             if block.type == "thinking" and block.thinking
         ).strip()
-        out_path = next_output_path()
+        tool_calls = [b.name for b in assistant_blocks if b.type == "server_tool_use"]
+        out_path = next_output_path(batch_dir)
         out_path.write_text(prompt_text + "\n")
 
         metadata = {
             "prompt_file": out_path.name,
             "model": args.model,
             "effort": args.effort,
+            "web_searches": tool_calls.count("web_search"),
+            "web_fetches": tool_calls.count("web_fetch"),
             "task_types_offered": [t["type"] for t in sampled_task_types],
             "length": length_name,
             "persona": persona,
