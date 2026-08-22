@@ -111,6 +111,7 @@ def main():
         response = client.messages.create(
             model=args.model,
             max_tokens=16000,
+            thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": args.effort},
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": meta_prompt}],
@@ -125,6 +126,11 @@ def main():
         prompt_text = "".join(
             block.text for block in response.content if block.type == "text"
         ).strip()
+        reasoning_summary = "\n\n".join(
+            block.thinking
+            for block in response.content
+            if block.type == "thinking" and block.thinking
+        ).strip()
         out_path = next_output_path()
         out_path.write_text(prompt_text + "\n")
 
@@ -137,6 +143,7 @@ def main():
             "persona": persona,
             "writing_style": writing_style,
             "domains_offered": sampled_domains,
+            "reasoning_summary": reasoning_summary or None,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         out_path.with_suffix(".meta.yaml").write_text(
