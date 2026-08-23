@@ -34,13 +34,6 @@ from jinja2 import Environment, FileSystemLoader
 REPO_ROOT = Path(__file__).resolve().parent
 PROMPTS_DIR = REPO_ROOT / "prompts"
 
-SYSTEM_PROMPT = (
-    "You write prompts for a dataset. You may use web search and web fetch to "
-    "check details or dig up in-the-weeds material before writing. Your final "
-    "reply must be the prompt text only -- no preamble, no commentary, and no "
-    "quotation marks around the prompt."
-)
-
 WEB_TOOLS = [
     {"type": "web_search_20260209", "name": "web_search"},
     {"type": "web_fetch_20260209", "name": "web_fetch"},
@@ -174,6 +167,7 @@ def main():
             length_instruction=length_instruction,
             prompt_persona=persona,
             prompt_writing_style=writing_style,
+            web_tools=not args.no_web_tools,
         )
 
         request = {
@@ -181,7 +175,6 @@ def main():
             "max_tokens": 32000,
             "thinking": {"type": "adaptive", "display": "summarized"},
             "output_config": {"effort": args.effort},
-            "system": SYSTEM_PROMPT,
         }
         if not args.no_web_tools:
             request["tools"] = WEB_TOOLS
