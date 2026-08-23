@@ -23,7 +23,9 @@ import random
 import re
 import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -120,6 +122,12 @@ def main():
         action="store_true",
         help="don't give the generating model web search/fetch tools",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help="how many prompts to generate in parallel (default: 8)",
+    )
     args = parser.parse_args()
 
     domains, personas, writing_styles, task_types, length_instructions = load_inputs()
@@ -143,6 +151,7 @@ def main():
                 "effort": args.effort,
                 "web_tools": not args.no_web_tools,
                 "num_prompts": args.num_prompts,
+                "concurrency": args.concurrency,
                 "num_domains": args.num_domains,
                 "num_task_types": args.num_task_types,
             },
@@ -151,16 +160,16 @@ def main():
     )
     print(f"writing batch to {batch_dir.relative_to(REPO_ROOT)}")
 
-    for _ in range(args.num_prompts):
-        sampled_task_types = random.sample(
-            task_types, k=min(args.num_task_types, len(task_types))
-        )
-        length_name, length_instruction = random.choice(
-            list(length_instructions.items())
-        )
-        persona = random.choice(personas)
-        writing_style = random.choice(writing_styles)
-        sampled_domains = random.sample(domains, k=min(args.num_domains, len(domains)))
+    path_lock = threading.Lock()
+
+    def generate_one(
+        sampled_task_types,
+        length_name,
+        length_instruction,
+        persona,
+        writing_style,
+        sampled_domains,
+    ):
         meta_prompt = template.render(
             domains=sampled_domains,
             task_types=sampled_task_types,
@@ -183,10 +192,13 @@ def main():
         # by passing the accumulated assistant content back.
         messages = [{"role": "user", "content": meta_prompt}]
         assistant_blocks = []
+        input_tokens = output_tokens = 0
         try:
             for _ in range(5):
                 with client.messages.stream(**request, messages=messages) as stream:
                     response = stream.get_final_message()
+                input_tokens += response.usage.input_tokens
+                output_tokens += response.usage.output_tokens
                 assistant_blocks.extend(response.content)
                 if response.stop_reason != "pause_turn":
                     break
@@ -197,13 +209,13 @@ def main():
         except anthropic.APIError as e:
             print(f"warning: API error, skipping this prompt: {e}", file=sys.stderr)
             time.sleep(30)
-            continue
+            return
         if response.stop_reason != "end_turn":
             print(
                 f"warning: skipping response with stop_reason={response.stop_reason!r}",
                 file=sys.stderr,
             )
-            continue
+            return
 
         # The model sometimes narrates before tool calls ("I'll research...");
         # only text after the last tool-use/tool-result block is the prompt.
@@ -220,8 +232,10 @@ def main():
             if block.type == "thinking" and block.thinking
         ).strip()
         tool_calls = [b.name for b in assistant_blocks if b.type == "server_tool_use"]
-        out_path = next_output_path(batch_dir)
-        out_path.write_text(prompt_text + "\n")
+        # Writing the .txt reserves the number, so both happen under the lock.
+        with path_lock:
+            out_path = next_output_path(batch_dir)
+            out_path.write_text(prompt_text + "\n")
 
         metadata = {
             "prompt_file": out_path.name,
@@ -229,6 +243,8 @@ def main():
             "effort": args.effort,
             "web_searches": tool_calls.count("web_search"),
             "web_fetches": tool_calls.count("web_fetch"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "task_types_offered": [t["type"] for t in sampled_task_types],
             "length": length_name,
             "persona": persona,
@@ -241,7 +257,30 @@ def main():
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
         offered = " / ".join(t["type"] for t in sampled_task_types)
-        print(f"[{offered} | {length_name}] -> {out_path.relative_to(REPO_ROOT)}")
+        print(
+            f"[{offered} | {length_name}] -> {out_path.relative_to(REPO_ROOT)}",
+            flush=True,
+        )
+
+    samples = [
+        (
+            random.sample(task_types, k=min(args.num_task_types, len(task_types))),
+            *random.choice(list(length_instructions.items())),
+            random.choice(personas),
+            random.choice(writing_styles),
+            random.sample(domains, k=min(args.num_domains, len(domains))),
+        )
+        for _ in range(args.num_prompts)
+    ]
+    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+        futures = [executor.submit(generate_one, *sample) for sample in samples]
+        try:
+            for future in as_completed(futures):
+                future.result()
+        except BaseException:
+            # On ctrl-C or an unexpected error, don't start queued prompts.
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
 
 
 if __name__ == "__main__":
