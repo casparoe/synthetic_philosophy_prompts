@@ -41,6 +41,20 @@ WEB_TOOLS = [
     {"type": "web_fetch_20260209", "name": "web_fetch"},
 ]
 
+# Older tool versions (no dynamic filtering) for models that predate the
+# _20260209 ones, e.g. Haiku 4.5.
+LEGACY_WEB_TOOLS = [
+    {"type": "web_search_20250305", "name": "web_search"},
+    {"type": "web_fetch_20250910", "name": "web_fetch"},
+]
+
+
+def uses_legacy_api(model):
+    """Whether the model predates the 4.6-generation API, meaning no adaptive
+    thinking (manual budget_tokens instead), no output_config.effort, and no
+    dynamic-filtering web tools. E.g. Haiku 4.5."""
+    return not re.search(r"(fable|mythos|opus|sonnet)-(5|4-[678])", model)
+
 # Files snapshotted into each batch's inputs/ directory for provenance.
 INPUT_FILES = [
     "prompt.j2",
@@ -130,6 +144,16 @@ def main():
     )
     args = parser.parse_args()
 
+    legacy = uses_legacy_api(args.model)
+    # effort only exists on 4.6+ models; on older ones we send a fixed
+    # thinking budget instead and record effort as null.
+    effort = None if legacy else args.effort
+    if legacy:
+        print(
+            f"note: {args.model} predates adaptive thinking/effort; using "
+            "budget_tokens thinking and older web tool versions"
+        )
+
     domains, personas, writing_styles, task_types, length_instructions = load_inputs()
     env = Environment(
         loader=FileSystemLoader(REPO_ROOT), trim_blocks=True, lstrip_blocks=True
@@ -148,7 +172,7 @@ def main():
                 "batch": batch_dir.name,
                 "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "model": args.model,
-                "effort": args.effort,
+                "effort": effort,
                 "web_tools": not args.no_web_tools,
                 "num_prompts": args.num_prompts,
                 "concurrency": args.concurrency,
@@ -182,11 +206,20 @@ def main():
         request = {
             "model": args.model,
             "max_tokens": 32000,
-            "thinking": {"type": "adaptive", "display": "summarized"},
-            "output_config": {"effort": args.effort},
         }
+        if legacy:
+            request["thinking"] = {"type": "enabled", "budget_tokens": 16000}
+            # Without this, legacy models can't think after a tool call, so
+            # post-search planning spills into visible text blocks (and hence
+            # into the saved prompt). Adaptive thinking has this built in.
+            request["extra_headers"] = {
+                "anthropic-beta": "interleaved-thinking-2025-05-14"
+            }
+        else:
+            request["thinking"] = {"type": "adaptive", "display": "summarized"}
+            request["output_config"] = {"effort": args.effort}
         if not args.no_web_tools:
-            request["tools"] = WEB_TOOLS
+            request["tools"] = LEGACY_WEB_TOOLS if legacy else WEB_TOOLS
 
         # Server tools can pause long turns (stop_reason "pause_turn"); resume
         # by passing the accumulated assistant content back.
@@ -240,7 +273,7 @@ def main():
         metadata = {
             "prompt_file": out_path.name,
             "model": args.model,
-            "effort": args.effort,
+            "effort": effort,
             "web_searches": tool_calls.count("web_search"),
             "web_fetches": tool_calls.count("web_fetch"),
             "input_tokens": input_tokens,
