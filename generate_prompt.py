@@ -239,8 +239,12 @@ def main():
                     {"role": "user", "content": meta_prompt},
                     {"role": "assistant", "content": assistant_blocks},
                 ]
-        except anthropic.APIError as e:
-            print(f"warning: API error, skipping this prompt: {e}", file=sys.stderr)
+        except Exception as e:
+            # Broad on purpose: transport errors (e.g. the burst of broken
+            # connections when the machine wakes from sleep) aren't always
+            # wrapped in anthropic.APIError, and a single escaped exception
+            # would abort the whole run.
+            print(f"warning: error, skipping this prompt: {e!r}", file=sys.stderr)
             time.sleep(30)
             return
         if response.stop_reason != "end_turn":
