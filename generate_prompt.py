@@ -109,6 +109,29 @@ def next_output_path(batch_dir):
     return batch_dir / f"prompt_{max(indices, default=0) + 1:05d}.txt"
 
 
+def extract_output(assistant_blocks):
+    """Split accumulated assistant blocks into prompt text, reasoning
+    summary, and server tool calls.
+
+    The model sometimes narrates before tool calls ("I'll research...");
+    only text after the last tool-use/tool-result block is the prompt.
+    """
+    cut = -1
+    for i, block in enumerate(assistant_blocks):
+        if block.type not in ("text", "thinking"):
+            cut = i
+    prompt_text = "".join(
+        block.text for block in assistant_blocks[cut + 1 :] if block.type == "text"
+    ).strip()
+    reasoning_summary = "\n\n".join(
+        block.thinking
+        for block in assistant_blocks
+        if block.type == "thinking" and block.thinking
+    ).strip()
+    tool_calls = [b.name for b in assistant_blocks if b.type == "server_tool_use"]
+    return prompt_text, reasoning_summary, tool_calls
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-n", "--num-prompts", type=int, default=1)
@@ -254,21 +277,7 @@ def main():
             )
             return
 
-        # The model sometimes narrates before tool calls ("I'll research...");
-        # only text after the last tool-use/tool-result block is the prompt.
-        cut = -1
-        for i, block in enumerate(assistant_blocks):
-            if block.type not in ("text", "thinking"):
-                cut = i
-        prompt_text = "".join(
-            block.text for block in assistant_blocks[cut + 1 :] if block.type == "text"
-        ).strip()
-        reasoning_summary = "\n\n".join(
-            block.thinking
-            for block in assistant_blocks
-            if block.type == "thinking" and block.thinking
-        ).strip()
-        tool_calls = [b.name for b in assistant_blocks if b.type == "server_tool_use"]
+        prompt_text, reasoning_summary, tool_calls = extract_output(assistant_blocks)
         # Writing the .txt reserves the number, so both happen under the lock.
         with path_lock:
             out_path = next_output_path(batch_dir)
