@@ -410,6 +410,7 @@ def main():
                     next_pending[cid] = state
                 elif message.stop_reason == "end_turn":
                     finalize(cid, state)
+                    state["blocks"] = []  # release memory; 10k-scale rounds add up
                     finalized += 1
                 else:
                     print(
