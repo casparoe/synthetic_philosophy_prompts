@@ -2,18 +2,25 @@
 """Generate synthetic philosophy prompts via an OpenAI-compatible endpoint.
 
 For self-hosted models, e.g. llama.cpp's llama-server. Same sampling,
-inputs, and outputs as generate_prompt.py, but there are no web tools (the
-template renders without that paragraph) and no Anthropic-specific request
-features. Reasoning that arrives inline as <think>...</think> (llama-server
-with --reasoning-format none) or in a reasoning_content field goes into the
-sidecar and is stripped from the saved prompt.
+inputs, and outputs as generate_prompt.py. Reasoning that arrives inline as
+<think>...</think> (llama-server with --reasoning-format none) or in a
+reasoning_content field goes into the sidecar and is stripped from the
+saved prompt.
+
+With --web-tools, the model gets web_search (DuckDuckGo via ddgs) and
+web_fetch (httpx + trafilatura) as client-executed function calls, looped
+until the model stops calling tools -- a poor man's version of the server
+tools the Anthropic runs get. Requires llama-server to be launched with
+--jinja so tool calls are parsed. Only the final assistant message becomes
+the prompt, so mid-loop narration is dropped for free.
 
 Usage:
-    .venv/bin/python generate_prompt_oai.py -n 50 \
+    .venv/bin/python generate_prompt_oai.py -n 50 --web-tools \
         --base-url http://127.0.0.1:8088 --model qwen3.8-27b
 """
 
 import argparse
+import json
 import random
 import re
 import shutil
@@ -24,7 +31,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 import httpx
+import trafilatura
 import yaml
+from ddgs import DDGS
 from jinja2 import Environment, FileSystemLoader
 
 from generate_prompt import (
@@ -36,6 +45,83 @@ from generate_prompt import (
 )
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+
+MAX_TOOL_ROUNDS = 8
+FETCH_CHAR_LIMIT = 6000
+
+WEB_TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web. Returns titles, URLs, and snippets "
+            "of the top results. Use only when the prompt genuinely requires "
+            "real source material you are not certain of. Snippets are not "
+            "reliable for verbatim quotation -- to quote a passage exactly, "
+            "follow up with web_fetch on a result.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": "Fetch a web page by URL and return its main text "
+            "content (truncated). Use for reading a specific page, e.g. to "
+            "quote a passage verbatim.",
+            "parameters": {
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            },
+        },
+    },
+]
+
+# DuckDuckGo dislikes bursts; serialize searches across worker threads.
+search_lock = threading.Lock()
+
+
+def run_web_search(query):
+    with search_lock:
+        results = DDGS().text(query, max_results=5)
+        time.sleep(1.5)
+    if not results:
+        return "No results."
+    return "\n\n".join(
+        f"[{i + 1}] {r.get('title', '')}\n{r.get('href', '')}\n{r.get('body', '')}"
+        for i, r in enumerate(results)
+    )
+
+
+def run_web_fetch(url):
+    response = httpx.get(
+        url, timeout=20.0, follow_redirects=True,
+        headers={"User-Agent": "Mozilla/5.0 (research script)"},
+    )
+    response.raise_for_status()
+    text = trafilatura.extract(response.text) or ""
+    if not text:
+        return "Could not extract text content from that page."
+    if len(text) > FETCH_CHAR_LIMIT:
+        text = text[:FETCH_CHAR_LIMIT] + "\n[truncated]"
+    return text
+
+
+def run_tool(name, arguments):
+    try:
+        args = json.loads(arguments or "{}")
+        if name == "web_search":
+            return run_web_search(args["query"])
+        if name == "web_fetch":
+            return run_web_fetch(args["url"])
+        return f"Unknown tool: {name}"
+    except Exception as e:
+        return f"Tool error: {e!r}"
 
 
 def served_model_name(client):
@@ -59,8 +145,13 @@ def main():
         help="name recorded in the sidecars (llama-server ignores it)",
     )
     parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--max-tokens", type=int, default=12288)
+    parser.add_argument("--max-tokens", type=int, default=24576)
     parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument(
+        "--web-tools",
+        action="store_true",
+        help="give the model client-executed web search/fetch tools",
+    )
     args = parser.parse_args()
 
     domains, personas, writing_styles, task_types, length_instructions = load_inputs()
@@ -89,7 +180,7 @@ def main():
                 "served_model": served,
                 "temperature": args.temperature,
                 "max_tokens": args.max_tokens,
-                "web_tools": False,
+                "web_tools": args.web_tools,
                 "num_prompts": args.num_prompts,
                 "concurrency": args.concurrency,
                 "num_domains": args.num_domains,
@@ -116,29 +207,119 @@ def main():
             length_instruction=length_instruction,
             prompt_persona=persona,
             prompt_writing_style=writing_style,
-            web_tools=False,
+            web_tools=args.web_tools,
+            strict_quotes=args.web_tools,
         )
-        try:
-            response = client.post(
-                "/v1/chat/completions",
-                json={
+        def attempt_turns():
+            """Run one full tool-round conversation. Returns the final
+            (choice, content, searches, fetches, input_tokens, output_tokens,
+            reasoning_parts), or None if the model was still calling tools
+            after MAX_TOOL_ROUNDS."""
+            messages = [{"role": "user", "content": meta_prompt}]
+            searches = fetches = 0
+            input_tokens = output_tokens = 0
+            reasoning_parts = []
+            for _ in range(MAX_TOOL_ROUNDS):
+                request = {
                     "model": args.model,
-                    "messages": [{"role": "user", "content": meta_prompt}],
+                    "messages": messages,
                     "max_tokens": args.max_tokens,
                     "temperature": args.temperature,
                     "top_p": 0.95,
-                },
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as e:
+                }
+                if args.web_tools:
+                    request["tools"] = WEB_TOOL_SCHEMAS
+                response = client.post("/v1/chat/completions", json=request)
+                response.raise_for_status()
+                data = response.json()
+                choice = data["choices"][0]
+                message = choice["message"]
+                usage = data.get("usage") or {}
+                input_tokens += usage.get("prompt_tokens", 0)
+                output_tokens += usage.get("completion_tokens", 0)
+                content = message.get("content") or ""
+                reasoning_parts += THINK_RE.findall(content)
+                if message.get("reasoning_content"):
+                    reasoning_parts.append(message["reasoning_content"])
+                tool_calls = message.get("tool_calls") or []
+                if not tool_calls:
+                    return (
+                        choice,
+                        content,
+                        searches,
+                        fetches,
+                        input_tokens,
+                        output_tokens,
+                        reasoning_parts,
+                    )
+                # Echo the assistant turn (thinking stripped) plus results.
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": THINK_RE.sub("", content).strip() or None,
+                        "tool_calls": tool_calls,
+                    }
+                )
+                for tool_call in tool_calls:
+                    function = tool_call.get("function") or {}
+                    name = function.get("name", "")
+                    if name == "web_search":
+                        searches += 1
+                    elif name == "web_fetch":
+                        fetches += 1
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.get("id"),
+                            "content": run_tool(name, function.get("arguments")),
+                        }
+                    )
+            return None
+
+        # Connection failures (laptop sleep, tunnel respawns) get retried with
+        # enough patience for qwen_tunnel.sh to bring the forward back; the
+        # whole conversation restarts from scratch on each attempt.
+        result = None
+        for attempt in range(4):
+            try:
+                result = attempt_turns()
+                break
+            except httpx.HTTPError as e:
+                print(
+                    f"warning: request failed ({e.__class__.__name__}), "
+                    f"retry {attempt + 1}/4 in 60s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(60)
+            except Exception as e:
+                print(
+                    f"warning: unexpected error, skipping this prompt: {e!r}",
+                    file=sys.stderr,
+                )
+                return
+        else:
             print(
-                f"warning: request failed, skipping this prompt: {e!r}",
+                "warning: request kept failing, skipping this prompt",
                 file=sys.stderr,
             )
-            time.sleep(5)
             return
-        choice = data["choices"][0]
+        if result is None:
+            print(
+                f"warning: still calling tools after {MAX_TOOL_ROUNDS} rounds, "
+                "skipping this prompt",
+                file=sys.stderr,
+            )
+            return
+        (
+            choice,
+            content,
+            searches,
+            fetches,
+            input_tokens,
+            output_tokens,
+            reasoning_parts,
+        ) = result
         if choice.get("finish_reason") != "stop":
             print(
                 f"warning: skipping response with finish_reason="
@@ -146,9 +327,6 @@ def main():
                 file=sys.stderr,
             )
             return
-        message = choice["message"]
-        content = message.get("content") or ""
-        thinks = THINK_RE.findall(content)
         prompt_text = THINK_RE.sub("", content).strip()
         if "<think>" in prompt_text or not prompt_text:
             print(
@@ -156,9 +334,7 @@ def main():
                 file=sys.stderr,
             )
             return
-        parts = [message.get("reasoning_content") or "", *thinks]
-        reasoning_summary = "\n\n".join(p.strip() for p in parts if p.strip())
-        usage = data.get("usage") or {}
+        reasoning_summary = "\n\n".join(p.strip() for p in reasoning_parts if p.strip())
 
         # Writing the .txt reserves the number, so both happen under the lock.
         with path_lock:
@@ -168,10 +344,10 @@ def main():
             "prompt_file": out_path.name,
             "model": args.model,
             "effort": None,
-            "web_searches": 0,
-            "web_fetches": 0,
-            "input_tokens": usage.get("prompt_tokens", 0),
-            "output_tokens": usage.get("completion_tokens", 0),
+            "web_searches": searches,
+            "web_fetches": fetches,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
             "task_types_offered": [t["type"] for t in sampled_task_types],
             "length": length_name,
             "persona": persona,
