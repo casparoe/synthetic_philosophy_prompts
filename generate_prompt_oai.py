@@ -276,9 +276,9 @@ def main():
                     )
             return None
 
-        # Connection failures (laptop sleep, tunnel respawns) get retried with
-        # enough patience for qwen_tunnel.sh to bring the forward back; the
-        # whole conversation restarts from scratch on each attempt.
+        # Connection failures (server restarts, network blips) get retried
+        # with a minute between attempts; the whole conversation restarts
+        # from scratch on each attempt.
         result = None
         for attempt in range(4):
             try:
