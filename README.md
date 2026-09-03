@@ -5,7 +5,7 @@ conceptual topics — decision theory, formal epistemology, philosophy of scienc
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of twenty-eight genres
+retired physicist, a novelist, a committee member, ...) in one of thirty-one genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 structured-output rankings, ...).
@@ -27,7 +27,7 @@ generate_prompt_batch.py  generator: Anthropic Message Batches API
 generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models)
 prompt.j2                 the meta-prompt template
 domains.txt               371 philosophical domains sampled from
-task_types.yaml           28 prompt genres, with examples and notes
+task_types.yaml           31 prompt genres, with examples and notes
 personas.txt, writing_styles.txt, prompt_length.yaml
 ```
 
