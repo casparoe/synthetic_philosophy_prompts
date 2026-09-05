@@ -26,7 +26,7 @@ generate_prompt.py        generator: Anthropic API, streaming
 generate_prompt_batch.py  generator: Anthropic Message Batches API
 generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models)
 prompt.j2                 the meta-prompt template
-domains.txt               574 philosophical domains sampled from
+domains.txt               590 philosophical domains sampled from
 task_types.yaml           48 prompt genres, with examples and notes
 personas.txt, writing_styles.txt, prompt_length.yaml
 ```
