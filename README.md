@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 23,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 24,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -49,7 +49,7 @@ and verbatim quotation.
 | 000–009, 013–017 | claude-sonnet-5 | Anthropic API, streaming |
 | 010–012 | claude-haiku-4-5 | Anthropic API, streaming |
 | 018–021 | claude-sonnet-5 | Anthropic Message Batches API |
-| 022–027 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
+| 022–028 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the self-hosted runs enforce a strict sourcing rule: the generator may not
@@ -61,7 +61,7 @@ page, and load-bearing titles, dates, and attributions must be verified by searc
 - Every recent batch was swept for meta-commentary leaking into the prompt text
   (generator narration like "Here is the prompt:"); prompts found leaking were
   trimmed or deleted.
-- For several batches (011, 023, 026, 027), all quotations of real texts were
+- For several batches (011, 023, 026, 027, 028), all quotations of real texts were
   verified word-for-word against primary sources, and factual attributions were
   spot-checked; defective prompts were emended or deleted. Deletions are why ID
   numbering has occasional gaps.
@@ -99,7 +99,7 @@ by design (see the table above).
 Claude models. If you use them, you are responsible for complying with
 [Anthropic's terms and usage policies](https://www.anthropic.com/legal) as they
 apply to Claude outputs — in particular, restrictions on using outputs to train
-models that compete with Anthropic. Batches 022–027 were generated with Qwen
+models that compete with Anthropic. Batches 022–028 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0.
 
 ## Reproducing or extending
