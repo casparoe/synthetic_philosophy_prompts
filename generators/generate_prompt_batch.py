@@ -12,20 +12,18 @@ The script only polls between submissions, and all API calls are retried
 on transient failures (laptop sleep/wake cycles break connections). If the
 process dies anyway, everything needed to continue is on disk: rerun with
 
-    .venv/bin/python generate_prompt_batch.py --resume prompts/batch_NNN
+    .venv/bin/python generators/generate_prompt_batch.py --resume prompts/batch_NNN
 
 which re-renders the requests from the batch's own inputs snapshot and
 samples.yaml, skips prompts whose files were already written, and picks up
 from the last submitted round.
 
 Usage:
-    .venv/bin/python generate_prompt_batch.py [-n NUM_PROMPTS]
-    .venv/bin/python generate_prompt_batch.py --resume prompts/batch_NNN
+    .venv/bin/python generators/generate_prompt_batch.py [-n NUM_PROMPTS]
+    .venv/bin/python generators/generate_prompt_batch.py --resume prompts/batch_NNN
 """
 
 import argparse
-import random
-import shutil
 import sys
 import time
 from datetime import datetime, timezone
@@ -33,16 +31,17 @@ from pathlib import Path
 
 import anthropic
 import yaml
-from jinja2 import Environment, FileSystemLoader
 
-from generate_prompt import (
-    INPUT_FILES,
+# The meta-prompt components live in meta_prompt/ at the repo root; put the
+# root on sys.path so they import when this file runs as a script.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from meta_prompt import assemble  # noqa: E402
+from generate_prompt import (  # noqa: E402
     LEGACY_WEB_TOOLS,
     REPO_ROOT,
     WEB_TOOLS,
     create_batch_dir,
     extract_output,
-    load_inputs,
     next_output_path,
     uses_legacy_api,
 )
@@ -151,17 +150,6 @@ def iter_results(client, bid):
     raise RuntimeError(f"results stream for {bid} kept failing")
 
 
-def render_meta_prompt(template, sample, task_types_by_name, length_instructions, web_tools):
-    return template.render(
-        domains=sample["domains_offered"],
-        task_types=[task_types_by_name[name] for name in sample["task_types_offered"]],
-        length_instruction=length_instructions[sample["length"]],
-        prompt_persona=sample["persona"],
-        prompt_writing_style=sample["writing_style"],
-        web_tools=web_tools,
-    )
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-n", "--num-prompts", type=int, default=1)
@@ -194,16 +182,7 @@ def main():
         effort = None if legacy else args.effort
         # Re-render the requests from the batch's own inputs snapshot so the
         # reconstructed user messages match what the server already saw.
-        inputs_dir = batch_dir / "inputs"
-        task_types = yaml.safe_load((inputs_dir / "task_types.yaml").read_text())
-        task_types_by_name = {t["type"]: t for t in task_types}
-        length_instructions = yaml.safe_load(
-            (inputs_dir / "prompt_length.yaml").read_text()
-        )
-        env = Environment(
-            loader=FileSystemLoader(inputs_dir), trim_blocks=True, lstrip_blocks=True
-        )
-        template = env.get_template("prompt.j2")
+        components = assemble.load(batch_dir / "inputs")
         samples = yaml.safe_load((batch_dir / "samples.yaml").read_text())
         done = set()
         for meta_path in batch_dir.glob("prompt_*.meta.yaml"):
@@ -214,9 +193,7 @@ def main():
         for cid, sample in samples.items():
             if cid in done:
                 continue
-            meta_prompt = render_meta_prompt(
-                template, sample, task_types_by_name, length_instructions, web_tools_on
-            )
+            meta_prompt = components.render(sample, web_tools=web_tools_on)
             pending[cid] = {
                 "messages": [{"role": "user", "content": meta_prompt}],
                 "blocks": [],
@@ -240,20 +217,10 @@ def main():
         legacy = uses_legacy_api(args.model)
         effort = None if legacy else args.effort
         web_tools_on = not args.no_web_tools
-        domains, personas, writing_styles, task_types, length_instructions = (
-            load_inputs()
-        )
-        task_types_by_name = {t["type"]: t for t in task_types}
-        env = Environment(
-            loader=FileSystemLoader(REPO_ROOT), trim_blocks=True, lstrip_blocks=True
-        )
-        template = env.get_template("prompt.j2")
+        components = assemble.load()
 
         batch_dir = create_batch_dir()
-        inputs_dir = batch_dir / "inputs"
-        inputs_dir.mkdir()
-        for name in INPUT_FILES:
-            shutil.copy2(REPO_ROOT / name, inputs_dir / name)
+        components.snapshot(batch_dir / "inputs")
         (batch_dir / "batch.yaml").write_text(
             yaml.safe_dump(
                 {
@@ -278,23 +245,8 @@ def main():
         pending = {}
         for i in range(args.num_prompts):
             cid = f"p{i:05d}"
-            sample = {
-                "task_types_offered": [
-                    t["type"]
-                    for t in random.sample(
-                        task_types, k=min(args.num_task_types, len(task_types))
-                    )
-                ],
-                "length": random.choice(list(length_instructions)),
-                "persona": random.choice(personas),
-                "writing_style": random.choice(writing_styles),
-                "domains_offered": random.sample(
-                    domains, k=min(args.num_domains, len(domains))
-                ),
-            }
-            meta_prompt = render_meta_prompt(
-                template, sample, task_types_by_name, length_instructions, web_tools_on
-            )
+            sample = components.sample(args.num_domains, args.num_task_types)
+            meta_prompt = components.render(sample, web_tools=web_tools_on)
             samples[cid] = sample
             pending[cid] = {
                 "messages": [{"role": "user", "content": meta_prompt}],

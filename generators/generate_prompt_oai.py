@@ -15,34 +15,30 @@ tools the Anthropic runs get. Requires llama-server to be launched with
 the prompt, so mid-loop narration is dropped for free.
 
 Usage:
-    .venv/bin/python generate_prompt_oai.py -n 50 --web-tools \
+    .venv/bin/python generators/generate_prompt_oai.py -n 50 --web-tools \
         --base-url http://127.0.0.1:8088 --model qwen3.8-27b
 """
 
 import argparse
 import json
-import random
 import re
-import shutil
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 import trafilatura
 import yaml
 from ddgs import DDGS
-from jinja2 import Environment, FileSystemLoader
 
-from generate_prompt import (
-    INPUT_FILES,
-    REPO_ROOT,
-    create_batch_dir,
-    load_inputs,
-    next_output_path,
-)
+# The meta-prompt components live in meta_prompt/ at the repo root; put the
+# root on sys.path so they import when this file runs as a script.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from meta_prompt import assemble  # noqa: E402
+from generate_prompt import REPO_ROOT, create_batch_dir, next_output_path  # noqa: E402
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
@@ -154,21 +150,14 @@ def main():
     )
     args = parser.parse_args()
 
-    domains, personas, writing_styles, task_types, length_instructions = load_inputs()
-    env = Environment(
-        loader=FileSystemLoader(REPO_ROOT), trim_blocks=True, lstrip_blocks=True
-    )
-    template = env.get_template("prompt.j2")
+    components = assemble.load()
     client = httpx.Client(
         base_url=args.base_url, timeout=httpx.Timeout(3600.0, connect=30.0)
     )
     served = served_model_name(client)  # fails fast if the server is down
 
     batch_dir = create_batch_dir()
-    inputs_dir = batch_dir / "inputs"
-    inputs_dir.mkdir()
-    for name in INPUT_FILES:
-        shutil.copy2(REPO_ROOT / name, inputs_dir / name)
+    components.snapshot(batch_dir / "inputs")
     (batch_dir / "batch.yaml").write_text(
         yaml.safe_dump(
             {
@@ -193,23 +182,11 @@ def main():
 
     path_lock = threading.Lock()
 
-    def generate_one(
-        sampled_task_types,
-        length_name,
-        length_instruction,
-        persona,
-        writing_style,
-        sampled_domains,
-    ):
-        meta_prompt = template.render(
-            domains=sampled_domains,
-            task_types=sampled_task_types,
-            length_instruction=length_instruction,
-            prompt_persona=persona,
-            prompt_writing_style=writing_style,
-            web_tools=args.web_tools,
-            strict_quotes=args.web_tools,
+    def generate_one(sample):
+        meta_prompt = components.render(
+            sample, web_tools=args.web_tools, strict_quotes=args.web_tools
         )
+
         def attempt_turns():
             """Run one full tool-round conversation. Returns the final
             (choice, content, searches, fetches, input_tokens, output_tokens,
@@ -348,35 +325,25 @@ def main():
             "web_fetches": fetches,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "task_types_offered": [t["type"] for t in sampled_task_types],
-            "length": length_name,
-            "persona": persona,
-            "writing_style": writing_style,
-            "domains_offered": sampled_domains,
+            **sample,
             "reasoning_summary": reasoning_summary or None,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         out_path.with_suffix(".meta.yaml").write_text(
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
-        offered = " / ".join(t["type"] for t in sampled_task_types)
+        offered = " / ".join(sample["task_types_offered"])
         print(
-            f"[{offered} | {length_name}] -> {out_path.relative_to(REPO_ROOT)}",
+            f"[{offered} | {sample['length']}] -> {out_path.relative_to(REPO_ROOT)}",
             flush=True,
         )
 
     samples = [
-        (
-            random.sample(task_types, k=min(args.num_task_types, len(task_types))),
-            *random.choice(list(length_instructions.items())),
-            random.choice(personas),
-            random.choice(writing_styles),
-            random.sample(domains, k=min(args.num_domains, len(domains))),
-        )
+        components.sample(args.num_domains, args.num_task_types)
         for _ in range(args.num_prompts)
     ]
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        futures = [executor.submit(generate_one, *sample) for sample in samples]
+        futures = [executor.submit(generate_one, sample) for sample in samples]
         try:
             for future in as_completed(futures):
                 future.result()

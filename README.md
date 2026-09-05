@@ -21,14 +21,17 @@ prompts/batch_NNN/
   prompt_XXXXX.txt        the prompt text (IDs are globally unique across batches)
   prompt_XXXXX.meta.yaml  per-prompt metadata (see below)
   batch.yaml              batch-level settings (model, API, sampling parameters)
-  inputs/                 snapshot of the generator inputs used for this batch
-generate_prompt.py        generator: Anthropic API, streaming
-generate_prompt_batch.py  generator: Anthropic Message Batches API
-generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models)
-prompt.j2                 the meta-prompt template
-domains.txt               590 philosophical domains sampled from
-task_types.yaml           48 prompt genres, with examples and notes
-personas.txt, writing_styles.txt, prompt_length.yaml
+  inputs/                 snapshot of the meta-prompt components used for this batch
+meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
+  assemble.py             samples the components and renders the template (also a CLI)
+  prompt.j2               the meta-prompt template
+  domains.txt             590 philosophical domains sampled from
+  task_types.yaml         48 prompt genres, with examples and notes
+  personas.txt, writing_styles.txt, prompt_length.yaml
+generators/
+  generate_prompt.py        generator: Anthropic API, streaming
+  generate_prompt_batch.py  generator: Anthropic Message Batches API
+  generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models)
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
@@ -40,7 +43,7 @@ the generator's reasoning, and a timestamp.
 
 For each prompt, the pipeline samples a handful of domains, three candidate
 genres, a persona, a writing style, and a length instruction, renders them into
-the meta-prompt (`prompt.j2`), and asks a model to write one prompt. The
+the meta-prompt (`meta_prompt/prompt.j2`), and asks a model to write one prompt. The
 generating models had web search and page fetching available for fact-checking
 and verbatim quotation.
 
@@ -106,10 +109,11 @@ models that compete with Anthropic. Batches 022–028 were generated with Qwen
 
 ```
 pip install -r requirements.txt
+python meta_prompt/assemble.py        # print one sampled meta-prompt (no API needed)
 export ANTHROPIC_API_KEY=...          # for the Anthropic generators
-python generate_prompt.py -n 10
-python generate_prompt_batch.py -n 1000
-python generate_prompt_oai.py -n 10 --web-tools --base-url http://127.0.0.1:8088
+python generators/generate_prompt.py -n 10
+python generators/generate_prompt_batch.py -n 1000
+python generators/generate_prompt_oai.py -n 10 --web-tools --base-url http://127.0.0.1:8088
 ```
 
 The OpenAI-compatible generator expects a llama.cpp `llama-server` (launched with

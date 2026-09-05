@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """Generate synthetic philosophy prompts.
 
-Samples a few task types (task_types.yaml), a length instruction
-(prompt_length.yaml), a persona (personas.txt), a writing style
-(writing_styles.txt), and a handful of domains (domains.txt), renders prompt.j2
-with them, asks Claude to write a prompt (picking a domain and task type from
-the offered ones), and saves the result together with a .meta.yaml sidecar
-recording the sampled parameters.
+Assembles a meta-prompt from the components in meta_prompt/ (a handful of
+domains, a few task types, a length instruction, a persona, and a writing
+style; see meta_prompt/assemble.py), asks Claude to write a prompt (picking a
+domain and task type from the offered ones), and saves the result together
+with a .meta.yaml sidecar recording the sampled parameters.
 
 Each invocation creates a fresh batch directory prompts/batch_NNN/ holding the
 generated prompts, a batch.yaml with the run parameters, and an inputs/
-snapshot of the parameter files as they were at startup (the script reads them
-only once, so mid-run edits never affect a running batch). Prompt numbering is
-global across all batches.
+snapshot of the meta-prompt components as they were at startup (the script
+reads them only once, so mid-run edits never affect a running batch). Prompt
+numbering is global across all batches.
 
 Usage:
-    .venv/bin/python generate_prompt.py [-n NUM_PROMPTS] [--num-domains K] [--model MODEL]
+    .venv/bin/python generators/generate_prompt.py [-n NUM_PROMPTS] [--num-domains K] [--model MODEL]
 """
 
 import argparse
-import random
 import re
-import shutil
 import sys
 import threading
 import time
@@ -31,10 +28,14 @@ from pathlib import Path
 
 import anthropic
 import yaml
-from jinja2 import Environment, FileSystemLoader
 
-REPO_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPTS_DIR = REPO_ROOT / "prompts"
+
+# The meta-prompt components live in meta_prompt/ at the repo root; put the
+# root on sys.path so they import when this file runs as a script.
+sys.path.insert(0, str(REPO_ROOT))
+from meta_prompt import assemble  # noqa: E402
 
 WEB_TOOLS = [
     {"type": "web_search_20260209", "name": "web_search"},
@@ -54,33 +55,6 @@ def uses_legacy_api(model):
     thinking (manual budget_tokens instead), no output_config.effort, and no
     dynamic-filtering web tools. E.g. Haiku 4.5."""
     return not re.search(r"(fable|mythos|opus|sonnet)-(5|4-[678])", model)
-
-# Files snapshotted into each batch's inputs/ directory for provenance.
-INPUT_FILES = [
-    "prompt.j2",
-    "domains.txt",
-    "personas.txt",
-    "writing_styles.txt",
-    "task_types.yaml",
-    "prompt_length.yaml",
-]
-
-
-def load_lines(filename):
-    return [
-        line.strip()
-        for line in (REPO_ROOT / filename).read_text().splitlines()
-        if line.strip()
-    ]
-
-
-def load_inputs():
-    domains = load_lines("domains.txt")
-    personas = load_lines("personas.txt")
-    writing_styles = load_lines("writing_styles.txt")
-    task_types = yaml.safe_load((REPO_ROOT / "task_types.yaml").read_text())
-    length_instructions = yaml.safe_load((REPO_ROOT / "prompt_length.yaml").read_text())
-    return domains, personas, writing_styles, task_types, length_instructions
 
 
 def create_batch_dir():
@@ -177,18 +151,11 @@ def main():
             "budget_tokens thinking and older web tool versions"
         )
 
-    domains, personas, writing_styles, task_types, length_instructions = load_inputs()
-    env = Environment(
-        loader=FileSystemLoader(REPO_ROOT), trim_blocks=True, lstrip_blocks=True
-    )
-    template = env.get_template("prompt.j2")
+    components = assemble.load()
     client = anthropic.Anthropic()
 
     batch_dir = create_batch_dir()
-    inputs_dir = batch_dir / "inputs"
-    inputs_dir.mkdir()
-    for name in INPUT_FILES:
-        shutil.copy2(REPO_ROOT / name, inputs_dir / name)
+    components.snapshot(batch_dir / "inputs")
     (batch_dir / "batch.yaml").write_text(
         yaml.safe_dump(
             {
@@ -209,22 +176,8 @@ def main():
 
     path_lock = threading.Lock()
 
-    def generate_one(
-        sampled_task_types,
-        length_name,
-        length_instruction,
-        persona,
-        writing_style,
-        sampled_domains,
-    ):
-        meta_prompt = template.render(
-            domains=sampled_domains,
-            task_types=sampled_task_types,
-            length_instruction=length_instruction,
-            prompt_persona=persona,
-            prompt_writing_style=writing_style,
-            web_tools=not args.no_web_tools,
-        )
+    def generate_one(sample):
+        meta_prompt = components.render(sample, web_tools=not args.no_web_tools)
 
         request = {
             "model": args.model,
@@ -291,35 +244,25 @@ def main():
             "web_fetches": tool_calls.count("web_fetch"),
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
-            "task_types_offered": [t["type"] for t in sampled_task_types],
-            "length": length_name,
-            "persona": persona,
-            "writing_style": writing_style,
-            "domains_offered": sampled_domains,
+            **sample,
             "reasoning_summary": reasoning_summary or None,
             "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         out_path.with_suffix(".meta.yaml").write_text(
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
-        offered = " / ".join(t["type"] for t in sampled_task_types)
+        offered = " / ".join(sample["task_types_offered"])
         print(
-            f"[{offered} | {length_name}] -> {out_path.relative_to(REPO_ROOT)}",
+            f"[{offered} | {sample['length']}] -> {out_path.relative_to(REPO_ROOT)}",
             flush=True,
         )
 
     samples = [
-        (
-            random.sample(task_types, k=min(args.num_task_types, len(task_types))),
-            *random.choice(list(length_instructions.items())),
-            random.choice(personas),
-            random.choice(writing_styles),
-            random.sample(domains, k=min(args.num_domains, len(domains))),
-        )
+        components.sample(args.num_domains, args.num_task_types)
         for _ in range(args.num_prompts)
     ]
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        futures = [executor.submit(generate_one, *sample) for sample in samples]
+        futures = [executor.submit(generate_one, sample) for sample in samples]
         try:
             for future in as_completed(futures):
                 future.result()
