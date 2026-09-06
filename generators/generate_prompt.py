@@ -2,10 +2,11 @@
 """Generate synthetic philosophy prompts.
 
 Assembles a meta-prompt from the components in meta_prompt/ (a handful of
-domains, a few task types, a length instruction, a persona, and a writing
-style; see meta_prompt/assemble.py), asks Claude to write a prompt (picking a
-domain and task type from the offered ones), and saves the result together
-with a .meta.yaml sidecar recording the sampled parameters.
+domains, a few task types, and additional instructions such as a persona,
+writing style, or length instruction; see meta_prompt/assemble.py), asks
+Claude to write a prompt (picking a domain and task type from the offered
+ones), and saves the result together with a .meta.yaml sidecar recording the
+sampled parameters.
 
 Each invocation creates a fresh batch directory prompts/batch_NNN/ holding the
 generated prompts, a batch.yaml with the run parameters, and an inputs/
@@ -252,8 +253,9 @@ def main():
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
         offered = " / ".join(sample["task_types_offered"])
+        extras = ", ".join(sample["additional_instructions"]) or "none"
         print(
-            f"[{offered} | {sample['length']}] -> {out_path.relative_to(REPO_ROOT)}",
+            f"[{offered} | {extras}] -> {out_path.relative_to(REPO_ROOT)}",
             flush=True,
         )
 

@@ -4,16 +4,20 @@
 The meta-prompt is prompt.j2 rendered with components drawn from the other
 files in this directory:
 
-    domains.txt         philosophical domains; a handful are offered per prompt
-    task_types.yaml     prompt genres with examples and notes; a few are offered
-    prompt_length.yaml  named length instructions; one is chosen
-    personas.txt        author personas; one is chosen
-    writing_styles.txt  writing-style instructions; one is chosen
+    domains.txt                   philosophical domains; a handful are offered
+    task_types.yaml               prompt genres with examples and notes; a few
+                                  are offered
+    additional_instructions.yaml  extra instructions (length, persona, writing
+                                  style, ...) in mutually exclusive groups; each
+                                  group contributes at most one option, with a
+                                  configurable probability
 
 One draw is recorded as a *sample*: which domains and task types were offered
-and which length, persona, and writing style were chosen. Samples use the same
+and which additional instruction each group contributed. Samples use the same
 keys as the per-prompt .meta.yaml sidecars and the samples.yaml files under
-prompts/, so the meta-prompt behind any existing prompt can be rebuilt.
+prompts/, so the meta-prompt behind any existing prompt can be rebuilt from its
+batch's inputs/ snapshot. (Batches before 029 predate
+additional_instructions.yaml; rebuild those with the code at commit 515faeef.)
 
 The generators in generators/ import this module. Run it directly to print one
 assembled meta-prompt:
@@ -21,8 +25,9 @@ assembled meta-prompt:
     .venv/bin/python meta_prompt/assemble.py [--seed N] [--web-tools] [--show-sample]
 
     # the meta-prompt behind an existing prompt, from its batch's snapshot
-    .venv/bin/python meta_prompt/assemble.py --components prompts/batch_028/inputs \
-        --sample prompts/batch_028/prompt_22866.meta.yaml --strict-quotes
+    # (add --web-tools / --strict-quotes to match the batch's settings)
+    .venv/bin/python meta_prompt/assemble.py --components prompts/batch_NNN/inputs \
+        --sample prompts/batch_NNN/prompt_XXXXX.meta.yaml
 """
 
 import argparse
@@ -37,24 +42,21 @@ from jinja2 import Environment, FileSystemLoader
 
 COMPONENTS_DIR = Path(__file__).resolve().parent
 TEMPLATE_FILE = "prompt.j2"
+INSTRUCTIONS_FILE = "additional_instructions.yaml"
 
 # Everything the meta-prompt is built from. The generators copy these into
 # each batch's inputs/ directory for provenance.
 COMPONENT_FILES = [
     TEMPLATE_FILE,
     "domains.txt",
-    "personas.txt",
-    "writing_styles.txt",
     "task_types.yaml",
-    "prompt_length.yaml",
+    INSTRUCTIONS_FILE,
 ]
 
 # The record of one draw, in the order the .meta.yaml sidecars use.
 SAMPLE_KEYS = [
     "task_types_offered",
-    "length",
-    "persona",
-    "writing_style",
+    "additional_instructions",
     "domains_offered",
 ]
 
@@ -64,15 +66,71 @@ def _load_lines(path):
 
 
 @dataclass
+class InstructionGroup:
+    """Mutually exclusive alternatives for one kind of additional instruction
+    (say, the length instructions). At most one is drawn per prompt."""
+
+    probability: float  # chance that the group contributes an instruction at all
+    texts: list  # the alternatives
+    weights: list  # relative draw weights, parallel to texts
+
+
+def _parse_group(spec):
+    if not isinstance(spec, dict) or "options" not in spec:
+        raise ValueError("expected a mapping with options (and optionally probability)")
+    if unknown := set(spec) - {"probability", "options"}:
+        raise ValueError(f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    probability = float(spec.get("probability", 1))
+    if not 0 <= probability <= 1:
+        raise ValueError("probability must be between 0 and 1")
+    if not isinstance(spec["options"], list) or not spec["options"]:
+        raise ValueError("options must be a non-empty list")
+    texts, weights = [], []
+    for option in spec["options"]:
+        if isinstance(option, str):
+            option = {"text": option}
+        if not isinstance(option, dict) or set(option) - {"text", "weight"}:
+            raise ValueError(
+                "each option must be a string or a mapping with text and weight"
+            )
+        text = option.get("text")
+        weight = float(option.get("weight", 1))
+        if not isinstance(text, str) or not text.strip() or weight <= 0:
+            raise ValueError("each option needs non-empty text and a positive weight")
+        texts.append(text.strip())
+        weights.append(weight)
+    return InstructionGroup(probability, texts, weights)
+
+
+def _load_instruction_groups(path):
+    """Read additional_instructions.yaml: a mapping of group name to
+    {options: [...], probability: p}, where an option is a string or a
+    mapping with text and weight. Groups keep the file's order."""
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found (snapshots of batches before 029 predate it; "
+            "rebuild those with the code at commit 515faeef)"
+        )
+    data = yaml.safe_load(path.read_text())
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"{path}: expected a mapping of instruction groups")
+    groups = {}
+    for name, spec in data.items():
+        try:
+            groups[name] = _parse_group(spec)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"{path}: group {name!r}: {e}") from None
+    return groups
+
+
+@dataclass
 class Components:
     """The component files of one directory, read once, plus the template."""
 
     source: Path
     domains: list
-    personas: list
-    writing_styles: list
     task_types: list  # dicts with "type" and optional "examples"/"notes"
-    length_instructions: dict  # name -> instruction text
+    instruction_groups: dict  # group name -> InstructionGroup, in file order
     template: object  # jinja2.Template
 
     def sample(self, num_domains=5, num_task_types=3, rng=random):
@@ -85,9 +143,11 @@ class Components:
                     self.task_types, k=min(num_task_types, len(self.task_types))
                 )
             ],
-            "length": rng.choice(list(self.length_instructions)),
-            "persona": rng.choice(self.personas),
-            "writing_style": rng.choice(self.writing_styles),
+            "additional_instructions": {
+                name: rng.choices(group.texts, weights=group.weights)[0]
+                for name, group in self.instruction_groups.items()
+                if rng.random() < group.probability
+            },
             "domains_offered": rng.sample(
                 self.domains, k=min(num_domains, len(self.domains))
             ),
@@ -102,12 +162,20 @@ class Components:
         web_tools.
         """
         by_name = {t["type"]: t for t in self.task_types}
+        chosen = sample["additional_instructions"]
+        unknown = [name for name in chosen if name not in self.instruction_groups]
+        if unknown:
+            raise ValueError(
+                f"sample has additional instructions from groups unknown to "
+                f"{self.source}: {', '.join(unknown)}"
+            )
         return self.template.render(
             domains=sample["domains_offered"],
             task_types=[by_name[name] for name in sample["task_types_offered"]],
-            length_instruction=self.length_instructions[sample["length"]],
-            prompt_persona=sample["persona"],
-            prompt_writing_style=sample["writing_style"],
+            # In the components' group order, however the sample was stored.
+            additional_instructions=[
+                chosen[name] for name in self.instruction_groups if name in chosen
+            ],
             web_tools=web_tools,
             strict_quotes=strict_quotes,
         )
@@ -130,12 +198,8 @@ def load(directory=COMPONENTS_DIR):
     return Components(
         source=directory,
         domains=_load_lines(directory / "domains.txt"),
-        personas=_load_lines(directory / "personas.txt"),
-        writing_styles=_load_lines(directory / "writing_styles.txt"),
         task_types=yaml.safe_load((directory / "task_types.yaml").read_text()),
-        length_instructions=yaml.safe_load(
-            (directory / "prompt_length.yaml").read_text()
-        ),
+        instruction_groups=_load_instruction_groups(directory / INSTRUCTIONS_FILE),
         template=env.get_template(TEMPLATE_FILE),
     )
 
@@ -182,12 +246,16 @@ def main():
     )
     args = parser.parse_args()
 
-    components = load(args.components)
+    try:
+        components = load(args.components)
+    except (FileNotFoundError, ValueError) as e:
+        parser.error(str(e))
     if args.sample:
         data = yaml.safe_load(Path(args.sample).read_text())
         missing = [key for key in SAMPLE_KEYS if key not in data]
         if missing:
-            parser.error(f"{args.sample} lacks sample keys: {', '.join(missing)}")
+            hint = " (a pre-029 sidecar; see commit 515faeef)" if "length" in data else ""
+            parser.error(f"{args.sample} lacks sample keys: {', '.join(missing)}{hint}")
         sample = {key: data[key] for key in SAMPLE_KEYS}
     else:
         rng = random.Random(args.seed) if args.seed is not None else random

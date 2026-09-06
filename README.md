@@ -27,7 +27,9 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
   prompt.j2               the meta-prompt template
   domains.txt             590 philosophical domains sampled from
   task_types.yaml         48 prompt genres, with examples and notes
-  personas.txt, writing_styles.txt, prompt_length.yaml
+  additional_instructions.yaml
+                          extra instructions (length, persona, writing style) in
+                          mutually exclusive groups, each drawn with a set probability
 generators/
   generate_prompt.py        generator: Anthropic API, streaming
   generate_prompt_batch.py  generator: Anthropic Message Batches API
@@ -35,17 +37,20 @@ generators/
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
-offered during sampling, persona/writing-style/length instructions, token counts,
-the number of web searches and page fetches the generator performed, a summary of
-the generator's reasoning, and a timestamp.
+offered during sampling, the additional instructions drawn (persona, writing style,
+length; recorded as one `additional_instructions` mapping from batch 029 on and as
+separate `length`/`persona`/`writing_style` keys before), token counts, the number
+of web searches and page fetches the generator performed, a summary of the
+generator's reasoning, and a timestamp.
 
 ## How the prompts were generated
 
 For each prompt, the pipeline samples a handful of domains, three candidate
-genres, a persona, a writing style, and a length instruction, renders them into
-the meta-prompt (`meta_prompt/prompt.j2`), and asks a model to write one prompt. The
-generating models had web search and page fetching available for fact-checking
-and verbatim quotation.
+genres, and additional instructions (a persona, a writing style, and a length
+instruction; from batch 029 on, each of these is included with a configurable
+probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
+a model to write one prompt. The generating models had web search and page
+fetching available for fact-checking and verbatim quotation.
 
 | Batches | Model | Notes |
 |---|---|---|
@@ -117,6 +122,7 @@ python generators/generate_prompt_oai.py -n 10 --web-tools --base-url http://127
 ```
 
 The OpenAI-compatible generator expects a llama.cpp `llama-server` (launched with
-`--jinja` so tool calls are parsed) or any other OpenAI-compatible endpoint. Each
-batch directory snapshots the exact inputs used, so past batches remain
-reproducible even as the input lists evolve.
+`--jinja` so tool calls are parsed) or any other OpenAI-compatible endpoint.
+`meta_prompt/additional_instructions.yaml` controls which extra instructions are
+drawn and how often. Each batch directory snapshots the exact inputs used, so past
+batches remain reproducible even as the input lists evolve.

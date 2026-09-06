@@ -333,8 +333,9 @@ def main():
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
         offered = " / ".join(sample["task_types_offered"])
+        extras = ", ".join(sample["additional_instructions"]) or "none"
         print(
-            f"[{offered} | {sample['length']}] -> {out_path.relative_to(REPO_ROOT)}",
+            f"[{offered} | {extras}] -> {out_path.relative_to(REPO_ROOT)}",
             flush=True,
         )
 
