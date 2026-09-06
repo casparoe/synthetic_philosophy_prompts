@@ -56,10 +56,10 @@ fetching available for fact-checking and verbatim quotation.
 
 | Batches | Model | Notes |
 |---|---|---|
-| 000–009, 013–017 | claude-sonnet-5 | Anthropic API, streaming |
+| 000–009, 013–017, 030 | claude-sonnet-5 | Anthropic API, streaming |
 | 010–012 | claude-haiku-4-5 | Anthropic API, streaming |
 | 018–021 | claude-sonnet-5 | Anthropic Message Batches API |
-| 022–028 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
+| 022–029 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the self-hosted runs enforce a strict sourcing rule: the generator may not
@@ -105,11 +105,11 @@ by design (see the table above).
 - **Data** (everything under `prompts/`): Creative Commons Attribution 4.0
   (CC BY 4.0) — see `LICENSE-DATA`.
 
-**Provenance notice.** Most prompts (batches 000–021) are outputs of Anthropic
+**Provenance notice.** Most prompts (batches 000–021 and 030) are outputs of Anthropic
 Claude models. If you use them, you are responsible for complying with
 [Anthropic's terms and usage policies](https://www.anthropic.com/legal) as they
 apply to Claude outputs — in particular, restrictions on using outputs to train
-models that compete with Anthropic. Batches 022–028 were generated with Qwen
+models that compete with Anthropic. Batches 022–029 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0.
 
 ## Reproducing or extending
