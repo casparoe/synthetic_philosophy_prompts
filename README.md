@@ -8,7 +8,7 @@ traditions. Each prompt is written as if by a real person (a grad student, a
 retired physicist, a novelist, a committee member, ...) in one of forty-eight genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
-structured-output rankings, ...).
+rankings, ...).
 
 The prompts are deliberately "in the weeds": specific enough that a model cannot
 answer by regurgitating a canned summary, while remaining answerable for a model
@@ -38,7 +38,8 @@ generators/
 
 Per-prompt metadata includes the generating model, the domains and task types
 offered during sampling, the additional instructions drawn (persona, writing style,
-length; recorded as one `additional_instructions` mapping from batch 029 on and as
+length, and from batch 029 on further groups such as epistemic and output-format
+requests; recorded as one `additional_instructions` mapping from batch 029 on and as
 separate `length`/`persona`/`writing_style` keys before), token counts, the number
 of web searches and page fetches the generator performed, a summary of the
 generator's reasoning, and a timestamp.
@@ -47,8 +48,9 @@ generator's reasoning, and a timestamp.
 
 For each prompt, the pipeline samples a handful of domains, three candidate
 genres, and additional instructions (a persona, a writing style, and a length
-instruction; from batch 029 on, each of these is included with a configurable
-probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
+instruction; from batch 029 on, `meta_prompt/additional_instructions.yaml` defines
+the groups, which also include epistemic requests, output-format requests, and
+prompt-engineering phrasing, each drawn with its own probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
 a model to write one prompt. The generating models had web search and page
 fetching available for fact-checking and verbatim quotation.
 
