@@ -10,7 +10,8 @@ files in this directory:
     additional_instructions.yaml  extra instructions (length, persona, writing
                                   style, ...) in mutually exclusive groups; each
                                   group contributes at most one option, with a
-                                  configurable probability
+                                  configurable probability, optionally led in by
+                                  a preamble shared by the whole group
 
 One draw is recorded as a *sample*: which domains and task types were offered
 and which additional instruction each group contributed. Samples use the same
@@ -73,13 +74,17 @@ class InstructionGroup:
     probability: float  # chance that the group contributes an instruction at all
     texts: list  # the alternatives
     weights: list  # relative draw weights, parallel to texts
+    preamble: str | None = None  # shown ahead of whichever option is drawn
 
 
 def _parse_group(spec):
     if not isinstance(spec, dict) or "options" not in spec:
         raise ValueError("expected a mapping with options (and optionally probability)")
-    if unknown := set(spec) - {"probability", "options"}:
+    if unknown := set(spec) - {"probability", "options", "preamble"}:
         raise ValueError(f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    preamble = spec.get("preamble")
+    if preamble is not None and (not isinstance(preamble, str) or not preamble.strip()):
+        raise ValueError("preamble must be a non-empty string")
     probability = float(spec.get("probability", 1))
     if not 0 <= probability <= 1:
         raise ValueError("probability must be between 0 and 1")
@@ -99,13 +104,16 @@ def _parse_group(spec):
             raise ValueError("each option needs non-empty text and a positive weight")
         texts.append(text.strip())
         weights.append(weight)
-    return InstructionGroup(probability, texts, weights)
+    return InstructionGroup(
+        probability, texts, weights, preamble.strip() if preamble else None
+    )
 
 
 def _load_instruction_groups(path):
     """Read additional_instructions.yaml: a mapping of group name to
-    {options: [...], probability: p}, where an option is a string or a
-    mapping with text and weight. Groups keep the file's order."""
+    {options: [...], probability: p, preamble: text}, where an option is a
+    string or a mapping with text and weight, and probability and preamble
+    are optional. Groups keep the file's order."""
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found (snapshots of batches before 029 predate it; "
@@ -174,11 +182,20 @@ class Components:
             task_types=[by_name[name] for name in sample["task_types_offered"]],
             # In the components' group order, however the sample was stored.
             additional_instructions=[
-                chosen[name] for name in self.instruction_groups if name in chosen
+                self._with_preamble(name, chosen[name])
+                for name in self.instruction_groups
+                if name in chosen
             ],
             web_tools=web_tools,
             strict_quotes=strict_quotes,
         )
+
+    def _with_preamble(self, name, text):
+        """The group's preamble, if it has one, ahead of the drawn option; the
+        option goes on its own indented line so the bullet reads as a lead-in
+        followed by the instruction."""
+        preamble = self.instruction_groups[name].preamble
+        return f"{preamble}\n  {text}" if preamble else text
 
     def snapshot(self, dest_dir):
         """Copy the component files into dest_dir (a batch's inputs/)."""
