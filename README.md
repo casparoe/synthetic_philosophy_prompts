@@ -33,7 +33,7 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
 generators/
   generate_prompt.py        generator: Anthropic API, streaming
   generate_prompt_batch.py  generator: Anthropic Message Batches API
-  generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models)
+  generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
@@ -121,10 +121,16 @@ export ANTHROPIC_API_KEY=...          # for the Anthropic generators
 python generators/generate_prompt.py -n 10
 python generators/generate_prompt_batch.py -n 1000
 python generators/generate_prompt_oai.py -n 10 --web-tools --base-url http://127.0.0.1:8088
+python generators/generate_prompt_oai.py -n 10 --web-tools --base-url https://openrouter.ai/api \
+    --model deepseek/deepseek-v4-pro --api-key-file api_keys/openrouter.txt \
+    --reasoning-effort high --quantizations fp8,bf16,fp16
 ```
 
 The OpenAI-compatible generator expects a llama.cpp `llama-server` (launched with
-`--jinja` so tool calls are parsed) or any other OpenAI-compatible endpoint.
+`--jinja` so tool calls are parsed) or any other OpenAI-compatible endpoint; with
+`--api-key-file` it works against hosted gateways such as OpenRouter, where
+`--quantizations` restricts routing to providers serving the model at the listed
+precisions.
 `meta_prompt/additional_instructions.yaml` controls which extra instructions are
 drawn and how often. Each batch directory snapshots the exact inputs used, so past
 batches remain reproducible even as the input lists evolve.

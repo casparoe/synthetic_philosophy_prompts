@@ -75,13 +75,16 @@ def create_batch_dir():
             n += 1
 
 
-def next_output_path(batch_dir):
+def next_output_path(batch_dir, first_id=1):
+    """Path for the next prompt: one past the highest ID anywhere under
+    prompts/, but never below first_id (to stay clear of a batch that is
+    being generated on another machine at the same time)."""
     indices = [
         int(m.group(1))
         for p in PROMPTS_DIR.glob("**/prompt_*.txt")
         if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
     ]
-    return batch_dir / f"prompt_{max(indices, default=0) + 1:05d}.txt"
+    return batch_dir / f"prompt_{max(max(indices, default=0) + 1, first_id):05d}.txt"
 
 
 def extract_output(assistant_blocks):
