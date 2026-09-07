@@ -49,6 +49,13 @@ from generate_prompt import REPO_ROOT, create_batch_dir, next_output_path  # noq
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
+# Tool-call syntax that some models emit as plain text when they want a tool
+# they are not allowed to call; such a response is not a prompt.
+TOOL_MARKUP_RE = re.compile(
+    r"<｜DSML｜|<\|DSML\||<tool_call|</invoke>|<function_calls?>|<\|im_start\|"
+)
+MIN_PROMPT_WORDS = 15
+
 MAX_TOOL_ROUNDS = 8
 FETCH_CHAR_LIMIT = 6000
 
@@ -235,7 +242,8 @@ def main():
         def attempt_turns():
             """Run one full tool-round conversation. Returns a dict with the
             final choice and content plus the run's counters, or None if the
-            model was still calling tools after MAX_TOOL_ROUNDS."""
+            model still returned tool calls on the last round, when it is told
+            not to use tools."""
             messages = [{"role": "user", "content": meta_prompt}]
             stats = {
                 "searches": 0,
@@ -246,7 +254,7 @@ def main():
                 "providers": set(),
                 "reasoning_parts": [],
             }
-            for _ in range(MAX_TOOL_ROUNDS):
+            for round_no in range(MAX_TOOL_ROUNDS):
                 request = {
                     "model": args.model,
                     "messages": messages,
@@ -256,6 +264,20 @@ def main():
                 }
                 if args.web_tools:
                     request["tools"] = WEB_TOOL_SCHEMAS
+                    if round_no == MAX_TOOL_ROUNDS - 1:
+                        # Last round: tell the model to stop searching and
+                        # forbid further tool calls, so one that keeps searching
+                        # writes the prompt instead of being dropped.
+                        messages.append(
+                            {
+                                "role": "user",
+                                "content": "You have used up the tool budget. Do "
+                                "not call any more tools; write the prompt now "
+                                "from what you already know, following all the "
+                                "instructions above.",
+                            }
+                        )
+                        request["tool_choice"] = "none"
                 if args.reasoning_effort:
                     request["reasoning"] = {"effort": args.reasoning_effort}
                 if openrouter:
@@ -355,6 +377,12 @@ def main():
         if "<think>" in prompt_text or not prompt_text:
             print(
                 "warning: empty or truncated-thinking response, skipping",
+                file=sys.stderr,
+            )
+            return
+        if TOOL_MARKUP_RE.search(prompt_text) or len(prompt_text.split()) < MIN_PROMPT_WORDS:
+            print(
+                "warning: response is tool-call markup or implausibly short, skipping",
                 file=sys.stderr,
             )
             return
