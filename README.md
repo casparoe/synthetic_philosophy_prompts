@@ -34,6 +34,9 @@ generators/
   generate_prompt.py        generator: Anthropic API, streaming
   generate_prompt_batch.py  generator: Anthropic Message Batches API
   generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
+tools/
+  check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
+QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
