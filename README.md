@@ -60,7 +60,7 @@ fetching available for fact-checking and verbatim quotation.
 | 010–012 | claude-haiku-4-5 | Anthropic API, streaming |
 | 018–021 | claude-sonnet-5 | Anthropic Message Batches API |
 | 022–029 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
-| 032 | DeepSeek V4 Pro | OpenRouter, fp8 providers only; client-executed web tools (DuckDuckGo search + page fetch) |
+| 032–033 | DeepSeek V4 Pro | OpenRouter, fp8 providers only; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -112,7 +112,7 @@ Claude models. If you use them, you are responsible for complying with
 [Anthropic's terms and usage policies](https://www.anthropic.com/legal) as they
 apply to Claude outputs — in particular, restrictions on using outputs to train
 models that compete with Anthropic. Batches 022–029 were generated with Qwen
-3.8 27B, an open-weights model released under Apache 2.0, and batch 032 with
+3.8 27B, an open-weights model released under Apache 2.0, and batches 032–033 with
 DeepSeek V4 Pro, an open-weights model released under the MIT license, via
 OpenRouter.
 
