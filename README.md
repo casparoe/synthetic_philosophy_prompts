@@ -1,18 +1,20 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 24,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 35,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of forty-eight genres
+retired physicist, a novelist, a committee member, ...) in one of forty-nine genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 rankings, ...).
 
 The prompts are deliberately "in the weeds": specific enough that a model cannot
 answer by regurgitating a canned summary, while remaining answerable for a model
-without web access. They are prompts only — no responses are included.
+without web access. Alongside the prompts, `responses/` collects responses to
+subsets of them from open-weight models, each with the model's full chain of
+thought (see [Responses](#responses)).
 
 ## Layout
 
@@ -22,6 +24,11 @@ prompts/batch_NNN/
   prompt_XXXXX.meta.yaml  per-prompt metadata (see below)
   batch.yaml              batch-level settings (model, API, sampling parameters)
   inputs/                 snapshot of the meta-prompt components used for this batch
+responses/
+  sets/NAME.txt           a prompt set: the IDs of the prompts a response run answers
+  run_NNN/
+    run.yaml              run-level settings (model, sampling parameters, provider preferences, prompt set)
+    prompt_XXXXX.yaml     one file per response: the prompt as sent, chain of thought, answer, usage
 meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
@@ -34,8 +41,11 @@ generators/
   generate_prompt.py        generator: Anthropic API, streaming
   generate_prompt_batch.py  generator: Anthropic Message Batches API
   generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
+  generate_responses.py     model responses to a prompt set (OpenAI-compatible endpoints, OpenRouter)
 tools/
   check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
+  make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
+  check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
 QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
@@ -70,6 +80,64 @@ on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
 DeepSeek via OpenRouter) enforce a strict sourcing rule: the generator may not
 quote real texts from memory — verbatim quotations must be copied from a fetched
 page, and load-bearing titles, dates, and attributions must be verified by search.
+
+## Responses
+
+`responses/` holds model responses to subsets of the prompts, for experiments that
+need answers rather than questions: distilling a strong open model's reasoning into
+a small one, testing whether a weak judge can tell a weak model's answer from a
+strong model's, and the like. Two rules decide which models are used: the weights
+are open under a license that permits training on the model's outputs (Apache 2.0,
+MIT), and the API returns the model's complete chain of thought rather than a
+summary. That rules out the Claude models most of the prompts were written with.
+
+A *run* answers one prompt set with one model under one sampling configuration.
+`tools/make_prompt_set.py` writes a prompt set (all prompts, some batches, or the
+prompts written by a given generating model, optionally a seeded random sample);
+`generators/generate_responses.py` sends every prompt as a single user message,
+with no system prompt and no tools, and writes one YAML file per response
+(`prompt_XXXXX.yaml`, or `prompt_XXXXX.K.yaml` when a run takes several samples
+per prompt). Reasoning is requested with the model's default budget
+(`reasoning: {enabled: true}` on OpenRouter) unless `run.yaml` says otherwise;
+sampling parameters follow the model card's recommendation for thinking mode and
+are recorded in `run.yaml`; the completion budget is 32,768 tokens unless
+`run.yaml` says otherwise. On OpenRouter, routing is restricted to endpoints that
+declare 8-bit or higher precision (fp8, int8, bf16, fp16), which excludes
+endpoints of undisclosed precision; the endpoint that served each response is in
+its `provider` field. Responses
+that hit that budget are kept with `finish_reason: length` so that consumers can
+decide for themselves. Nothing else is filtered or edited, except that a chain of
+thought a server returns inline as `<think>...</think>` is moved out of the answer,
+and line endings are normalized. `tools/check_run.py` reports coverage,
+truncation, missing reasoning, refusals, lengths, cost, and provider mix for a
+run; findings go to `QUALITY_NOTES.md`.
+
+Each response file has:
+
+| Field | Meaning |
+|---|---|
+| `id`, `sample_index`, `prompt_file` | prompt ID as in `prompts/`; sample index for runs with several responses per prompt; path of the prompt |
+| `model`, `provider`, `generation_id` | model as requested; the OpenRouter provider that served it; OpenRouter's generation ID |
+| `finish_reason`, `native_finish_reason` | `stop` or `length`, as normalized by OpenRouter and as reported by the provider |
+| `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `cost_usd` | usage as reported by the API; completion tokens include the reasoning |
+| `reasoning_detail_types` | OpenRouter's classification of the reasoning: `reasoning.text` is the full text, `reasoning.summary` would be a summary |
+| `created_at` | when the response was generated |
+| `prompt` | exactly what was sent, as the single user message (a `system_prompt` field appears only if a run used one) |
+| `reasoning`, `answer` | the chain of thought as returned, and the visible answer |
+
+Runs so far:
+
+| Run | Model | Prompt set | Responses | Sampling (from the model card) | Notes |
+|---|---|---|---|---|---|
+| run_000 | Qwen3.5-397B-A17B (Apache 2.0) | `open_1k` | 1,000 | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints: DeepInfra, AtlasCloud, GMICloud; one response truncated at the budget |
+| run_001 | Qwen3.5-122B-A10B (Apache 2.0) | `open_1k` | 1,000 | temperature 1.0, top-p 0.95, top-k 20, presence penalty 1.5 | fp8 endpoints: SiliconFlow, AtlasCloud |
+| run_002 | DeepSeek V4 Pro 0813 (MIT) | `open_1k_sub100` | 100 | temperature 1.0, top-p 1.0; reasoning effort high; 65,536-token budget | fp8 endpoints: Baidu, GMICloud |
+
+`open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
+generators (batches 022–029 and 032–033), so that the responses can be used to train
+models without inheriting the Anthropic provenance notice below; `open_1k_sub100` is
+a seed-0 sample of 100 of those. The two Qwen runs follow each model card's own
+recommended thinking-mode settings, which differ between the two models.
 
 ## Quality control and known limitations
 
@@ -107,8 +175,8 @@ by design (see the table above).
 ## Licensing and provenance
 
 - **Code** (generation scripts, template, input lists): MIT — see `LICENSE`.
-- **Data** (everything under `prompts/`): Creative Commons Attribution 4.0
-  (CC BY 4.0) — see `LICENSE-DATA`.
+- **Data** (everything under `prompts/` and `responses/`): Creative Commons
+  Attribution 4.0 (CC BY 4.0) — see `LICENSE-DATA`.
 
 **Provenance notice.** Most prompts (batches 000–021 and 030) are outputs of Anthropic
 Claude models. If you use them, you are responsible for complying with
@@ -117,7 +185,11 @@ apply to Claude outputs — in particular, restrictions on using outputs to trai
 models that compete with Anthropic. Batches 022–029 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0, and batches 032–033 with
 DeepSeek V4 Pro, an open-weights model released under the MIT license, via
-OpenRouter.
+OpenRouter. Responses under `responses/` come only from open-weights models whose
+licenses (Apache 2.0, MIT) place no restrictions on the use of outputs; the model
+behind every record is named in its `model` field and in the run's `run.yaml`. A
+record also contains the prompt it answers, so records answering prompts from the
+Claude-written batches carry the notice above with them.
 
 ## Reproducing or extending
 
@@ -131,6 +203,14 @@ python generators/generate_prompt_oai.py -n 10 --web-tools --base-url http://127
 python generators/generate_prompt_oai.py -n 10 --web-tools --base-url https://openrouter.ai/api \
     --model deepseek/deepseek-v4-pro --api-key-file api_keys/openrouter.txt \
     --reasoning-effort high --quantizations fp8,bf16,fp16
+
+# responses: build a prompt set, answer it with an open-weight model, check the run
+python tools/make_prompt_set.py responses/sets/open_1k.txt --generator-model 'qwen|deepseek' --sample 1000 --seed 0
+python generators/generate_responses.py --prompt-set responses/sets/open_1k.txt \
+    --model qwen/qwen3.5-397b-a17b --temperature 0.6 --top-p 0.95 --top-k 20 \
+    --api-key-file api_keys/openrouter.txt --quantizations fp8,int8,bf16,fp16 \
+    --provider-order deepinfra,parasail --concurrency 16
+python tools/check_run.py responses/run_000
 ```
 
 The OpenAI-compatible generator expects a llama.cpp `llama-server` (launched with
