@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 35,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 58,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -74,10 +74,13 @@ fetching available for fact-checking and verbatim quotation.
 | 018–021 | claude-sonnet-5 | Anthropic Message Batches API |
 | 022–029 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
 | 032–033 | DeepSeek V4 Pro | OpenRouter, fp8 providers only; client-executed web tools (DuckDuckGo search + page fetch) |
+| 034–035 | GLM-5.3 | OpenRouter, fp8 providers only, Z.ai's own endpoint excluded; client-executed web tools (DuckDuckGo search + page fetch) |
+| 036 | Qwen3.8 2.4T-A95B | OpenRouter, fp8 provider only (SiliconFlow); client-executed web tools (DuckDuckGo search + page fetch) |
+| 037 | Muse Spark 1.3 (Meta, proprietary) | OpenRouter, Meta's own endpoint, standard tier; client-executed web tools offered but almost never used |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
-DeepSeek via OpenRouter) enforce a strict sourcing rule: the generator may not
+DeepSeek and GLM via OpenRouter) enforce a strict sourcing rule: the generator may not
 quote real texts from memory — verbatim quotations must be copied from a fetched
 page, and load-bearing titles, dates, and attributions must be verified by search.
 
@@ -132,12 +135,15 @@ Runs so far:
 | run_000 | Qwen3.5-397B-A17B (Apache 2.0) | `open_1k` | 1,000 | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints: DeepInfra, AtlasCloud, GMICloud; one response truncated at the budget |
 | run_001 | Qwen3.5-122B-A10B (Apache 2.0) | `open_1k` | 1,000 | temperature 1.0, top-p 0.95, top-k 20, presence penalty 1.5 | fp8 endpoints: SiliconFlow, AtlasCloud |
 | run_002 | DeepSeek V4 Pro 0813 (MIT) | `open_1k_sub100` | 100 | temperature 1.0, top-p 1.0; reasoning effort high; 65,536-token budget | fp8 endpoints: Baidu, GMICloud |
+| run_003 | DeepSeek R1 0528 (MIT) | `open_1k` | 1,000 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; one of the two R1 checkpoints whose reasoning traces trained Olmo 3 Think |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
 models without inheriting the Anthropic provenance notice below; `open_1k_sub100` is
 a seed-0 sample of 100 of those. The two Qwen runs follow each model card's own
-recommended thinking-mode settings, which differ between the two models.
+recommended thinking-mode settings, which differ between the two models. Run 003
+answers the same set with DeepSeek R1 0528 so that distillation into Olmo 3 can be
+compared against one of that model's original reasoning teachers.
 
 ## Quality control and known limitations
 
@@ -182,10 +188,20 @@ by design (see the table above).
 Claude models. If you use them, you are responsible for complying with
 [Anthropic's terms and usage policies](https://www.anthropic.com/legal) as they
 apply to Claude outputs — in particular, restrictions on using outputs to train
-models that compete with Anthropic. Batches 022–029 were generated with Qwen
-3.8 27B, an open-weights model released under Apache 2.0, and batches 032–033 with
-DeepSeek V4 Pro, an open-weights model released under the MIT license, via
-OpenRouter. Responses under `responses/` come only from open-weights models whose
+models that compete with Anthropic. Batch 037 is the output of Muse Spark 1.3, a
+proprietary Meta model accessed through the standard tier of the
+[Meta Model API](https://developer.meta.com/ai/products/meta-model-api/) via
+OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029 were generated with Qwen
+3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
+032–033 with DeepSeek V4 Pro, an open-weights model released under the MIT license,
+and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
+License (MIT terms plus a security-review condition for model-as-a-service operators
+above $10 billion in annual revenue; it places no restrictions on the use of
+outputs). Batch 036 was generated with Qwen3.8 2.4T-A95B, an open-weights model
+released under the Qwen3.8-Max License (MIT terms plus an attribution requirement
+for products above 100 million monthly users or $20 million in monthly revenue, and
+a separate-license requirement for model-as-a-service businesses above $50 million
+in annual revenue; no restrictions on the use of outputs). Responses under `responses/` come only from open-weights models whose
 licenses (Apache 2.0, MIT) place no restrictions on the use of outputs; the model
 behind every record is named in its `model` field and in the run's `run.yaml`. A
 record also contains the prompt it answers, so records answering prompts from the
@@ -201,8 +217,9 @@ python generators/generate_prompt.py -n 10
 python generators/generate_prompt_batch.py -n 1000
 python generators/generate_prompt_oai.py -n 10 --web-tools --base-url http://127.0.0.1:8088
 python generators/generate_prompt_oai.py -n 10 --web-tools --base-url https://openrouter.ai/api \
-    --model deepseek/deepseek-v4-pro --api-key-file api_keys/openrouter.txt \
-    --reasoning-effort high --quantizations fp8,bf16,fp16
+    --model z-ai/glm-5.3 --api-key-file api_keys/openrouter.txt --reasoning-effort high \
+    --temperature 1.0 --quantizations fp8,bf16,fp16 --provider-order io-net,siliconflow \
+    --provider-ignore z-ai
 
 # responses: build a prompt set, answer it with an open-weight model, check the run
 python tools/make_prompt_set.py responses/sets/open_1k.txt --generator-model 'qwen|deepseek' --sample 1000 --seed 0

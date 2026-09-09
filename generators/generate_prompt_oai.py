@@ -23,12 +23,14 @@ Usage:
     .venv/bin/python generators/generate_prompt_oai.py -n 1000 --web-tools \
         --base-url https://openrouter.ai/api --model deepseek/deepseek-v4-pro \
         --api-key-file api_keys/openrouter.txt --reasoning-effort high \
-        --quantizations fp8,bf16,fp16 --concurrency 32
+        --quantizations fp8,bf16,fp16 --provider-order streamlake,baidu \
+        --provider-ignore z-ai --concurrency 32
 """
 
 import argparse
 import json
 import re
+import socket
 import sys
 import threading
 import time
@@ -50,13 +52,71 @@ from generate_prompt import REPO_ROOT, create_batch_dir, next_output_path  # noq
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
 # Tool-call syntax that some models emit as plain text when they want a tool
-# they are not allowed to call; such a response is not a prompt.
+# they are not allowed to call, or leak into the answer (GLM's
+# <tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>);
+# such a response is not a prompt.
 TOOL_MARKUP_RE = re.compile(
-    r"<｜DSML｜|<\|DSML\||<tool_call|</invoke>|<function_calls?>|<\|im_start\|"
+    r"<｜DSML｜|<\|DSML\||</?tool_call|</?arg_key|</?arg_value|</invoke>"
+    r"|<function_calls?>|<\|im_start\|"
 )
-MIN_PROMPT_WORDS = 15
+MIN_PROMPT_WORDS = 40  # the batch checker flags shorter prompts; real ones are rarer than fragments
+
+# A model sometimes prefaces the prompt with a note on its own procedure; see
+# process_note(). Kept in sync with tools/check_batch.py.
+PROCESS_NOTE_OPENER_RE = re.compile(
+    r"^\s*(?:(?:quick|brief|short) (?:sanity |background |scope )?(?:note|check)"
+    r"|(?:sanity|background|scope) (?:note|check)|note to (?:my)?self)\b",
+    re.I,
+)
+PROCESS_NOTE_TOPIC_RE = re.compile(
+    r"\b(?:prompt|search(?:es)?|fetch(?:ed)?|quot(?:e|ed|ing|ation)|verbatim|citation"
+    r"|attribution|sourc(?:e|ing))\b",
+    re.I,
+)
+PROCESS_NOTE_STRONG_RE = re.compile(
+    r"\b(?:no|without) (?:a )?(?:web )?(?:search|fetch)(?:es)? (?:is |are |was |were )?"
+    r"(?:needed|necessary|required|warranted)\b"
+    r"|\bno tools? (?:is |are )?(?:needed|necessary|required)\b"
+    r"|\b(?:the|this) prompt (?:involves|doesn'?t|does not|needs no|requires no|paraphrases"
+    r"|quotes|cites|leans on|relies on)\b"
+    r"|^\s*(?:here'?s|here is|below is) (?:the|my|your) (?:final )?prompt\b",
+    re.I,
+)
+PROCESS_NOTE_WORDS = 60
+
+
+def process_note(prompt_text):
+    """True if a short opening paragraph is a note on the generator's own
+    procedure ("Quick sanity check: the prompt paraphrases rather than quotes,
+    so no fetch is needed") or a chat preamble ("Here's the prompt:") rather
+    than part of the prompt."""
+    opening = prompt_text.strip().split("\n\n", 1)[0]
+    if len(opening.split()) > PROCESS_NOTE_WORDS:
+        return False
+    return bool(
+        PROCESS_NOTE_STRONG_RE.search(opening)
+        or (PROCESS_NOTE_OPENER_RE.search(opening) and PROCESS_NOTE_TOPIC_RE.search(opening))
+    )
+
+
+# A prompt that role-plays the dataset builder ("I'm building a dataset of
+# prompts and I need one on ...") is the meta-task leaking through.
+DATASET_FRAMING_RE = re.compile(
+    r"dataset of (philosoph[a-z]* )?prompts|prompt for (the|this|your) dataset"
+    r"|prompts? (on|about) philosophical (topics|issues)|building a dataset of"
+    r"|constructing a dataset",
+    re.I,
+)
 
 MAX_TOOL_ROUNDS = 8
+MAX_ATTEMPTS = 4
+
+# TCP keepalive so that a connection killed while the machine sleeps fails
+# within a few minutes of waking instead of hanging until the read timeout.
+KEEPALIVE_OPTIONS = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+for _name, _value in (("TCP_KEEPALIVE", 60), ("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 20), ("TCP_KEEPCNT", 6)):
+    if hasattr(socket, _name):
+        KEEPALIVE_OPTIONS.append((socket.IPPROTO_TCP, getattr(socket, _name), _value))
 FETCH_CHAR_LIMIT = 6000
 
 WEB_TOOL_SCHEMAS = [
@@ -134,6 +194,33 @@ def run_tool(name, arguments):
         return f"Tool error: {e!r}"
 
 
+def generation_defect(result):
+    """Why a finished conversation cannot be saved as a prompt, or None.
+
+    Some hosts return generations cut off without a finish reason; a model
+    may also truncate at the token budget, answer with nothing, or leak
+    tool-call markup. All of these are sampling failures worth retrying."""
+    if result is None:
+        return f"still calling tools after {MAX_TOOL_ROUNDS} rounds"
+    hosts = ",".join(sorted(result["providers"])) or "server"
+    where = f"from {hosts}, ${result['cost']:.3f} spent"
+    finish = result["choice"].get("finish_reason")
+    if finish != "stop":
+        return f"finish_reason={finish!r} ({where})"
+    prompt_text = THINK_RE.sub("", result["content"]).strip()
+    if "<think>" in prompt_text or not prompt_text:
+        return f"empty or truncated-thinking response ({where})"
+    if TOOL_MARKUP_RE.search(prompt_text):
+        return f"tool-call markup in the response ({where})"
+    if len(prompt_text.split()) < MIN_PROMPT_WORDS:
+        return f"implausibly short response ({where})"
+    if process_note(prompt_text):
+        return f"process note before the prompt ({where})"
+    if DATASET_FRAMING_RE.search(prompt_text):
+        return f"dataset-construction framing in the prompt ({where})"
+    return None
+
+
 def served_model_name(client, requested):
     """Name of the loaded model as the server reports it; also verifies
     connectivity. A gateway lists many models, in which case the requested
@@ -176,13 +263,38 @@ def main():
         "of these quantizations, comma-separated, e.g. fp8,bf16,fp16 (default: "
         "any, including 4-bit and undisclosed)",
     )
+    parser.add_argument(
+        "--provider-order",
+        metavar="LIST",
+        help="OpenRouter only: try these providers first, comma-separated "
+        "slugs from OpenRouter's endpoint list, e.g. gmicloud,streamlake; "
+        "others remain as fallbacks",
+    )
+    parser.add_argument(
+        "--provider-ignore",
+        metavar="LIST",
+        help="OpenRouter only: never route to these providers, comma-separated "
+        "slugs, e.g. z-ai (whose own API terms restrict the use of outputs)",
+    )
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--max-tokens", type=int, default=24576)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument(
+        "--top-k",
+        type=int,
+        help="top-k sampling, sent only when given (some model cards ask for 20)",
+    )
+    parser.add_argument(
         "--web-tools",
         action="store_true",
         help="give the model client-executed web search/fetch tools",
+    )
+    parser.add_argument(
+        "--continue-batch",
+        metavar="DIR",
+        help="append -n more prompts to this existing batch instead of starting a "
+        "new one, rendering from the batch's own inputs/ snapshot (for a run that "
+        "was killed, e.g. after the machine slept); other settings should match",
     )
     parser.add_argument(
         "--first-id",
@@ -194,10 +306,19 @@ def main():
     )
     args = parser.parse_args()
     quantizations = args.quantizations.split(",") if args.quantizations else None
+    # OpenRouter routing preferences, sent as the request's provider object.
+    provider = {}
+    if quantizations:
+        provider["quantizations"] = quantizations
+    if args.provider_order:
+        provider["order"] = args.provider_order.split(",")
+    if args.provider_ignore:
+        provider["ignore"] = args.provider_ignore.split(",")
     # OpenRouter reports the cost and the serving provider of each request.
     openrouter = "openrouter.ai" in args.base_url
 
-    components = assemble.load()
+    continuing = Path(args.continue_batch).resolve() if args.continue_batch else None
+    components = assemble.load(continuing / "inputs") if continuing else assemble.load()
     headers = {}
     if args.api_key_file:
         headers["Authorization"] = "Bearer " + Path(args.api_key_file).read_text().strip()
@@ -205,12 +326,26 @@ def main():
         base_url=args.base_url,
         headers=headers,
         timeout=httpx.Timeout(3600.0, connect=30.0),
+        transport=httpx.HTTPTransport(retries=2, socket_options=KEEPALIVE_OPTIONS),
     )
     served = served_model_name(client, args.model)  # fails fast if the server is down
 
-    batch_dir = create_batch_dir()
-    components.snapshot(batch_dir / "inputs")
-    config = {
+    if continuing:
+        batch_dir = continuing
+        config = yaml.safe_load((batch_dir / "batch.yaml").read_text())
+        config.setdefault("continued", []).append(
+            {
+                "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "num_prompts": args.num_prompts,
+                "concurrency": args.concurrency,
+            }
+        )
+        (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
+        print(f"continuing {batch_dir.relative_to(REPO_ROOT)} with {args.num_prompts} more prompts", flush=True)
+    else:
+        batch_dir = create_batch_dir()
+        components.snapshot(batch_dir / "inputs")
+    config = config if continuing else {
         "batch": batch_dir.name,
         "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "api": "openai_compatible",
@@ -220,6 +355,8 @@ def main():
         "reasoning_effort": args.reasoning_effort,
         "quantizations": quantizations,
         "temperature": args.temperature,
+        "top_p": 0.95,
+        "top_k": args.top_k,
         "max_tokens": args.max_tokens,
         "web_tools": args.web_tools,
         "num_prompts": args.num_prompts,
@@ -227,6 +364,10 @@ def main():
         "num_domains": args.num_domains,
         "num_task_types": args.num_task_types,
     }
+    if provider.get("order"):
+        config["provider_order"] = provider["order"]
+    if provider.get("ignore"):
+        config["provider_ignore"] = provider["ignore"]
     if args.first_id > 1:
         config["first_id"] = args.first_id
     (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -252,6 +393,7 @@ def main():
                 "output_tokens": 0,
                 "cost": 0.0,
                 "providers": set(),
+                "generation_ids": [],
                 "reasoning_parts": [],
             }
             for round_no in range(MAX_TOOL_ROUNDS):
@@ -262,6 +404,8 @@ def main():
                     "temperature": args.temperature,
                     "top_p": 0.95,
                 }
+                if args.top_k is not None:
+                    request["top_k"] = args.top_k
                 if args.web_tools:
                     request["tools"] = WEB_TOOL_SCHEMAS
                     if round_no == MAX_TOOL_ROUNDS - 1:
@@ -282,8 +426,8 @@ def main():
                     request["reasoning"] = {"effort": args.reasoning_effort}
                 if openrouter:
                     request["usage"] = {"include": True}
-                if quantizations:
-                    request["provider"] = {"quantizations": quantizations}
+                if provider:
+                    request["provider"] = provider
                 response = client.post("/v1/chat/completions", json=request)
                 response.raise_for_status()
                 data = response.json()
@@ -295,6 +439,8 @@ def main():
                 stats["cost"] += float(usage.get("cost") or 0)
                 if data.get("provider"):
                     stats["providers"].add(data["provider"])
+                if openrouter and data.get("id"):
+                    stats["generation_ids"].append(data["id"])
                 content = message.get("content") or ""
                 stats["reasoning_parts"] += THINK_RE.findall(content)
                 for key in ("reasoning_content", "reasoning"):
@@ -330,62 +476,48 @@ def main():
                     )
             return None
 
-        # Connection failures (server restarts, network blips) get retried
-        # with a minute between attempts; the whole conversation restarts
-        # from scratch on each attempt.
-        result = None
-        for attempt in range(4):
-            try:
-                result = attempt_turns()
-                break
-            except httpx.HTTPError as e:
+        # A failed request (server restart, network blip; a minute's pause
+        # before the next try) or a defective generation (see
+        # generation_defect) is retried, the whole conversation restarting
+        # from scratch; after MAX_ATTEMPTS the prompt is skipped.
+        problem = None
+        for attempt in range(MAX_ATTEMPTS):
+            if problem:
                 print(
-                    f"warning: request failed ({e.__class__.__name__}), "
-                    f"retry {attempt + 1}/4 in 60s",
+                    f"warning: {problem}; retry {attempt}/{MAX_ATTEMPTS - 1}",
                     file=sys.stderr,
                     flush=True,
                 )
+            try:
+                result = attempt_turns()
+            except httpx.HTTPError as e:
+                problem = f"request failed ({e.__class__.__name__})"
                 time.sleep(60)
+                continue
+            except (KeyError, IndexError, TypeError, ValueError) as e:
+                # a 200 response without the expected shape, e.g. a gateway
+                # error object in place of choices
+                problem = f"malformed response ({e!r})"
+                time.sleep(10)
+                continue
             except Exception as e:
                 print(
                     f"warning: unexpected error, skipping this prompt: {e!r}",
                     file=sys.stderr,
+                    flush=True,
                 )
                 return
+            problem = generation_defect(result)
+            if problem is None:
+                break
         else:
             print(
-                "warning: request kept failing, skipping this prompt",
+                f"warning: {problem}; giving up on this prompt",
                 file=sys.stderr,
+                flush=True,
             )
             return
-        if result is None:
-            print(
-                f"warning: still calling tools after {MAX_TOOL_ROUNDS} rounds, "
-                "skipping this prompt",
-                file=sys.stderr,
-            )
-            return
-        choice, content = result["choice"], result["content"]
-        if choice.get("finish_reason") != "stop":
-            print(
-                f"warning: skipping response with finish_reason="
-                f"{choice.get('finish_reason')!r}",
-                file=sys.stderr,
-            )
-            return
-        prompt_text = THINK_RE.sub("", content).strip()
-        if "<think>" in prompt_text or not prompt_text:
-            print(
-                "warning: empty or truncated-thinking response, skipping",
-                file=sys.stderr,
-            )
-            return
-        if TOOL_MARKUP_RE.search(prompt_text) or len(prompt_text.split()) < MIN_PROMPT_WORDS:
-            print(
-                "warning: response is tool-call markup or implausibly short, skipping",
-                file=sys.stderr,
-            )
-            return
+        prompt_text = THINK_RE.sub("", result["content"]).strip()
         reasoning_summary = "\n\n".join(
             p.strip() for p in result["reasoning_parts"] if p.strip()
         )
@@ -406,6 +538,8 @@ def main():
         if openrouter:
             metadata["cost_usd"] = round(result["cost"], 6)
             metadata["providers"] = sorted(result["providers"])
+            # one per round, for auditing costs against OpenRouter's records
+            metadata["generation_ids"] = result["generation_ids"]
         metadata.update(sample)
         metadata["reasoning_summary"] = reasoning_summary or None
         metadata["generated_at"] = datetime.now(timezone.utc).isoformat(

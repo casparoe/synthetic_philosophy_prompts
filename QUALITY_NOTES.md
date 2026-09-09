@@ -38,6 +38,10 @@ re-render from the batch's snapshot; those should simply be zero.
 | 030 | Sonnet 5 (streaming) | 93 | 1.1% | 5.4% | 0% / 0% | classroom-activity example 0, 1 prompt |
 | 032 | DeepSeek V4 Pro (OpenRouter) | 969 | 5.9% | 17.2% | 12.5% / 2.7% | how-to-teach example 0, 10 prompts |
 | 033 | DeepSeek V4 Pro (OpenRouter) | 9,931 | 5.7% | 21.0% | 18.4% / 6.3% | classroom-activity example 0, 106; procedure example 0, 85 |
+| 034 | GLM-5.3 (OpenRouter) | 1,000 | 5.5% | 21.7% | 11.5% / 2.2% | classroom-activity example 0, 11; procedure example 0, 9 |
+| 035 | GLM-5.3 (OpenRouter) | 19,998 | 5.3% | 21.7% | 11.1% / 3.2% | classroom-activity example 0, 230; procedure example 0, 154 |
+| 036 | Qwen3.8 2.4T-A95B (OpenRouter) | 999 | 1.7% | 11.8% | 5.6% / 1.8% | classroom-activity example 0, 7; procedure example 0, 5 |
+| 037 | Muse Spark 1.3 (OpenRouter, Meta) | 1,000 | 0.7% | 4.2% | 20.5% / 5.1% | classroom-activity example 0, 2 prompts |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -46,8 +50,9 @@ what here".
 ## Observations
 
 1. **Echo is mostly a property of the generating model.** Sonnet 5 sits at 1-2%
-   heavy echo, DeepSeek V4 Pro at about 6%, Qwen3.8-27B at about 7%. Within a
-   model the rate is stable across batch sizes (032 vs. 033).
+   heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, DeepSeek V4 Pro
+   and GLM-5.3 at about 6%, Qwen3.8-27B at about 7%.
+   Within a model the rate is stable across batch sizes (032 vs. 033, 034 vs. 035).
 2. **A few examples act as magnets.** For Sonnet it is the extended-warranty
    adjudication example (its closing "adjudicate move by move" formula). For
    DeepSeek it is the classroom-activity example ("tell me what will predictably go
@@ -59,7 +64,8 @@ what here".
    (commit a836f7c7) cut echo from 10% to 6% in a 100-prompt trial, but batch 033,
    generated with it, shows the same heavy-echo rate as batch 032 without it.
 4. **Instruction text gets pasted.** Output-format instructions are copied verbatim
-   into 12-18% of the prompts that draw them, so "lead with your bottom line in the
+   into 6-20% of the prompts that draw them (Qwen3.8 2.4T 6%, GLM-5.3 11%, DeepSeek
+   V4 Pro 18%, Muse Spark 1.3 20%), so "lead with your bottom line in the
    first sentence, with no preamble and no restating of the question" recurs
    hundreds of times. Epistemic requests are copied in 3-6%. Persona and writing
    style are essentially never copied. This is the largest source of repeated
@@ -73,13 +79,26 @@ what here".
    role-played the dataset builder ("I'm building a dataset of philosophy prompts
    and I need one ...": IDs 27747, 28529, 32852) and one dialogue with no request
    (34596). They were deleted before the batch was committed, leaving those IDs
-   unused. A scan of all 34,773 committed prompts found no other dataset framing,
+   unused. Batch 035 lost two prompts the same way: one of the dataset-builder kind
+   (ID 42705) and a 36-word fragment that stopped mid-sentence (ID 56338); the
+   generator now retries dataset framing and anything under 40 words. A scan of all 34,773 committed prompts found no other dataset framing,
    tool-call markup, or request-less dialogues; the only leaks are two batch 009
    prompts (IDs 01002 and 01201) that begin with the line "This is my final
    answer." before an otherwise normal prompt, the leak the template's closing
    paragraph now names explicitly. They are still in place. Batch 033 also lost
    65 of 10,000 generations to empty or errored responses, which the generator
-   skips.
+   skipped; since batch 034 it retries such generations, up to four attempts,
+   instead.
+7. **Process notes before the prompt.** GLM-5.3 sometimes opens with a note on its
+   own procedure ("Quick sanity check before I write this: the prompt involves
+   Aumann's agreement theorem, but doesn't quote any text or lean on specific
+   works/dates, so no search is needed." or just "Here's the prompt:") followed by
+   an otherwise normal prompt: 3 of 1,000 in batch 034 (IDs 35845, 36690, 36769) and
+   8 of 20,000 in batch 035 (IDs 39290, 40479, 42827, 43669, 45653, 46223, 47199,
+   50439). Those openings were removed during curation; the prompts are otherwise
+   untouched. The checker flags a short opening paragraph of this kind and the
+   OpenAI-compatible generator retries it (it caught several more during the second
+   half of batch 035). No Sonnet, Qwen, or DeepSeek batch shows the pattern.
 
 ## Possible mitigations (not done)
 
@@ -97,7 +116,36 @@ what here".
   StreamLake to Novita and Alibaba; Novita's endpoint both charged more and
   returned about twice the output tokens per prompt. All hosts were fp8 as
   requested. A provider order (StreamLake, Baidu first) would have kept the cost
-  near the projection.
+  near the projection. The generator has had `--provider-order` and
+  `--provider-ignore` flags since batch 034; both are recorded in `batch.yaml`.
+- Hosts differ in reliability, not only in price. In the first attempt at batch
+  034, Io Net returned 20 of 95 GLM-5.3 generations cut off without a finish reason,
+  the failure GMICloud showed for DeepSeek V4 Pro in response run 002. That attempt
+  (73 prompts, about $1.20) was discarded; the batch was regenerated with SiliconFlow
+  first, which served 989 of the 1,000 prompts without a single defective
+  generation, at a mean of $0.018 per prompt. Batch 035 (20,000 prompts, $360, the
+  same mean) ran 98.5% on SiliconFlow at concurrency 48; 95 defective generations
+  (mostly SiliconFlow mid-stream errors and empty responses, about $0.80 in total)
+  were retried and none was lost.
+- Sleep stalls a run. Batch 035 stalled for 80 minutes when the laptop lid was
+  closed on battery: `caffeinate -i` prevents idle sleep only, the in-flight
+  requests died, and the generator waited for its read timeout. The run was killed
+  and finished with `--continue-batch prompts/batch_035`, which appends to an
+  existing batch from its own snapshot and records the continuation in
+  `batch.yaml`; the generator now also sets TCP keepalive so dead connections fail
+  within minutes of a wake.
+- Qwen3.8 2.4T-A95B (batch 036) cost $36 per 1,000 prompts, twice GLM-5.3, because
+  its thinking cannot be disabled and averages 7,200 output tokens per prompt; it
+  also ran at only six prompts a minute at concurrency 24 and used about two web
+  searches per prompt. SiliconFlow is its only host with a disclosed precision.
+  That endpoint ends tool-calling rounds without a finish reason, and OpenRouter
+  records those rounds at zero cost, so the sidecar costs (which are OpenRouter's
+  own figures) understate list price for prompts that used tools.
+- Muse Spark 1.3 (batch 037, proprietary, standard tier, effort high) cost $23 per
+  1,000 prompts at 24 prompts a minute, with no defective generation in 1,000. It
+  has the lowest example echo of any generator but the highest instruction copying,
+  writes the shortest prompts (median 314 words), and used the web tools once in
+  1,000 prompts, so its prompts contain no fetched quotations.
 
 ## Responses
 
@@ -149,13 +197,14 @@ parameters and 8-bit-or-better endpoints only.
 | run_000 | Qwen3.5-397B-A17B | 1,000 | 1 | 0 | 1 (the truncated one) | 4,400 / 6,273 | 63% | $13.52 |
 | run_001 | Qwen3.5-122B-A10B | 1,000 | 0 | 0 | 0 | 4,477 / 6,637 | 64% | $10.10 |
 | run_002 | DeepSeek V4 Pro 0813, effort high | 100 | 0 | 0 (five regenerated, see above) | 0 | 12,423 / 19,717 | 86% | $4.15 |
+| run_003 | DeepSeek R1 0528 | 1,000 | 0 | 0 | 0 | 2,605 / 3,809 | 37% | $5.89 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
 knowing about: on prompts that ask for the model's own credences or intuitions,
 both Qwen models sometimes open with "As an AI, I do not hold beliefs" and then
 answer anyway (4 of 1,000 for 397B, 3 of 1,000 for 122B, none of 100 for
-DeepSeek). The repeated-phrase flags were refrains, rubric rows, and table cells.
+DeepSeek V4 Pro, none of 1,000 for R1 0528). The repeated-phrase flags were refrains, rubric rows, and table cells.
 The one truncated response (run 000, prompt 32085, on Solomonoff induction) spent
 its whole 32,768-token budget reasoning and never reached an answer; it is kept
 with `finish_reason: length` and an empty `answer`.

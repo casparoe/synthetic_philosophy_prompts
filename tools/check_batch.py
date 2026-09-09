@@ -3,7 +3,8 @@
 
 Checks: counts and skips, cost / token / provider mix (where recorded), ID
 collisions across all batches, leak scans (tool-call markup, chat preambles,
-dataset-construction framing, prompts wrapped in quotes), example echo (prompts
+process notes before the prompt, dataset-construction framing, prompts wrapped
+in quotes), example echo (prompts
 reusing wording from the task-type examples they were shown), verbatim copying
 of the additional-instruction text, near-duplicate prompt pairs, the most
 repeated eight-word phrases, and whether every sidecar re-renders from the
@@ -33,6 +34,43 @@ PREAMBLE = re.compile(r"^(here is (the|your|my|a) prompt|here's (the|your|my|a) 
 META = re.compile(r"dataset of (philosoph[a-z]* )?prompts|prompt for (the|this|your) dataset"
                   r"|prompts? (on|about) philosophical (topics|issues)|building a dataset of|constructing a dataset", re.I)
 MIN_WORDS = 40
+
+# A note on the generator's own procedure placed before the prompt; kept in
+# sync with generators/generate_prompt_oai.py.
+PROCESS_NOTE_OPENER_RE = re.compile(
+    r"^\s*(?:(?:quick|brief|short) (?:sanity |background |scope )?(?:note|check)"
+    r"|(?:sanity|background|scope) (?:note|check)|note to (?:my)?self)\b",
+    re.I,
+)
+PROCESS_NOTE_TOPIC_RE = re.compile(
+    r"\b(?:prompt|search(?:es)?|fetch(?:ed)?|quot(?:e|ed|ing|ation)|verbatim|citation"
+    r"|attribution|sourc(?:e|ing))\b",
+    re.I,
+)
+PROCESS_NOTE_STRONG_RE = re.compile(
+    r"\b(?:no|without) (?:a )?(?:web )?(?:search|fetch)(?:es)? (?:is |are |was |were )?"
+    r"(?:needed|necessary|required|warranted)\b"
+    r"|\bno tools? (?:is |are )?(?:needed|necessary|required)\b"
+    r"|\b(?:the|this) prompt (?:involves|doesn'?t|does not|needs no|requires no|paraphrases"
+    r"|quotes|cites|leans on|relies on)\b"
+    r"|^\s*(?:here'?s|here is|below is) (?:the|my|your) (?:final )?prompt\b",
+    re.I,
+)
+PROCESS_NOTE_WORDS = 60
+
+
+def process_note(prompt_text):
+    """True if a short opening paragraph is a note on the generator's own
+    procedure ("Quick sanity check: the prompt paraphrases rather than quotes,
+    so no fetch is needed") or a chat preamble ("Here's the prompt:") rather
+    than part of the prompt."""
+    opening = prompt_text.strip().split("\n\n", 1)[0]
+    if len(opening.split()) > PROCESS_NOTE_WORDS:
+        return False
+    return bool(
+        PROCESS_NOTE_STRONG_RE.search(opening)
+        or (PROCESS_NOTE_OPENER_RE.search(opening) and PROCESS_NOTE_TOPIC_RE.search(opening))
+    )
 
 
 def grams(text, n=8):
@@ -107,6 +145,8 @@ def main():
     flag = lambda rx, where=lambda t: t: [name for name, t in texts.items() if rx.search(where(t))]
     print("tool-call markup:", flag(MARKUP)[:5] or "none")
     print("chat preamble at start:", flag(PREAMBLE, lambda t: t.strip())[:5] or "none")
+    notes = [name for name, t in texts.items() if process_note(t)]
+    print("process note before the prompt:", notes[:8] or "none")
     print("dataset-construction framing leaked:", flag(META)[:8] or "none")
     quoted = [name for name, t in texts.items() if t.strip().startswith(('"', "“")) and t.strip().endswith(('"', "”"))]
     print("wrapped in quotes / pure dialogue:", quoted[:5] or "none")
