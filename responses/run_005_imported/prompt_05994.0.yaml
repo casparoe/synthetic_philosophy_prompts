@@ -1,0 +1,363 @@
+id: prompt_05994
+sample_index: 0
+prompt_file: prompts/batch_019/prompt_05994.txt
+model: deepseek-ai/DeepSeek-R1-0528
+provider: self-hosted vLLM (imported, see run.yaml)
+generation_id: null
+finish_reason: stop
+native_finish_reason: null
+prompt_tokens: 559
+completion_tokens: 6614
+reasoning_tokens: null
+cost_usd: null
+reasoning_detail_types: null
+created_at: '2026-09-10T17:40:23+00:00'
+imported_from: r1_full2x_v1
+source_id: synthphil_prompt_05994
+prompt: |-
+  I spend most of my working life writing Haskell, and I tinker with Scheme on weekends for fun. A while back I fell down a rabbit hole reading about the Curry-Howard correspondence: the idea that types are propositions and well-typed programs are proofs of them. That half of the story felt almost obvious once it clicked — implication lines up with function types, conjunction with pairs, disjunction with tagged unions, and plain typed lambda calculus lines up neatly with intuitionistic natural deduction. What threw me was the extension to classical logic. As far as I can tell, if you want a closed term of the type corresponding to Peirce's Law, ((P -> Q) -> P) -> P, or something that behaves like a witness for double-negation elimination (¬¬P -> P), ordinary lambda calculus can't give you one — you need to add a control operator like call/cc. I've used call/cc and exception-style escapes in real code, so I understand perfectly well what it does mechanically: it reifies "the rest of the computation" as a value you can invoke later, letting a piece of code jump back to an earlier point and overwrite the answer it had already committed to there.
+
+  What I don't have is any intuition for why that particular operational trick is the computational shadow of classical reasoning specifically, rather than of some other control-flow effect entirely. I raised this with a friend who is finishing a philosophy PhD, and her answer — roughly, that a non-constructive proof doesn't need to know in advance which disjunct of a disjunction is true, only to be able to correct itself once it finds out — sounded right, but it fell apart as soon as I tried to restate it in terms of what call/cc actually does to the call stack at runtime. I understand, at a surface level, why intuitionists refuse double-negation elimination: a proof of P ∨ ¬P is supposed to tell you which disjunct holds, and a proof of ¬¬P is supposed to be convertible into an actual proof of P, and classical logic just helps itself to both without doing that work. What I can't get to click is the bridge from that proof-theoretic complaint to the specific runtime behavior of a control operator.
+
+  Could you walk me through, at an intuitive rather than a fully formalized level, why "accepting excluded middle / double-negation elimination" cashes out computationally as "being able to abandon a computation partway through and resume an earlier point with a new value," as opposed to some other computational effect entirely — so that the correspondence, which I believe is originally due to Timothy Griffin, stops feeling like a neat historical accident and starts feeling like it had to come out that way?
+reasoning: |-
+  We are exploring why classical logic corresponds to control operators like call/cc in computation. The Curry-Howard correspondence normally links intuitionistic logic to simply-typed lambda calculus. However, to get classical logic, we need to add control operators. 
+
+  The key point: classical logic allows reasoning by contradiction (double-negation elimination: ¬¬P → P) and excluded middle (P ∨ ¬P). These are not provable in intuitionistic logic because they require a non-constructive step. 
+
+  In computation, the idea is that when we have a proof of ¬¬P (i.e., a function that takes a proof of ¬P and produces a contradiction), we want to extract a proof of P. But how? The trick is to use a control operator to "jump out" of a computation that assumes ¬P and then reaches a contradiction, so that we can return a proof of P even though we never constructed one directly.
+
+  Let's focus on double-negation elimination (DNE): 
+      ¬¬P → P
+
+  In types, ¬P is represented as P → ⊥ (where ⊥ is an uninhabited type, representing falsehood). So ¬¬P is (P → ⊥) → ⊥.
+
+  We need a function of type ((P → ⊥) → ⊥) → P.
+
+  How can we implement this? We cannot construct a value of type P from nothing. The only input we have is a function f of type (P → ⊥) → ⊥. We must use f to get our hands on a P. 
+
+  The idea: we are going to set up a context where we pretend we are going to produce a P, but if at any point we are forced to actually produce it and we cannot, we use the fact that we have a way to get a contradiction (from f) to escape and then ... what? 
+
+  This is where call/cc comes in. The control operator allows us to capture the current continuation (the rest of the computation that expects a P) and use it to build a function of type P → ⊥ (which is exactly what f needs). Then, when we apply f to that function, we get ⊥ (a contradiction). But then we can use that contradiction to abort the current computation and jump back to the point where we were going to produce a P, and instead of having to produce a P, we can use the fact that we got a contradiction to ... well, it's a bit tricky.
+
+  Here is the code for DNE using call/cc:
+
+      dne :: ((P -> ⊥) -> ⊥) -> P
+      dne f = call/cc (\k -> ...)
+
+  But let's think step by step.
+
+  We are going to create a continuation that expects to be given a P. But note: we don't have a P. So we are going to use the function f to get a contradiction by giving it a function that, if it were ever called with a P, would jump back to the point of the call/cc and return that P. However, the function f is going to be applied to that continuation (which is a function of type P->⊥, because the continuation expects a P and then uses it to complete the computation, but note: the continuation in call/cc is actually a function that, when called, aborts the current computation and returns its argument as the result of the call/cc).
+
+  Wait, let's clarify the type of call/cc. In Scheme, call/cc has type:
+
+      call/cc :: ((a -> ⊥) -> a) -> a
+
+  But actually, in the context of classical logic, we often use a slightly different view. Griffin's insight was that the type of call/cc is exactly the type of Peirce's law:
+
+      Peirce: ((P → Q) → P) → P
+
+  If we set Q = ⊥, then we get:
+
+      ((P → ⊥) → P) → P
+
+  which is almost DNE? Actually, note that DNE is ((P→⊥)→⊥)→P. So they are different. But note that in intuitionistic logic, we can prove:
+
+      (¬¬P → P) ↔ Peirce's law
+
+  So they are equivalent.
+
+  Now, let's implement DNE using call/cc. Actually, we can do:
+
+      dne f = call/cc (\k -> f (k ...))
+
+  But wait, k is the continuation, which has type P -> ⊥? No, in the standard type of call/cc in classical Curry-Howard, we have:
+
+      call/cc :: ((P -> ⊥) -> ⊥) -> P   ??? 
+
+  But actually, the type of call/cc is often given as:
+
+      call/cc :: ((P -> ⊥) -> P) -> P   -- Peirce's law
+
+  But we want DNE: ((P->⊥)->⊥) -> P.
+
+  How to get DNE from Peirce? We can actually derive DNE from Peirce's law. So let's implement DNE using an operator that gives us Peirce's law.
+
+  Alternatively, we can think of call/cc as having a type that is more general. But for simplicity, let's assume we have an operator that gives us Peirce's law:
+
+      pierce :: ((P -> Q) -> P) -> P
+
+  Now, we can derive DNE:
+
+      dne :: ((P -> ⊥) -> ⊥) -> P
+      dne f = pierce (\k -> ...)
+
+  What should we do? We have f of type (P->⊥)->⊥, and we have k of type P->Q (but note that in the body of pierce, we are in a context where we are trying to produce a P, and we are given a function k that if we had a P we could jump to the point of the pierce call and return that P). But wait, we don't have a Q? Actually, in the derivation of DNE from Peirce, we set Q = ⊥.
+
+  So:
+
+      pierce :: ((P -> ⊥) -> P) -> P
+
+  Now, we have f :: (P->⊥)->⊥. We want to produce a P. We can do:
+
+      dne f = pierce (\k -> ...)
+
+  Here, k has type P->⊥. So if we had a value of type P, we could apply k to it and get ⊥. But note: we are inside the function passed to pierce, and we have to produce a P. However, we don't have a P. But we do have f. So:
+
+      dne f = pierce (\k -> f k)
+
+  Why? Let's check the types:
+
+      pierce expects a function g :: (P -> ⊥) -> P.
+      We are giving it: \k -> f k, which has type (P->⊥) -> P? 
+          k :: P->⊥, and f k :: ⊥? 
+
+  Wait, that doesn't work because we need to produce a P, but we have ⊥ (which we can use to derive anything, but we are in a non-contradiction world?).
+
+  But note: in a call/cc setting, the continuation k is not just a function that we call and then it returns a value. It is an escape: when we call k with a value of type P, it immediately aborts the current computation and returns that P as the result of the entire call to pierce.
+
+  So the idea is: we are going to build a function k of type P->⊥. But note: in classical logic, we are allowed to use k to "jump" out of the current context. So we define:
+
+      dne f = pierce (\k -> f k)
+
+  But wait, the type of k is P->⊥? And we pass k to f, which expects a function of type P->⊥. Then f k will have type ⊥. So we are in the body of the function passed to pierce and we have to produce a P, but we have a value of type ⊥ (which is impossible). However, the trick is that we never actually run the f k part? Or do we?
+
+  Actually, we do run it, but when we run it, we are going to use k. And k is an escape. So when f calls k with a value of type P, then k will immediately return that P as the result of the entire pierce call. But note: k is built to be the continuation of the current computation. 
+
+  Let me try to write this in a more operational way.
+
+  Imagine we are computing:
+
+      dne f = call/cc (λk -> f k)
+
+  But note: the call/cc we are using has the type of Peirce's law, so:
+
+      call/cc :: ((P -> ⊥) -> P) -> P
+
+  So:
+
+      dne f = call/cc (\k -> f k)
+
+  Step by step:
+
+  1. We call call/cc, which captures the current continuation (which is the rest of the computation that expects a P to be returned from call/cc) and binds it to k. The type of k is P -> ⊥? Why ⊥? Because the entire call/cc expression has type P, so the continuation k is a function that, if called with a value of type P, would return that value as the result of the call/cc. But note: the type of the continuation in the call/cc implementation is actually P -> Answer, where Answer is the type of the entire program? Or in a typed setting, we use ⊥ to represent an arbitrary return type? Actually, in the classical setting, we often use a fixed answer type.
+
+  But let me use a concrete representation. In a language with call/cc, we can define:
+
+      (define (dne f)
+        (call/cc (lambda (k)
+                  (f k))))
+
+  But note: f is a function that takes a function (of one argument) and returns a value. The type of f is (P -> ⊥) -> ⊥. And k is a continuation. The continuation k has type P -> ⊥? Actually, in Scheme, continuations can be called with one argument and then they throw that value back to the point of the call/cc. But the type ⊥ is represented by the fact that the continuation never returns? 
+
+  Let me try to see what happens when we run this:
+
+      (dne f) = (call/cc (lambda (k) (f k)))
+
+  When we run call/cc, it captures the current continuation (which is the rest of the program that is waiting for the result of dne) and passes it to the lambda. So k is bound to that continuation. Then we call f with k. Now, f is a function that expects a function (which we call g) of type P->⊥. We are passing k, which is a continuation. Now, if f ever calls k with a value of type P, then that call will immediately return that value as the result of the entire call/cc, i.e., as the result of dne. But note: the type of k is P -> ⊥? In a sense, because when you call k, it never returns to the current context (it jumps). So from the perspective of the function f, when it calls (k x) (where x is of type P), then the call to k does not return (it aborts the current computation and returns x to the continuation of the call/cc). Therefore, from the perspective of f, the call (k x) never returns, so it has the effect of ⊥ (absurdity). 
+
+  So f is passed a function g = k, which has the behavior of being a function from P to ⊥: if you give it a P, it never returns (it aborts the current computation and returns that P at the top level). 
+
+  Now, what is f? f is a function of type (P->⊥) -> ⊥. So it must call its argument (which is k) with a value of type P? But wait, f doesn't have a value of type P. How can it call k? It can't. So then what? Then f must do something else? But note: f is supposed to return ⊥. How can it return ⊥? It can't, unless it calls k. 
+
+  So the only way for f to return is to call k. But if it calls k, then we jump out and return the argument to k. So we have two possibilities:
+
+  1. f never calls k: then the call (f k) would never return? But then we would be stuck. But note: the function f is supposed to return ⊥, which is an absurdity. So if f doesn't call k, then we have a non-termination or an error? But in classical logic, we assume that f must call k because it must produce a contradiction. 
+
+  2. f does call k with some value x of type P: then that call to k immediately returns x as the result of the call/cc, and hence as the result of dne.
+
+  Therefore, the function dne uses the following trick: it sets up a context in which it provides to f a function k that, if called, will immediately return the value passed to k as the result of dne. Then, if f ever uses that function (which it must, because f is a function that must produce a contradiction from having a function of type P->⊥), then that call to k will be the escape that returns the value.
+
+  But note: f is given a function that can turn any P into ⊥ (by jumping out). So to use that function, f must have a P to pass to it. But f doesn't have a P? So how can it call k? 
+
+  This is the crux: f is a function that is supposed to take a function (P->⊥) and produce ⊥. So it must do something with that function. The only thing it can do is to call it with a P. But it doesn't have a P. So it must somehow produce a P? 
+
+  Wait, that seems circular. 
+
+  But note: in the classical setting, we are allowed to use proof by contradiction. The function f is a proof of ¬¬P. It says: "if you give me a proof that P leads to a contradiction, then I will produce a contradiction". But we are building a proof of P. We say: "suppose we had a way to turn a P into a contradiction (i.e., we are in a world where we assume ¬P) then we can get a contradiction, so P must hold". 
+
+  In the computation, we set up a scenario where we tell f: "here is a function k: if you ever get a P, you can call k and it will lead to a contradiction (by jumping out and returning that P, thereby falsifying the assumption that we are in a ¬P world)". But then, how does f use k? It must produce a P to pass to k. But wait, f doesn't have a P. 
+
+  This is where the self-referential trick happens. The only way for f to produce a contradiction is to call k. But to call k, it needs a P. It doesn't have one. So it must get one from somewhere. 
+
+  But note: we are building a term of type P. We are not constructing a P directly. We are setting up a situation where the only way for the computation to proceed is for f to call k with a P. But f doesn't have a P. So how can it? 
+
+  This is the magic of classical logic: we are allowed to use the fact that we are going to get a P by the very act of f calling k. In other words, when f calls k, it provides the P that it needs. But where does that P come from? It comes from the fact that f is forced to provide it when it calls k. 
+
+  But this seems circular. 
+
+  Let me try to think of an example. Suppose P is the type of natural numbers. And we have a function f that is a proof of ¬¬P. That is, f is a function that takes a function g: Nat -> ⊥ and must produce ⊥. How can we get a natural number? 
+
+  We set up:
+
+      dne f = call/cc (\k -> f k)
+
+  Now, when we run this, we capture the current continuation as k. Then we call f with k. Now, f must do something. Suppose f is defined as:
+
+      f = λ(g : Nat -> ⊥) -> ... 
+
+  In the body, f must call g with some natural number. But which one? It doesn't have one. So it must get one from somewhere. But note: in the context, there is no natural number available. 
+
+  This is where we see that the function f must have been built in a context where it could get a natural number? Or it must be that the function f is itself non-constructive. 
+
+  But in classical logic, we accept that there are non-constructive proofs. For example, we might have:
+
+      f = λg -> g 42   -- but then we need to have 42 available? 
+
+  But how did we get 42? 
+
+  Alternatively, we might have:
+
+      f = λg -> let x = ... in g x
+
+  But then we need to produce x.
+
+  The point is: the function f is a classical proof of ¬¬P. It might be that the only way it can produce ⊥ is by calling g with an arbitrary P that it doesn't actually have? That doesn't make sense.
+
+  I think the issue is that in the classical setting, we are allowed to assume that P is true or false arbitrarily. The proof of ¬¬P might be:
+
+      Assume ¬P (i.e., assume we have a function g: P->⊥). Then we want to show a contradiction. But we also know that we are trying to prove P, and we have a way to do so by calling g? 
+
+  But wait, we are in a proof of ¬¬P, which is a proof that ¬P leads to contradiction. How do we get the contradiction? We can use the fact that we have a way to produce P? 
+
+  This is the circularity: we are using dne to prove P, and the proof of ¬¬P is built using the fact that we are going to eventually produce P? 
+
+  This is why it's non-constructive.
+
+  In the computational setting, the only way to break the deadlock is for the function f to have a side effect: it must call the continuation k with a value that it manufactures out of thin air? But that's not possible in a pure setting. 
+
+  So what happens? The function f must be built in a context where it has access to a P? But then it wouldn't need to call k. 
+
+  Alternatively, f might be built using the same trick. 
+
+  But let me try a concrete example in Scheme. Suppose P is the type of integers? But in Scheme, we don't have types, so we can try:
+
+      (define (f k)
+        (k 42))   ; so f is a function that calls k with 42
+
+      (dne f)  ; returns 42
+
+  So here, dne f = (call/cc (lambda (k) (f k))) = (f k) where k is the current continuation. Then f calls (k 42), which immediately returns 42 as the result of call/cc, so dne returns 42.
+
+  So it works. 
+
+  But where did the 42 come from? It came from the function f. So f must have been defined to have that 42. 
+
+  But what if f doesn't have a specific value? For example, what if f is defined as:
+
+      (define (f k)
+        (k (something)))
+
+  But then we need to define (something). 
+
+  Alternatively, f might be defined as:
+
+      (define (f k)
+        (if (condition)
+            (k 42)
+            (k 43)))
+
+  So then dne f would return either 42 or 43, depending on the condition.
+
+  But note: the function f is the one that chooses which value to pass to k. 
+
+  In classical logic, the proof of ¬¬P might be: "assume ¬P, then we can show that P holds by ...". How? By using non-constructive means. For example, by excluded middle: either P holds or it doesn't. If it holds, then we have a contradiction with ¬P? Not exactly. 
+
+  I think the key is that in classical logic, we can prove ¬¬P without having a direct proof of P. For example, we might have a proof by cases: if P then P, and if not P then we get a contradiction (from ¬P and the fact that we have ¬¬P) so P holds. But that uses excluded middle. 
+
+  So the function f might be built using excluded middle. 
+
+  In computation, the control operator gives us the ability to jump out of a computation, and it is exactly this ability that allows us to "manufacture" a value of type P: by jumping out at the moment we decide what it is. 
+
+  But the value has to be provided by the function f. So the function f is the one that provides the witness for P, but only when it is forced to by the need to produce a contradiction. 
+
+  The intuition is that the function f, when given the continuation k, can use k to return a value of type P at any time, thereby providing the witness. And since f must produce a contradiction, it must eventually call k with some P. 
+
+  Therefore, the computational content of double-negation elimination is that we set up a trap: we give f a way to escape (by providing a value of type P) and then f is forced to use that escape to provide the value. 
+
+  So the reason why call/cc is the computational counterpart is because it allows us to capture the continuation and pass it to f, so that f can decide when to jump out and what value to return. 
+
+  This is different from other control effects because it specifically captures the entire remaining computation (up to the call/cc) and reifies it as a function that can be called to abort the current computation and return a value. 
+
+  In summary:
+
+  - The classical rule of double-negation elimination says: if you can show that the assumption of ¬P leads to a contradiction, then P holds.
+  - Computationally, we interpret this as: we are going to set up a context in which we assume that we have a way to escape by providing a P (which would be a witness for P) and then we pass that escape function to f (the proof of ¬¬P). 
+  - The function f, to produce a contradiction, must call the escape function with a witness for P. 
+  - When it does, we jump out and return that witness.
+
+  This is exactly what call/cc allows: capturing the escape continuation and passing it to a function that may use it to return early.
+
+  Without call/cc, we would be stuck: we would have to actually run f and get a ⊥, but then we could derive anything, including a P. However, that would require actually running f to completion and getting a ⊥. But with call/cc, we don't run f to completion; we interrupt it when it calls the continuation.
+
+  So the operational behavior matches the classical reasoning: we don't need to construct a P; we only need to show that the assumption of ¬P (which is represented by having a function that can turn a P into ⊥) leads to a contradiction. And the way we show that contradiction is by using that function to escape with a P, which then becomes the witness.
+
+  This is why it's specifically call/cc (or more generally, control operators that capture continuations) that correspond to classical logic.
+answer: |-
+  To bridge the gap between classical logic's non-constructive principles (like double-negation elimination) and the operational behavior of control operators like `call/cc`, let's walk through an intuitive analogy. Imagine you're solving a puzzle, and classical logic corresponds to a "strategy" that allows backtracking or overriding previous decisions—a computational "undo button." The key insight is that **classical proofs can retroactively correct themselves** when they encounter contradictions, and control operators mechanize this by manipulating the program's control flow.
+
+  ### 1. **The Non-Constructive Core of Classical Logic**
+     - **Intuitionistic view**: A proof of `P` must explicitly construct a witness for `P`. If you prove `¬¬P` ("it's absurd that `P` is false"), you still lack a concrete `P`—you only know that assuming `¬P` leads to absurdity.
+     - **Classical view**: `¬¬P` *entitles you to `P`* without constructing it. How? By exploiting the fact that *if `P` were false, you'd get a contradiction*—so `P` must be "out there" implicitly. But this doesn't specify *how* to find `P`.
+
+  Operationally, this resembles a program that says:  
+  > *"I don't know `P` yet, but if I temporarily assume `¬P` and hit a dead end, I'll escape back to an earlier point and declare `P` true—using the contradiction as a signal to backtrack."*
+
+  ### 2. **Control Operators as the "Undo Button"**
+     - `call/cc` (call-with-current-continuation) reifies the program's **future computation** into a function (a continuation `k`). Calling `k` "rewinds" execution to the point where `call/cc` was called, replacing its result with a new value.
+     - **Why this fits classical logic**:  
+       - `¬¬P` is a function `f : (P → ⊥) → ⊥` ("given any proof that `P` implies absurdity, I can derive absurdity").  
+       - To turn this into `P`, you need to extract a value from `f`'s behavior. But `f` only produces `⊥`—a dead end.  
+       - Solution: **Trick `f` into revealing `P` by giving it an "emergency escape"**—a continuation that, if called, jumps back in time with a `P`.
+
+  ### 3. **Operational Intuition: Trapping the Contradiction**
+     Consider implementing double-negation elimination:  
+     ```haskell
+     dne :: ((P -> ⊥) -> ⊥) -> P
+     dne f = callCC (\k -> ...)
+     ```
+     - `callCC` captures the **current continuation `k`** (the rest of the program expecting a `P`).  
+     - `k` has type `P -> ⊥` *from `f`'s perspective* because if `f` calls `k` with a value `x : P`, the program jumps back, aborts the current path, and returns `x` as the result of `dne`—never returning to `f`.  
+     - You pass `k` to `f`: `f k`.  
+       - **If `f` calls `k`** (e.g., `k x`):  
+         - The call to `k` instantly "rewinds" to the `callCC` call.  
+         - `dne` immediately returns `x`, ignoring the rest of `f`.  
+         - *Operationally*: `f` is interrupted mid-execution.  
+       - **If `f` never calls `k`**:  
+         - `f` must produce `⊥` (absurdity), which is impossible—so it *must* call `k` to yield a value.  
+
+     This forces `f` to **supply a `P`** to the escape hatch `k` when it realizes it can't complete. The continuation `k` acts as:  
+     > *"Here’s a function that, if you call it with a `P`, will immediately resolve the whole computation to that `P`. Use it when you hit absurdity."*
+
+  ### 4. **Why Not Other Effects?**
+     - **Exceptions**: Throwing an exception aborts computation but doesn't "resume from an earlier state." You can't return to the continuation with a new value.  
+     - **State/Mutable Variables**: These track changes over time but don't rewind history.  
+     - **Continuations uniquely fit**: They capture and **reinstate past program states**, directly modeling classical logic's ability to "change the past" upon contradiction.  
+
+     Classical reasoning says:  
+     > *"If assuming `¬P` leads to absurdity, then `P` holds—and I retroactively **always had a proof of `P`**."*  
+
+     `call/cc` mirrors this: When `f` calls `k`, it *overwrites the future* by supplying a `P` to the past (the continuation point).
+
+  ### 5. **Peirce's Law and the "Big Picture"**
+     Peirce's law `((P → Q) → P) → P` is the type of `call/cc` under Curry-Howard. Operationally:  
+     - `callCC` takes a function `h : (P → Q) → P`.  
+     - It gives `h` a continuation `k : P → Q` (which, if called, aborts `h` and returns a `P`).  
+     - `h` must return a `P`, but it can "cheat" by calling `k` with a `P` it fabricates (e.g., via non-constructive reasoning).  
+
+     **Why this had to be**:  
+     - Curry-Howard maps proofs to programs. Classical logic's non-constructiveness requires "computational time travel" to resolve contradictions.  
+     - Continuations are the *only* control primitive that can **save and restore arbitrary program states**, making them the inevitable computational counterpart.
+
+  ### Summary
+  Classical logic's `¬¬P → P` asserts: *"If `P` can't be false, it must be true—and I don't need to know how."* Computationally, `call/cc` realizes this by:  
+  1. Capturing the current continuation (a snapshot of the "future work").  
+  2. Passing it as an escape function to the proof of `¬¬P`.  
+  3. Forcing that proof to **use the escape to supply `P`** when it hits a contradiction—rewinding execution and installing `P` as the answer.  
+
+  This isn't an accident; it's because classical proofs *procedurally correspond* to programs that backtrack, and continuations are the universal tool for backtracking. The "why" clicks when you see that manipulating the call stack is *exactly* how a runtime system would simulate retroactive correction—the essence of non-constructive reasoning.  
+
+  For deep dives:  
+  - Griffin's paper tying `call/cc` to Peirce's law.  
+  - The **λμ-calculus** (Parigot) for first-class continuations as classical proofs.  
+  - **Filinski’s symmetric λ-calculus** for classical logic with control operators.

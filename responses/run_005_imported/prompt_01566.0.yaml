@@ -1,0 +1,233 @@
+id: prompt_01566
+sample_index: 0
+prompt_file: prompts/batch_009/prompt_01566.txt
+model: deepseek-ai/DeepSeek-R1-0528
+provider: self-hosted vLLM (imported, see run.yaml)
+generation_id: null
+finish_reason: stop
+native_finish_reason: null
+prompt_tokens: 147
+completion_tokens: 4570
+reasoning_tokens: null
+cost_usd: null
+reasoning_detail_types: null
+created_at: '2026-09-10T17:40:23+00:00'
+imported_from: r1_full2x_v1
+source_id: synthphil_prompt_01566
+prompt: |-
+  So at work I'm building a loan-default risk model, and legal wants it to be 'fair' across two demographic groups. I made sure a 0.8 score means the same real default rate for both groups. Then a coworker noticed that among people who'd have actually paid back the loan, we reject way more of one group then the other. I tried fixing that by adjusting the cutoff per group, but it broke the first property again. My manager thinks this just needs a smarter model, but im starting to suspect no model can have both properties at once unless the groups happen to have identical default rates to begin with. Am I missing something, or is my manager wrong that this is fixable?
+reasoning: |-
+  We are dealing with two fairness properties:
+  1. **Equalized Odds (or similar)**: At a score of 0.8, the default rate is the same for both groups. This is sometimes called "calibration" or "predictive parity".
+  2. **Equal False Rejection Rates (or similar)**: Among people who would have paid back the loan (non-defaulters), we want the same rejection rate for both groups. This is related to "false positive rate" (FPR) equality.
+
+  You found that when you adjust the cutoff to fix the FPR imbalance, it breaks the calibration (the first property). And you suspect that unless the groups have identical default rates, you cannot have both.
+
+  Let me formalize:
+
+  Let:
+  - Group A and Group B.
+  - Let the base default rates be \( p_A \) and \( p_B \) for group A and B respectively.
+
+  We have two conditions:
+
+  **Condition 1 (Calibration):** For a given score \( s \), the probability of default is the same for both groups. That is:
+  \[ P(Y=1 | S=s, A) = P(Y=1 | S=s, B) \]
+  where Y=1 indicates default.
+
+  **Condition 2 (False Positive Rate Equality):** Among the non-defaulters (Y=0), the probability of being rejected (which we denote by R=1) is the same for both groups. Since rejection is based on a threshold (say, if score > threshold then reject), then we require:
+  \[ P(R=1 | Y=0, A) = P(R=1 | Y=0, B) \]
+
+  But note: \( R=1 \) when the score is above the threshold. So if we let \( t_A \) and \( t_B \) be the thresholds for group A and B, then:
+  \[ P(R=1 | Y=0, A) = P(S > t_A | Y=0, A) \]
+  and similarly for B.
+
+  Now, the problem is that if we set one threshold for both groups, then we can get Condition 1 (if the model is well calibrated) but Condition 2 might not hold. If we adjust the thresholds per group to fix Condition 2, then Condition 1 breaks.
+
+  Why? Because Condition 1 (calibration) and Condition 2 (FPR equality) are two distinct conditions that might require the underlying distributions of scores given the true outcome to be related in a very specific way.
+
+  In fact, there is a known result in fairness that you cannot have both calibration and equal false positive rates (or equal false negative rates) unless either:
+  - The base rates (default rates) are equal, i.e., \( p_A = p_B \), OR
+  - The model is perfect (i.e., the score is 1 for defaulters and 0 for non-defaulters).
+
+  This is a consequence of the fairness impossibility theorems (like the one by Kleinberg, Mullainathan, and Raghavan, or Chouldechova).
+
+  So, let me explain:
+
+  Suppose we have a model that is calibrated (Condition 1). Then the score can be interpreted as the probability of default. Now, the false positive rate (FPR) for group A is:
+  \[ FPR_A(t_A) = P(S > t_A | Y=0, A) \]
+  Similarly for group B.
+
+  If we set the same threshold for both groups, then the FPRs might differ. If we adjust the thresholds to make FPRs equal, then we break calibration because now the same score does not correspond to the same risk in both groups? Actually, note: calibration is about the meaning of the score, not the threshold. But when we change the threshold per group, we are not changing the model. The model is still calibrated in the sense that for a given score, the risk is the same. However, the decision threshold is now different. So at the threshold for group A, the risk is \( P(Y=1 | S=t_A, A) \) and for group B, \( P(Y=1 | S=t_B, B) \). But because of calibration, \( P(Y=1 | S=t_A, A) = P(Y=1 | S=t_A) \) (same for any group) and similarly for \( t_B \). So if \( t_A \neq t_B \), then the risk at the threshold is different. This breaks the property that a 0.8 score (or any fixed score) corresponds to the same risk? Actually, no: calibration says that at a fixed score the risk is the same regardless of group. But the threshold is now a different score for each group, so the risk at the threshold is different.
+
+  But note: the first condition you stated was that a 0.8 score means the same real default rate. That condition is still true. However, the threshold you use for each group is not 0.8 anymore. So you are using different thresholds. This means that for group A you might reject at 0.7 and for group B at 0.8. Then at 0.8, the default rate is still the same, but the threshold for group A is 0.7 so at 0.7 the default rate for group A is (by calibration) the same as for group B at 0.7. But that might be a lower risk. So the problem is that if you set different thresholds to achieve FPR equality, then the risk at the threshold is different for the two groups. That might be unacceptable for the business because you are taking more risk in one group.
+
+  But note: your first condition (calibration) is preserved because the model itself is calibrated. The issue is that by having different thresholds, the risk of the accepted loans will be different per group? Actually, the risk at the threshold is different. For example:
+
+  - Group A: threshold at 0.7, so the risk of the marginal applicant (at threshold) is 0.7 (if the model is perfectly calibrated).
+  - Group B: threshold at 0.8, so the risk of the marginal applicant is 0.8.
+
+  This might be a problem because you are taking on more risk in group B.
+
+  But what if you don't care about the risk at the threshold? What if you only care about the calibration condition (that a score of 0.8 means 80% chance of default regardless of group) and also about the FPR? Then note: even with different thresholds, the calibration condition is still satisfied because the model hasn't changed. However, the business might not like that the thresholds are different and that the risk of the accepted loans is different.
+
+  But your original problem was that legal wanted it to be 'fair'. They might have meant both conditions. And you found that when you set the same threshold, the FPRs were different. When you set different thresholds to fix FPR, you break the condition that the same score leads to the same decision? Not exactly, but you break the condition that the risk at the threshold is the same.
+
+  But note: the condition that the same score means the same risk is calibration and that remains. The decision threshold is a separate issue.
+
+  However, the impossibility theorem says that you cannot simultaneously have:
+
+  - Calibration within groups (which you have)
+  - Equal false positive rates (which you want to achieve by adjusting thresholds) and
+  - Equal false negative rates? Or equal acceptance rates? Actually, the theorem states that if the base rates are different, you cannot have both calibration and equal false positive rates AND equal false negative rates. But here we are only asking for FPR equality (and we are not necessarily asking for FNR equality). 
+
+  Wait, let me recall: 
+
+  The theorem (Chouldechova, 2017) states that if the base rates are different, then it is impossible for a model to satisfy both:
+  - Calibration (or predictive parity at every threshold)
+  - Equal false positive rates
+  - Equal false negative rates
+
+  But note: you don't require equal false negative rates. So maybe you can have calibration and equal FPR by adjusting thresholds? However, when you adjust thresholds to get equal FPR, you break the calibration? No, because calibration is a property of the model and not the threshold. The model is still calibrated. But the problem is that the thresholds are different, so the false negative rates might become different? 
+
+  But let's see:
+
+  Suppose we have two groups with different base rates. We build a model that is calibrated. Then we adjust the thresholds to achieve FPR equality. Then:
+
+  - Condition 1 (calibration) still holds because we haven't changed the model.
+  - Condition 2 (FPR equality) holds by construction.
+
+  So what's broken? The issue is that the false negative rates (FNR) will then typically be different. But you didn't ask for FNR equality. Also, the overall acceptance rates might be different. But if legal only requires these two conditions, then it is possible.
+
+  However, note that in your original setup, you were using the same threshold for both groups and then you had calibration but not FPR equality. Then you adjusted the thresholds to get FPR equality. And then you said it broke the first property. How? 
+
+  I think the confusion might be: when you adjust the thresholds per group, you are not breaking the calibration property of the model. The model still predicts the same risk for a given score regardless of group. So if you use a threshold of 0.7 for group A and 0.8 for group B, then:
+
+  - For group A, the risk at the threshold (0.7) is 0.7 (if perfectly calibrated) and for group B at 0.8 it is 0.8. So the risk at the threshold is different. But that is not the same as saying that the same score (say 0.75) has a different risk per group. It doesn't.
+
+  So why did you say it broke the first property? Maybe because you were using the threshold as a reference? For example, if you set the threshold for group A at 0.7 and group B at 0.8, then a score of 0.75 in group A is rejected but in group B is accepted? But the risk at 0.75 is the same (0.75) for both groups. So why is that a problem? Because the decision is different for the same risk? That might be considered unfair.
+
+  Alternatively, if legal wants that the same risk score leads to the same decision, then you cannot have different thresholds. But that would force the same threshold, and then FPR equality might not hold.
+
+  So let's clarify what legal wants:
+
+  1. They want that a score of 0.8 means the same default rate (calibration) - which you have.
+  2. They want that among the non-defaulters, the rejection rate is the same (FPR equality).
+
+  But note: if you use the same threshold, then FPR equality might not hold. If you use different thresholds, then you have FPR equality and calibration, but now the same score (say 0.75) might lead to a rejection in group A and acceptance in group B. Is that acceptable? It might be if the goal is to have the same FPR and the same meaning of the score. But then the decision is not based solely on the score but also on the group, which might be illegal (disparate treatment).
+
+  Alternatively, if you want the decision to be based solely on the score (so same threshold), then you cannot adjust the threshold per group. Then how to fix FPR? You would have to change the model.
+
+  But the model is already calibrated. So how can you change the model to achieve FPR equality without breaking calibration? 
+
+  This is where the impossibility comes in. If the base rates are different, then even if the model is calibrated, the distribution of scores for non-defaulters (and hence the FPR at a given threshold) might be different. 
+
+  For example, suppose group A has a higher base rate of default. Then, for non-defaulters in group A, the model might tend to assign higher scores (because the model has learned that group A is riskier) than for non-defaulters in group B. Therefore, at the same threshold, the FPR (the proportion of non-defaulters above the threshold) would be higher for group A.
+
+  So unless the model is perfect, it cannot separate the non-defaulters in group A as well as in group B? Actually, it might be that the model is well calibrated but the distributions of scores for non-defaulters are shifted.
+
+  Therefore, without changing the model, if you want to keep calibration and have FPR equality, you must use different thresholds. But that leads to different treatment by group, which might not be allowed.
+
+  Alternatively, if you want to use the same threshold and have both calibration and FPR equality, then the model must be such that the distribution of scores for non-defaulters is the same for both groups (so that the FPR is the same at any threshold). But that would require that the entire distribution of the non-defaulters is the same, which is only possible if the base rates are the same? Not exactly, but it is very restrictive.
+
+  In fact, if the model is calibrated, then the distribution of scores for non-defaulters is given by:
+  \[ f_A(s | Y=0) = \frac{1}{1-p_A} \cdot (1-s) \cdot f_A(s) \]
+  and similarly for group B. This is because by Bayes' theorem, the density of the score for non-defaulters is proportional to (1 - the risk) times the marginal density of the score. 
+
+  For the FPR to be the same at a threshold t, we need:
+  \[ \int_t^\infty f_A(s | Y=0) ds = \int_t^\infty f_B(s | Y=0) ds \]
+
+  But with different base rates and different marginal score distributions, this is unlikely to hold at all thresholds. And if it holds at one threshold, it might not hold at another.
+
+  Therefore, unless the base rates are equal, it is generally impossible to have both conditions with the same threshold.
+
+  So to summarize:
+
+  - If you can use different thresholds per group, then you can have both:
+      - Calibration (the model itself is calibrated, so a score of 0.8 means the same risk in both groups)
+      - FPR equality (by setting the threshold for each group to achieve the same FPR)
+    But then the risk at the threshold is different, and the same score might lead to different decisions. This might be legally problematic because of disparate treatment.
+
+  - If you must use the same threshold for both groups (to avoid disparate treatment), then you cannot achieve both calibration and FPR equality unless the base rates are equal or the model is perfect.
+
+  Therefore, your manager might be wrong if they think that a smarter model can fix this without adjusting thresholds and without the base rates being equal. Because the issue is fundamental.
+
+  What can you do?
+
+  1. Check if the base rates are the same. If they are, then you can have both with the same threshold.
+
+  2. If base rates are different, consider whether legal allows different thresholds (which would be a form of affirmative action). But note: in the US, using different thresholds based on protected attributes is often illegal unless there is a strong business necessity and less discriminatory alternatives are not available.
+
+  3. Alternatively, you might have to choose one fairness criterion to prioritize. For example, you might choose to have calibration and the same threshold, and then accept that FPR is not equal. Or you might choose to have FPR equality and calibration by using different thresholds, but then you have to justify the different treatment.
+
+  4. Another idea: build a model that is calibrated and then adjust the scores to try to equalize the FPR without breaking calibration too much? But that might be difficult.
+
+  5. Or, use a different fairness criterion altogether? For example, equal opportunity (equal true positive rates) or demographic parity (equal acceptance rates). But legal might have specific requirements.
+
+  In conclusion, you are not missing something. It is a known impossibility. Your manager might not be aware of this trade-off. You might want to present the fairness impossibility theorem.
+
+  References:
+  - Chouldechova, A. (2017). Fair prediction with disparate impact: A study of bias in recidivism prediction instruments. Big data, 5(2), 153-163.
+  - Kleinberg, J., Mullainathan, S., & Raghavan, M. (2016). Inherent trade-offs in the fair determination of risk scores. arXiv preprint arXiv:1609.05807.
+
+  So, to answer your question: unless the groups have identical default rates (or the model is perfect), it is impossible to have both conditions (calibration and FPR equality) with the same threshold. And if you use different thresholds, you preserve calibration and achieve FPR equality but then the same score might lead to different decisions, which might be problematic.
+
+  You should discuss this trade-off with legal and your manager.
+answer: |-
+  Your suspicion is well-founded, and you're likely encountering a fundamental trade-off in algorithmic fairness. This isn't a fixable issue with a "smarter model" unless the groups have identical base default rates or the model is perfect. Here's why:
+
+  ### 1. **The Two Conflicting Fairness Criteria**
+     - **Condition 1 (Calibration/Equal Risk Interpretation):**  
+       A score of 0.8 implies the same actual default probability for both groups. This ensures "predictive parity" (e.g., P(default \| score=0.8, Group A) = P(default \| score=0.8, Group B)).
+     - **Condition 2 (Equal False Rejection Rates):**  
+       Among non-defaulters (people who would repay), the rejection rate is equal across groups. This is **false positive rate (FPR) equality** (e.g., P(reject \| repaid, Group A) = P(reject \| repaid, Group B)).
+
+  ### 2. **The Impossibility Theorem**
+     When base default rates differ between groups (i.e., \( p_A \neq p_B \)), **it's mathematically impossible to simultaneously satisfy both conditions** with a single model and threshold. This is a consequence of fairness impossibility theorems (e.g., Kleinberg et al. 2016, Chouldechova 2017):
+     - Calibration requires the model's score distributions to align with group-specific base rates.
+     - FPR equality requires the distribution of scores among non-defaulters to be identical across groups.
+     - If \( p_A \neq p_B \), these two requirements conflict unless the model is perfect (i.e., scores=1 for all defaulters and 0 for all non-defaulters).
+
+  ### 3. **Why Adjusting Cutoffs Fails**
+     - You observed that setting group-specific thresholds (\( t_A \) and \( t_B \)) to equalize FPR breaks calibration. This happens because:
+       - Calibration ensures scores map to the same risk **across groups** (e.g., score=0.7 always means 70% default risk).
+       - To equalize FPR, you need \( t_A \neq t_B \).  
+         → For Group A (higher FPR originally), you lower \( t_A \) to reject fewer non-defaulters.  
+         → For Group B (lower FPR), you raise \( t_B \) to reject more non-defaulters.
+     - **Result:**  
+       A score of \( t_A \) in Group A now has default risk \( t_A \), while a score of \( t_B \) in Group B has risk \( t_B \). Since \( t_A \neq t_B \), the same score **no longer implies the same risk** (violating Condition 1).
+
+  ### 4. **When Is This Fixable?**
+     Your manager is correct that a "smarter model" could resolve this **only if**:
+     - **Base default rates are identical (\( p_A = p_B \))**, or
+     - **The model is perfect** (AUC=1.0, impossible in practice).
+     If neither holds, no model can satisfy both conditions.
+
+  ---
+
+  ### Recommendations:
+  1. **Diagnose Base Rates:**  
+     Check if \( p_A = p_B \). If yes, revisit model design (e.g., ensure feature engineering doesn't inject bias).
+
+  2. **Communicate the Trade-off:**  
+     Explain to your manager/legal that fairness criteria conflict:
+     - **Option A:** Use one threshold → Maintain calibration but accept unequal FPR.  
+     - **Option B:** Use group-specific thresholds → Equalize FPR but break calibration.  
+     *Legal must prioritize one criterion*.
+
+  3. **Alternative Fairness Definitions:**  
+     Propose compromises:
+     - **Equal opportunity (equal TPR):** Equal approval rates for defaulters.  
+     - **Demographic parity:** Equal approval rates overall.  
+     Note: These may be legally/practically unacceptable.
+
+  4. **Transparency and Mitigation:**  
+     - Document the trade-off and its business/ethical implications.  
+     - Explore harm-reduction (e.g., reject fewer applicants overall, add manual review).
+
+  ### Key Takeaway:
+  **You’re not missing anything—this is a mathematical constraint.** Unless base rates are equal, prioritizing both fairness properties is impossible. Your manager’s suggestion works only if the current model is suboptimal *and* base rates match. If not, the focus should be on stakeholder alignment about which fairness criterion to prioritize.  
+
+  For deeper reading, see:  
+  - Kleinberg, Mullainathan, Raghavan (2016) - *Inherent Trade-Offs in Fair Risk Assessment*  
+  - Chouldechova (2017) - *Fair Prediction with Disparate Impact*.

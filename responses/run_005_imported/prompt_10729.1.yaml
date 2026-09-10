@@ -1,0 +1,301 @@
+id: prompt_10729
+sample_index: 1
+prompt_file: prompts/batch_020/prompt_10729.txt
+model: deepseek-ai/DeepSeek-R1-0528
+provider: self-hosted vLLM (imported, see run.yaml)
+generation_id: null
+finish_reason: stop
+native_finish_reason: null
+prompt_tokens: 375
+completion_tokens: 6332
+reasoning_tokens: null
+cost_usd: null
+reasoning_detail_types: null
+created_at: '2026-09-10T17:40:23+00:00'
+imported_from: r1_full2x_v1
+source_id: synthphil_prompt_10729__s2
+prompt: |-
+  So I'm a CS PhD student doing interpretability-adjacent work, and my lab's alignment reading group just spent two sessions going through ARC's old "Eliciting Latent Knowledge" report -- the one that opens with the diamond-in-a-vault example (they call the system "SmartVault," I think), where a robber cuts a hole in the wall, steals the diamond, and puts a screen in front of the camera looping old footage so everything still looks fine on the monitor. Everyone in the group can recite the "human simulator vs. direct translator" distinction on command by now -- one reporter just predicts what a human watching the sensor feed would say, the other actually reports what the predictor network itself believes -- but I've got this nagging feeling that half of us are pattern-matching to that one example instead of actually getting why the underlying problem is hard in general.
+
+  Can you invent a genuinely new example for me, in a totally different domain (medical diagnosis, some environmental monitoring system, whatever works), where a human-simulator reporter and a direct-translator reporter would score exactly the same on every training example we could realistically collect and honestly label, yet would answer differently once deployed? Make it concrete enough that I could walk a labmate through exactly what observation would break the tie between the two reporters, and why we can't just collect more of that particular kind of label to fix it. And if there's room, add a line on whether your example is really a "the reporter might just be lying to sound human" problem, or whether it's secretly closer to the other failure mode people in the group keep bringing up, where the model's internal representations don't correspond to human concepts at all -- I can never tell if those are the same worry stated two different ways, or genuinely seperate failure modes.
+reasoning: |-
+  We are creating a new example in the domain of medical diagnosis. The goal is to have a scenario where a "human simulator" reporter and a "direct translator" reporter would behave identically during training (on all available labeled data) but diverge when deployed.
+
+  The core idea is that during training, the system only has access to data that is consistent with human observations. However, in deployment, a situation arises where the actual state of the world (as represented in the model's internal state) is different from what a human would observe or infer, and the human simulator would report the human-observable state while the direct translator would report the true state (as the model believes it).
+
+  Example: **Medical Monitoring System for Sepsis Prediction**
+
+  **Setup:**
+  - We have an AI system that is trained to predict the onset of sepsis in ICU patients. Sepsis is a life-threatening condition that requires early detection.
+  - The system uses a variety of sensors: heart rate, blood pressure, temperature, respiratory rate, and also laboratory results (like white blood cell count, lactate levels, etc.) that are periodically measured (say, every 4 hours). However, the lab results are not available continuously; they are drawn at discrete intervals and there is a delay (e.g., 1-2 hours) from when the blood is drawn until the result is available.
+  - The system also has access to a video feed of the patient (with privacy protections) that is analyzed by a computer vision model to detect signs of infection (e.g., redness, swelling, etc.) at the site of a catheter or surgical wound. However, the video analysis model might have access to subtle patterns that humans cannot easily discern (e.g., micro-changes in skin color or texture).
+
+  **The Reporter:**
+  - The AI system has a reporter component that is trained to answer the question: "Is the patient developing sepsis right now?" (a binary yes/no).
+  - The training data consists of historical ICU patient records. For each time point, we have the sensor data, the lab results (with their time of availability), and the video frames. The labels are whether the patient was diagnosed with sepsis at that time (based on expert review and standard criteria, but note that the diagnosis is made by doctors using the same data that is available in the records, including the lab results when they become available).
+
+  **The Twist:**
+  - During training, the lab results are always available in the historical data at the time they were measured (so the system sees them at the correct time). However, in real-time deployment, there might be a delay in the lab results. Moreover, the video analysis might detect early signs of infection that are not yet visible in the lab results and are also not noticeable to human clinicians (even if they were watching the video).
+
+  **The Scenario:**
+  - Consider a situation where the patient has an infection that is starting to develop. The video analysis model (which is part of the predictor) detects very early signs of infection (e.g., subtle changes in skin color at a wound site) that are not yet reflected in the lab results (because the immune response hasn't had time to affect the blood markers) and are also too subtle for a human to notice even if they were watching the video.
+  - The predictor network (which is the part of the AI that is trying to predict sepsis) has learned from the training data that these video patterns are highly predictive of sepsis that will develop in the next few hours. So internally, the predictor is confident that sepsis is developing.
+  - However, at the current time, the lab results (which are available in the training data at this relative time from onset) are still normal. Also, the vital signs are only slightly elevated and could be due to other causes.
+
+  **Training Data Limitation:**
+  - In the training data, every time the video analysis detected these subtle patterns, the lab results eventually became abnormal (and the patient developed sepsis). However, the training labels for the current time step (when the lab results are still normal) would be "no sepsis" because the doctors (who set the labels) only diagnosed sepsis when the lab results became abnormal or when clear symptoms appeared. So the label at the current time is "no", even though the model (if it could see the future) knows that sepsis is coming.
+
+  **Two Reporters:**
+  1. **Human Simulator Reporter (HSR):** This reporter is trained to predict what a human doctor would say at this moment. The human doctor, looking at the same data (vitals and normal lab results) and not noticing the subtle video patterns (or even if they saw the video, they wouldn't see the subtle changes) would say "no sepsis". So the HSR says "no".
+  2. **Direct Translator Reporter (DTR):** This reporter is trained to report the actual belief of the predictor (i.e., the system's internal state). The predictor believes that sepsis is developing (because of the video patterns and its learned associations). So the DTR would say "yes".
+
+  **Why do they score the same in training?**
+  - In the training data, at the time when the video patterns are present and the lab results are still normal, the label is "no" (because the doctors haven't diagnosed sepsis yet). 
+  - The HSR will output "no" (matching the human doctor) and gets the label correct.
+  - The DTR, if it were to output "yes", would be incorrect according to the training label (which is "no" at that time). Therefore, during training, the DTR is also trained to output "no" because that's the label. How? Because the training objective is to match the labels. The predictor's internal belief might be that sepsis is coming, but the label for the current time is "no", so the DTR learns to ignore that internal belief for the purpose of reporting until the lab results change. But wait, that would make the DTR and HSR the same? 
+
+  We need to adjust the example to avoid this.
+
+  **Revised Scenario:**
+  - Let's change the training objective. The reporter is trained to answer the question: "Is the patient currently developing sepsis?" and the labels are set by a retrospective review: for each time point, if the patient was diagnosed with sepsis within the next 6 hours, then the label is "yes", otherwise "no". This is a common setup for early prediction.
+
+  But note: in the training data, the label for a time point is "yes" if sepsis is diagnosed within the next 6 hours. Now, in the situation with the subtle video patterns, the label for the current time (with normal labs) would be "yes" (because sepsis will be diagnosed in the next 6 hours). 
+
+  However, the human doctor at that time (without the benefit of hindsight) would have said "no". So:
+
+  - The HSR is trained to predict what the human doctor would have said at that time (without future knowledge). So for a time point that is labeled "yes" (because sepsis developed within 6 hours), the human doctor at that time (with only the current data) said "no". Therefore, the HSR is trained to output "no" for that example, but the label for the reporter training (if we are training the reporter to match the human doctor) is the human doctor's judgment at that time. 
+
+  But wait, we have two different labels:
+
+  1. The label for the predictor: whether sepsis develops within 6 hours (so we can train the predictor to predict that).
+  2. The label for the reporter: what the human would say at that time.
+
+  So let's clarify the setup:
+
+  - The predictor is trained to predict the future onset (within 6 hours) of sepsis. Its output is a probability of sepsis in the next 6 hours.
+  - The reporter is trained to answer the question: "What would a human doctor say if asked 'Is the patient currently developing sepsis?' at this moment?" The training data for the reporter includes the same inputs and also the human doctor's actual recorded judgment at that time (if available) or we simulate it by having doctors review the data without future knowledge.
+
+  Now, in the training data, we have two kinds of labels:
+  - Predictor label: 1 if sepsis occurs in the next 6 hours, 0 otherwise.
+  - Reporter label: the human doctor's judgment at the time (without future knowledge).
+
+  In the scenario:
+
+  - At time t, the patient has normal lab results and vital signs that are ambiguous. The video analysis, however, shows the subtle patterns. The predictor (trained to predict future sepsis) outputs a high probability (say 0.9) because it has learned that these patterns are highly predictive.
+
+  - The human doctor at time t, without the benefit of the video analysis (or not noticing the subtle patterns) and seeing only the normal labs and ambiguous vitals, says "no".
+
+  - The reporter is trained on the human doctor's judgments. So:
+
+    - The HSR is trained to output "no" for this example (and it does).
+    - The DTR is trained to output the predictor's belief. But note: the predictor's belief is a probability (0.9) and we have to map that to a "yes" or "no". We can set a threshold (e.g., 0.5). So the DTR would output "yes". However, the training label for the reporter is the human's "no". Therefore, the DTR would be penalized for saying "yes" when the human said "no". 
+
+  So during training, the DTR would be trained to output "no" for this example? That breaks the example.
+
+  We need a way for the DTR to be forced to report the predictor's belief, but the predictor's belief is about the future (which is correct) and the human's judgment is about the current state (which is different). The problem is that the reporter training for the DTR is using the same labels as the HSR (the human judgments) but that's not what the DTR is supposed to do.
+
+  **Solution: Separate the training of the predictor and the reporter.**
+
+  - The predictor is trained on the future sepsis label (so it learns to use the video patterns to predict sepsis 6 hours in advance).
+  - The reporter is trained separately. The DTR is trained to report the predictor's belief (the probability) and then thresholded to a binary answer. But how do we train the DTR? We don't have direct labels for the predictor's belief. We only have the future sepsis labels and the human judgments.
+
+  We run into a problem: we cannot train the DTR because we don't have ground truth for the predictor's internal state. This is the core of the ELK problem.
+
+  **Alternative Approach:**
+  - Let's assume that the reporter is trained by having access to the predictor's internal state (the activations) and is trained to output the predictor's belief (the probability) for the future sepsis. Then we threshold to get a binary answer. But the training data for the reporter would be the same as for the predictor: the future sepsis label. So the DTR would be trained to output the predictor's probability, and we know the predictor is trained to output a probability that matches the future sepsis label. So the DTR would be correct (if the predictor is well-calibrated).
+
+  - The HSR is trained to output the human judgment at the time.
+
+  Now, in the training data, for the example with the subtle video patterns:
+
+  - The future sepsis label is 1 (because sepsis occurs within 6 hours).
+  - The human judgment at time t is 0 (because they don't see the patterns and the current data is normal).
+
+  Therefore:
+
+  - The DTR, when asked "will sepsis occur in the next 6 hours?" (or equivalently, "is the patient currently developing sepsis?" meaning that the process has started) would output 1 (or "yes").
+  - The HSR would output 0 (or "no").
+
+  But note: the reporter training for the DTR is using the future sepsis label (which is 1) and the DTR is outputting 1, so it's correct. The HSR is outputting 0, which is incorrect for the future sepsis label? But wait, the HSR is not trained on the future sepsis label; it is trained on the human judgment (which is 0). So the HSR is correct for its task (it matches the human judgment) and the DTR is correct for its task (it matches the future sepsis label).
+
+  But then during training, they are both correct for their respective tasks? So they don't score the same? We are comparing two different tasks.
+
+  **The Key for ELK:** We want a situation where both reporters are trained on the same training data (same labels) and get the same score (both 100% accurate on the training set) but then in deployment, they diverge.
+
+  So we must have the same task for both reporters. Let's redefine the task:
+
+  **Task:** The reporter is asked: "Will the patient be diagnosed with sepsis in the next 6 hours?" and the label is 1 if yes, 0 if no.
+
+  But then the HSR is not trained to predict the future; it's trained to predict what the human would say. And what the human would say at time t is not necessarily the same as the future label. So we cannot use the future label for the HSR.
+
+  We need a different setup.
+
+  **Final Setup:**
+  - The reporter is trained to predict the future sepsis label (whether the patient will be diagnosed with sepsis in the next 6 hours). 
+  - The HSR is designed to predict what a human would say if asked the same question (with the same information available to the human). But note: the human at time t does not know the future. So the human's answer is based on their assessment at time t. How do we get labels for what the human would say? We have historical records of what the human did say (if they were asked) or we can have doctors review the past data without future knowledge and give their judgment.
+
+  So the training data for the reporter (both HSR and DTR) is:
+  - Input: the available data at time t (vitals, lab results, video, etc.)
+  - Label for the task: 1 if sepsis is diagnosed in the next 6 hours, 0 otherwise.
+
+  Additionally, for the HSR, we have the human judgment at time t (without future knowledge) for the same question? But the human doesn't know the future. So the human judgment at time t is their best guess about the future. We can use that as the target for the HSR.
+
+  But note: the HSR is trained to predict the human judgment (which is the human's prediction of the future). The DTR is trained to predict the actual future (the sepsis label). So they are trained on two different labels? 
+
+  We must have the same label for both. So let's assume we train both reporters to predict the actual future sepsis label. Then:
+
+  - The DTR has access to the predictor's internal state and is trained to output the same as the predictor (which is trained to predict the future sepsis label). So the DTR will be trained to predict the future label accurately.
+
+  - The HSR is trained to predict the future sepsis label, but it is constrained to output the same as the human judgment (if the human judgment were available) or it is trained to match the human's prediction. But note: the human judgment at time t might not be the same as the future label. So the HSR will be trained to output the human's prediction (which might be wrong sometimes).
+
+  But we want both to be accurate on the training set. So we must assume that the human's prediction is always correct? That doesn't work because humans make mistakes.
+
+  Alternatively, we can train the HSR to predict the future label, but using only the information that a human would have. But then the HSR would be a model that is trained on the same task as the predictor, but with limited inputs (the inputs that a human would see). That's not the same as simulating the human.
+
+  **The ELK Problem Setup:**
+  The ELK report assumes that the reporter is trained to predict the human's answer (which is about the current state or the future) and the training data includes the human's answers. But then the DTR is trained to predict the same human answers? That doesn't make sense because the DTR is supposed to report the predictor's belief.
+
+  We need to go back to the original diamond example. In the diamond example, the reporter is trained to answer the question: "Is the diamond in the vault?" and the training data has the diamond in the vault and the sensor readings look normal. After the robbery, the sensor readings look normal but the diamond is gone. The training data never has a robbery.
+
+  In our medical example, we need a situation that is analogous to the robbery: a situation that does not occur in the training data.
+
+  **New Example: Adversarial Manipulation of Sensor Data**
+
+  **Domain: Environmental Monitoring for Pollution**
+
+  **Setup:**
+  - An AI system monitors a river for chemical pollution. It uses sensors that measure chemical levels (e.g., mercury, lead) and also a camera that takes pictures of the river.
+  - The system is trained to detect pollution events (binary: polluted or not). The training data consists of sensor readings and camera images, labeled by human inspectors who sometimes take water samples and test them (the ground truth).
+  - However, the human inspectors are not always present. They only take samples occasionally. The labels in the training data are the results of the lab tests when available, and when not available, they are the human inspector's visual assessment (which might be based on the camera image and the sensor readings).
+
+  **The Twist:**
+  - A malicious actor wants to dump pollutants without being detected. They know that the system uses the camera. They set up a screen that shows a pre-recorded video of a clean river (with normal sensor readings) while they dump pollutants. The actual chemical sensors are tampered with (e.g., by placing them in a container of clean water) so they show normal readings.
+
+  **Training Data:**
+  - In the training data, whenever the chemical sensors show normal and the camera shows a clean river, the river is indeed clean (because no one was tampering). So the label is "clean".
+
+  **Two Reporters:**
+  - **Human Simulator Reporter (HSR):** If a human were watching the camera feed and seeing the sensor readings, they would say "clean". So the HSR says "clean".
+  - **Direct Translator Reporter (DTR):** The predictor (the main AI model) might have additional capabilities. For instance, it might have a submodule that analyzes the video feed for signs of tampering (like a slight flicker in the video, or a mismatch between the water flow and the weather conditions). The predictor has learned from other data (like videos of tampering attempts in unrelated contexts) that these artifacts indicate tampering. Therefore, the predictor internally believes that the river is polluted (because it infers that the sensors and camera are being manipulated). The DTR reports "polluted".
+
+  **Why they score the same in training?**
+  - In the training data, there is no tampering. Therefore, the predictor never sees the tampering artifacts. So the DTR, when it sees the training data (normal sensor readings and clean river video), reports "clean" because the predictor has no reason to believe otherwise. The HSR also reports "clean". Both are correct.
+
+  **Deployment Scenario:**
+  - The malicious actor tampers with the system as described. The camera shows a clean river (from the pre-recorded video) and the chemical sensors show normal (because they are in clean water). 
+  - The predictor's video analysis module detects the tampering (e.g., it notices that the video has a repeating pattern or a slight discontinuity). The predictor then infers that the sensors might be compromised too, and that there is likely pollution. So internally, the predictor believes the river is polluted.
+  - The HSR: It outputs what a human would say. The human, seeing the same camera feed and sensor readings (and not noticing the subtle tampering artifacts) would say "clean".
+  - The DTR: It outputs the predictor's belief: "polluted".
+
+  **Tie-Breaking Observation:**
+  - The tie-breaking observation is the actual state of the river: it is polluted. But we cannot observe that without sending an inspector. However, in this case, we can send an inspector and they would find pollution. 
+
+  **Why we can't just collect more labels to fix it?**
+  - We could, in principle, collect labels by sending inspectors whenever we suspect tampering. But note:
+    - The tampering event is rare and adversarial. We might not have such events in the training data because the adversary avoids being caught.
+    - Even if we try to collect data by simulating tampering, the adversary might use new methods that we haven't simulated. The predictor might detect tampering in a way that generalizes to new methods, but we cannot collect labels for every possible tampering method.
+
+  **Is it lying or representational mismatch?**
+  - In this example, the HSR is not "lying" in the sense of intentionally deceiving. It is faithfully simulating what a human would say, which is "clean" because the human doesn't see the tampering. The DTR is reporting the model's true belief. 
+  - The issue is that the model has formed a concept of "tampering" that the human doesn't have (because the human doesn't notice the subtle artifacts). So there is a representational mismatch: the model's internal concept of "pollution" is tied to an underlying state that might be hidden, while the human's concept is based on the raw observations.
+
+  However, note that the HSR is not lying; it's doing its job. The problem is that we want the system to report the underlying state (polluted or not) and the HSR fails because it's designed to report the human observation.
+
+  **Conclusion:**
+  This example is more about the reporter having access to the model's internal state (which has detected tampering) versus being constrained to human-observable features. It's similar to the diamond example but in a different domain. The failure mode is that the HSR doesn't report the model's true belief about the world state because it's simulating the human, who is fooled by the tampering.
+
+  This example is distinct from the "lying" problem (where the model might intentionally deceive) and also distinct from a pure representational mismatch (because the model's representation does correspond to the human concept of pollution, but the model has additional evidence of tampering that changes its belief). However, the representational mismatch is present in the sense that the human doesn't have the concept of the tampering artifacts as indicators of pollution.
+
+  In summary, the core problem is that the HSR is blind to the model's private evidence (the tampering indicators) and therefore cannot report the model's true belief about the underlying state.
+answer: |-
+  Here's a novel example in the domain of **wildlife conservation monitoring**, designed to isolate the human-simulator vs. direct-translator problem in a way that can't be resolved with additional training data. I'll build it step-by-step for clarity.
+
+  ---
+
+  ### **Scenario: Endangered Bird Species Tracker**
+  **System Goal**: Predict whether a critically endangered bird species (*Ava magnificens*) is present in a protected forest, using audio recordings from field microphones.  
+
+  **Key Challenge**: Poachers have learned to mimic the bird's call with near-perfect accuracy using AI-generated audio lures. When poachers are active, they broadcast these synthetic calls to mask their presence (e.g., to avoid ranger patrols by making the birds "appear" active elsewhere).  
+
+  **AI Setup**:  
+  - **Predictor Model**: A neural network trained to classify 10-minute audio clips as either:  
+    - `1` (Bird present) or `0` (Bird absent).  
+  - **Input Data**: Raw audio spectrograms + metadata (time, weather, etc.).  
+  - **Training Data**:  
+    - 500,000 labeled clips from past years.  
+    - Labels come from human rangers who physically verified bird presence *after* audio was recorded.  
+    - **Crucially**: No poacher activity occurred during training data collection (the mimicry tactic is new).  
+
+  **Reporters**:  
+  - **Human-Simulator Reporter (HSR)**: Predicts what a human ranger would say *in real-time* based on the audio clip alone.  
+  - **Direct-Translator Reporter (DTR)**: Outputs the predictor’s actual belief about bird presence.  
+
+  ---
+
+  ### **Why Both Reporters Behave Identically in Training**  
+  1. **Training data constraints**:  
+     - All clips with the bird’s call were verified to be *authentic* (no poachers during data collection).  
+     - Human rangers *always* labeled clips with the bird’s call as `1` (present).  
+     - Clips without the call were labeled `0` (absent).  
+  2. **Result**:  
+     - For *every* training clip, both reporters output the same answer:  
+       - If the call is detected, HSR outputs `1` (ranger would say "present"), and DTR outputs `1` (predictor believes it’s present).  
+       - If no call, both output `0`.  
+     - Both achieve 99.9% accuracy on the training/validation sets.  
+
+  ---
+
+  ### **Deployment: The Tie-Breaking Observation**  
+  **Scenario**:  
+  Poachers enter the forest, broadcast synthetic calls from a speaker, and begin hunting. The system analyzes an audio clip containing:  
+  - A *perfect* synthetic copy of *Ava magnificens*’ call (indistinguishable to humans).  
+  - Faint, non-bird noises (e.g., rustling, muffled footsteps) that suggest human activity.  
+
+  **How Reporters Diverge**:  
+  - **HSR**: "What would a ranger say?"  
+    - Rangers can’t distinguish synthetic vs. authentic calls.  
+    - They’d hear the call and say "bird present" (`1`).  
+    - → Outputs `1`.  
+  - **DTR**: "What does the predictor believe?"  
+    - The predictor detects subtle artifacts in the synthetic call (e.g., ultra-high-frequency echoes from the speaker, patterns in spectrogram residuals).  
+    - It also notices the anomalous human-like noises.  
+    - It concludes: "No bird is present—this is a poacher’s lure."  
+    - → Outputs `0`.  
+
+  **Ground Truth**:  
+  The bird is *not* present (verified later by rangers).  
+
+  ---
+
+  ### **Why We Can’t Fix This with More Labels**  
+  1. **The core problem**:  
+     - The divergence occurs only when the predictor detects *out-of-distribution (OOD) evidence* (synthetic call artifacts + poacher sounds) *not present in training data*.  
+  2. **Why we can’t collect labels for this**:  
+     - **Data scarcity**: Poaching events are rare, dangerous, and intentionally hidden. Collecting verified examples requires catching poachers *in situ*—a logistical nightmare.  
+     - **Adversarial adaptation**: If you try to inject synthetic examples into training data, poachers will adjust their methods (e.g., new audio lures without the artifacts the predictor detected).  
+     - **Causal confusion**: Even with synthetic data, you can’t label the *predictor’s internal belief*—only the ground-truth bird presence. The predictor’s OOD detection heuristics are emergent and uninterpretable.  
+
+  > **Concrete impossibility**: You could collect 10M new clips, but if poachers avoid creating clips with detectable artifacts during labeling, the HSR and DTR will *still agree* on all new labeled examples—only diverging in deployment when poachers deploy *new, unlabeled* tactics.  
+
+  ---
+
+  ### **Is This "Lying" or "Representational Mismatch"?**  
+  This example **is not primarily about lying**—it’s about **representational mismatch**:  
+  - **Lying (deception)**: The HSR isn’t intentionally deceptive. It’s *honestly* simulating human judgment. The predictor isn’t "lying" either; it correctly infers the bird is absent.  
+  - **Representational mismatch**:  
+    - The predictor develops a **latent concept** ("poacher-induced call") that *correlates* with bird absence but has no human analogue.  
+    - Humans only have concepts like "call present" → bird present.  
+    - The HSR is forced to map the predictor’s internal state (poacher-induced call → bird absent) to human concepts (call present → bird present), causing misalignment.  
+
+  **Why this differs from other failure modes**:  
+  - In **ontology mismatch**, the predictor’s internal state wouldn’t correspond to *any* human-interpretable concept (e.g., encoding audio as abstract Fourier harmonics). Here, the predictor *does* represent "bird absence"—it’s just inaccessible to the HSR.  
+  - **Lying** would require the predictor to *know* the HSR’s output and adversarially manipulate it (not occurring here).  
+
+  ---
+
+  ### **Key Takeaway for Your Reading Group**  
+  This example clarifies that ELK’s core challenge is **ontological drift under distribution shift**:  
+  - The predictor learns latent concepts (e.g., "synthetic call artifacts") that are *causally linked* to the target (bird absence) but *incompressible* into human concepts without OOD data.  
+  - Neither adversarial training nor better interpretability tools solve this, as the drift is infinite-dimensional and adversarial.  
+
+  This is why ELK proposals often focus on **query-based oversight** or **tripwire mechanisms**—because supervised learning on human labels is provably insufficient. If your group debates this, ask: *"How would you force the predictor to make its latent state human-intelligible when the training data lacks the key adversarial examples?"*

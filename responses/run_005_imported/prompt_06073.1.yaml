@@ -1,0 +1,138 @@
+id: prompt_06073
+sample_index: 1
+prompt_file: prompts/batch_019/prompt_06073.txt
+model: deepseek-ai/DeepSeek-R1-0528
+provider: self-hosted vLLM (imported, see run.yaml)
+generation_id: null
+finish_reason: stop
+native_finish_reason: null
+prompt_tokens: 444
+completion_tokens: 2259
+reasoning_tokens: null
+cost_usd: null
+reasoning_detail_types: null
+created_at: '2026-09-10T17:40:23+00:00'
+imported_from: r1_full2x_v1
+source_id: synthphil_prompt_06073__s2
+prompt: |-
+  So I'm on the ML infra team at a small startup and we're doing RLHF-style fine tuning on our model. Part of my job this quarter is redesigning how we collapse a pile of per-rater preference scores into the single scalar reward that actually gets optimized against. Right now we just average everyone's normalized scores, which always felt kind of arbitrary to me, so I went down a rabbit hole reading about the theory behind combining people's preferences into one number. I ran into something called Harsanyi's aggregation theorem (sometimes called the "utilitarian theorem"), which as far as I understand says: if each individual's preferences and the group's preferences both satisfy the von Neumann-Morgenstern axioms, and some Pareto condition holds, then the group's utility function has to be a weighted linear sum of everyone's individual utility functions. A coworker who did a philosophy minor in college told me this is basically the closest thing economists have to a "proof" that utilitarian-style weighted averaging is the mathematically correct way to combine people's preferences, but he was pretty fuzzy on the actual details and I don't fully trust the handful of blog posts I skimmed either.
+
+  Could you walk me through the most important implications of this theorem for something like what my team is actually doing? Specifically I care about three things: first, does the theorem actually tell you what the weights on each rater should be, or does it just guarantee that *some* set of positive weights exists and leave the hard part (choosing them) completely open; second, does the theorem quietly assume that different raters' utility scales are comparable to each other in a way we're definitely not guaranteeing just by normalizing everyone's 1-5 ratings the same way; and third, is there some fairness-type consideration in how outcomes get produced (like whether risk ends up spread evenly across raters vs. concentrated on a few) that this framework structurally can't capture no matter how the weights are set. I'm not asking for a full derivation with proofs, i just want to know what I'm actually allowed to conclude from this theorem before I go put it in a design doc as the justification for our approach.
+reasoning: |-
+  We are discussing Harsanyi's aggregation theorem and its implications for your task of aggregating rater preferences into a single reward function.
+
+  Key points of the theorem:
+  1. Assumptions:
+     - Each individual's preferences satisfy the von Neumann-Morgenstern (vNM) axioms (completeness, transitivity, continuity, and independence).
+     - The group's preferences also satisfy the vNM axioms.
+     - Pareto principle: If every individual weakly prefers outcome A to outcome B, then the group weakly prefers A to B.
+
+  2. Conclusion:
+     Under these conditions, there exists a set of positive weights (one for each individual) such that the group utility function is a weighted linear sum of the individual utility functions. That is, for any outcome X:
+        U_group(X) = w1 * U1(X) + w2 * U2(X) + ... + wn * Un(X)
+     where the weights are positive and unique up to a positive affine transformation (i.e., the scale of the weights can be changed by a positive constant factor).
+
+  Now, addressing your specific questions:
+
+  **First: Does the theorem tell you what the weights should be?**
+     - The theorem guarantees the existence of positive weights but does not specify their values. The weights are determined by the relative importance of each individual's utility in the group's preferences. 
+     - In your context, the weights would reflect how much each rater's opinion should count. The theorem does not tell you how to set these weights. You must choose them based on other considerations (e.g., expertise, reliability, or fairness). 
+
+  **Second: Comparability of utility scales**
+     - The theorem assumes that individual utility functions are measured on a cardinal scale that is interpersonally comparable. This is a strong assumption. 
+     - In your current setup, you are normalizing each rater's scores (e.g., 1-5 ratings) to the same scale. However, normalization (e.g., to [0,1]) does not necessarily achieve interpersonal comparability because:
+          - The vNM utility functions are unique only up to positive affine transformations (i.e., scaling and shifting). This means that without additional assumptions, we cannot compare utility levels or differences across individuals.
+          - Normalizing each rater's scores independently (e.g., by their min and max) only ensures that each rater's scores are on the same scale for that rater, but it does not make the scales comparable across raters. For example, a rating of 4 from one rater might represent the same level of satisfaction as a rating of 3 from another, but we cannot tell.
+     - The theorem requires that we have a common scale for all raters. Without this, the linear aggregation is not well-defined. Therefore, if you are using normalized scores, you are implicitly making an assumption of interpersonal comparability. However, the theorem does not tell you how to establish this comparability. 
+
+  **Third: Fairness and risk distribution**
+     - The theorem focuses on the aggregation of preferences under the vNM axioms and the Pareto principle. It does not consider distributional fairness or how risks are shared among individuals.
+     - In particular, the linear aggregation does not account for inequality aversion. For example, if one outcome gives very high utility to one rater and very low to another, and another outcome gives moderate utility to both, the linear aggregation might prefer the first outcome even though it is very unequal. 
+     - The theorem also does not consider the variance of utilities across raters. It is purely additive and does not have a mechanism to penalize unequal distributions (like a social welfare function that is concave in individual utilities would).
+     - Therefore, if your goal includes fairness (e.g., not having one rater's preferences consistently ignored or having a model that produces outcomes that are very bad for a minority of raters), the linear aggregation might not capture that. The weights can be adjusted to give more importance to certain raters, but that does not change the additive form.
+
+  **Implications for your design doc:**
+
+  1. **Weights**: You can use the theorem to justify using a weighted linear sum, but you must choose the weights. The theorem does not specify them. You might consider:
+        - Equal weights (which is what you are doing now by averaging) if you have no reason to value one rater more than another.
+        - Weights based on rater reliability (e.g., if you have data on how well each rater's preferences align with a gold standard or how consistent they are).
+
+  2. **Utility scale comparability**: Be explicit that the normalization step is an attempt to put everyone on a comparable scale, but note that this is an assumption. Without it, the linear aggregation is not theoretically grounded by Harsanyi. You might want to consider:
+        - Using a more sophisticated method to calibrate the scales? (This is challenging and might require additional data or assumptions.)
+        - Alternatively, acknowledge that this is a limitation and that the normalization is a practical heuristic.
+
+  3. **Fairness**: If fairness is a concern (e.g., avoiding outcomes that are very bad for a subset of raters), the linear aggregation might not be sufficient. You might need to:
+        - Consider using a different aggregation that incorporates inequality aversion (e.g., a concave transformation of individual utilities before aggregation, or using a social welfare function like the Nash product). However, note that this would violate the vNM axioms for the group and thus fall outside Harsanyi's theorem.
+        - Or, use the linear aggregation but include fairness considerations in the choice of weights (e.g., giving higher weights to raters that are more vulnerable to bad outcomes) or in the design of the reward function.
+
+  In summary, Harsanyi's theorem provides a foundation for using a weighted average of utilities, but it does not solve the practical problems of choosing weights, establishing comparability, or addressing fairness. You can use it to justify the functional form (linear aggregation) but must address these other issues separately.
+answer: |-
+  ### Implications of Harsanyi's Aggregation Theorem for Your RLHF Reward Design
+
+  Let's break down your three core questions in the context of aggregating rater preferences for RLHF fine-tuning. I'll address each directly, focusing on practical implications for your design doc.
+
+  ---
+
+  #### **1. Does the theorem specify the weights?**  
+  **Short answer**: No, it guarantees *existence* of positive weights but leaves weight *assignment* entirely open.  
+
+  **Key details**:  
+  - Harsanyi proves that *some* set of positive weights must exist under the axioms, but **does not prescribe how to choose them**.  
+  - In your context:  
+    - **Weights ≠ importance**. The theorem treats weights as mathematical necessities, not measures of rater expertise or reliability.  
+    - **You must define weights contextually**. Example approaches:  
+      - Equal weights (current averaging method).  
+      - Weights based on rater consistency (e.g., inverse variance of scores).  
+      - Weights from rater reputation (e.g., expert vs. novice).  
+  - **Design doc implication**: You can cite Harsanyi to justify *using a linear combination*, but **you must explicitly define your weight-selection logic separately**. The theorem doesn't absolve you of this responsibility.
+
+  ---
+
+  #### **2. Does the theorem assume inter-rater utility comparability?**  
+  **Short answer**: Yes, critically—and normalization alone doesn't satisfy this.  
+
+  **Key details**:  
+  - Harsanyi assumes utilities are **cardinally measurable and interpersonally comparable**. This means:  
+    - A "utility unit" means the same thing across raters (e.g., Δ=1 for Rater A ≡ Δ=1 for Rater B).  
+  - Normalizing ratings (e.g., scaling 1–5 → 0–1) **does NOT guarantee comparability**:  
+    - Normalization addresses *scale* but not *meaning*. A "5" from a lenient rater may equal a "3" from a strict one.  
+    - Raters may use scales non-linearly (e.g., middle scores as "default").  
+  - **Practical risk**: If utilities aren't comparable, the weighted sum becomes arbitrary.  
+  - **Design doc implication**:  
+    - **Acknowledge this assumption explicitly**. State: *"We assume normalized scores are interpersonally comparable utilities, though this is theoretically unverified."*  
+    - Mitigation strategy: Consider calibration techniques (e.g., rater alignment tasks, Bradley-Terry models) to improve comparability.  
+
+  ---
+
+  #### **3. Does the theorem ignore fairness/risk distribution?**  
+  **Short answer**: Yes—it optimizes for efficiency, not equity.  
+
+  **Key details**:  
+  - Harsanyi's linear aggregation:  
+    - **Maximizes expected group utility** but ignores distributional fairness.  
+    - Permits "tyranny of the majority": 51% of raters could dominate outcomes.  
+    - Ignores variance in outcomes (e.g., all raters mildly satisfied vs. some thrilled and some furious).  
+  - **Structural limitations**:  
+    - The Pareto condition only prevents unanimously disliked outcomes.  
+    - No mechanism to penalize high inequality in rater satisfaction.  
+  - **Example risk in RLHF**:  
+    - A model could optimize for pleasing 80% of raters while catastrophically failing for niche subgroups (e.g., non-native English speakers).  
+  - **Design doc implication**:  
+    - **Supplement Harsanyi with fairness constraints** if subgroup equity matters. Options:  
+      - Add per-rater/minority-group reward constraints.  
+      - Use a concave social welfare function (e.g., `Σ(utility)^α` for α<1), though this violates Harsanyi's axioms.  
+      - Explicitly monitor disagreement metrics (e.g., variance in rater scores).  
+
+  ---
+
+  ### Summary for Your Design Doc  
+  - **Justify linear aggregation** with Harsanyi: "Under idealized conditions (vNM rationality, Pareto efficiency), a weighted linear sum is theoretically grounded."  
+  - **Critical caveats to disclose**:  
+    1. Weights must be set empirically (define your method: e.g., equal weights + rater dropout analysis).  
+    2. Inter-rater comparability is assumed but unproven (detail normalization/calibration steps).  
+    3. Fairness isn't guaranteed (add safeguards if needed, e.g., min-reward thresholds for subgroups).  
+  - **Recommendation**: Frame Harsanyi as a **baseline justification**, not a complete solution. Pair it with:  
+    - Empirical validation (e.g., A/B test different aggregations).  
+    - Bias/fairness audits (track per-demographic reward distributions).  
+
+  Harsanyi provides a rigorous starting point, but RLHF reward design ultimately requires blending theory with pragmatic adjustments for human subjectivity.
