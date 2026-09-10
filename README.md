@@ -26,7 +26,7 @@ prompts/batch_NNN/
   inputs/                 snapshot of the meta-prompt components used for this batch
 responses/
   sets/NAME.txt           a prompt set: the IDs of the prompts a response run answers
-  run_NNN/
+  run_NNN/                a response run (run_NNN_imported/ if converted from the sister repo, see below)
     run.yaml              run-level settings (model, sampling parameters, provider preferences, prompt set)
     prompt_XXXXX.yaml     one file per response: the prompt as sent, chain of thought, answer, usage
 meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
@@ -46,6 +46,7 @@ tools/
   check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
+  import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
 QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
@@ -124,7 +125,8 @@ Each response file has:
 | `finish_reason`, `native_finish_reason` | `stop` or `length`, as normalized by OpenRouter and as reported by the provider |
 | `prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `cost_usd` | usage as reported by the API; completion tokens include the reasoning |
 | `reasoning_detail_types` | OpenRouter's classification of the reasoning: `reasoning.text` is the full text, `reasoning.summary` would be a summary |
-| `created_at` | when the response was generated |
+| `created_at` | when the response was generated (for imported runs: when the record was converted) |
+| `imported_from`, `source_id` | only in `run_NNN_imported/` runs: the sister-repo collection the record came from and its ID there |
 | `prompt` | exactly what was sent, as the single user message (a `system_prompt` field appears only if a run used one) |
 | `reasoning`, `answer` | the chain of thought as returned, and the visible answer |
 
@@ -136,6 +138,8 @@ Runs so far:
 | run_001 | Qwen3.5-122B-A10B (Apache 2.0) | `open_1k` | 1,000 | temperature 1.0, top-p 0.95, top-k 20, presence penalty 1.5 | fp8 endpoints: SiliconFlow, AtlasCloud |
 | run_002 | DeepSeek V4 Pro 0813 (MIT) | `open_1k_sub100` | 100 | temperature 1.0, top-p 1.0; reasoning effort high; 65,536-token budget | fp8 endpoints: Baidu, GMICloud |
 | run_003 | DeepSeek R1 0528 (MIT) | `open_1k` | 1,000 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; one of the two R1 checkpoints whose reasoning traces trained Olmo 3 Think |
+| run_004_imported | Qwen3.5-397B-A17B-FP8 (Apache 2.0) | `batches_000-021` | 44,734 (2 per prompt) | temperature 0.6, top-p 0.95; 16,384-token budget | **imported**, not generated here: the sister repo's teacher collections of 2026-08-22 and 2026-08-28, self-hosted vLLM on Modal with the official fp8 weights |
+| run_005_imported | DeepSeek R1 0528 (MIT) | `batches_000-021` | 44,734 (2 per prompt) | temperature 0.6, top-p 0.95; 16,384-token budget | **imported**: the sister repo's collection of 2026-08-29, self-hosted vLLM on Modal, fp8 weights |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -144,6 +148,21 @@ a seed-0 sample of 100 of those. The two Qwen runs follow each model card's own
 recommended thinking-mode settings, which differ between the two models. Run 003
 answers the same set with DeepSeek R1 0528 so that distillation into Olmo 3 can be
 compared against one of that model's original reasoning teachers.
+
+**Imported runs.** The two runs whose directory names end in `_imported` were not
+produced by `generate_responses.py`. They are the teacher-data collections of the
+sister repo [cr_training](https://github.com/casparoe/cr_training), converted by
+`tools/import_teacher_data.py`, and are the only copy now that the sister repo drops
+them. Both sampled the first 22,367 prompts of this dataset (all of them
+Claude-written, batches 000–021, the set `batches_000-021`) twice, independently, at
+identical settings, from models the author served himself with vLLM 0.25 on Modal
+(8×H200, official fp8 weights). Their records use the same layout as the other runs,
+with `prompt_XXXXX.0.yaml` and `.1.yaml` for the two samples, but `generation_id`,
+`native_finish_reason`, `reasoning_tokens`, `cost_usd`, and `reasoning_detail_types`
+are null (no gateway metadata exists), the chain of thought is the `<think>` block as
+split by the collector, and every record names its source collection and original
+ID. Each `run.yaml` says `api: imported` and carries a `source` block with the
+collection files, dates, and serving setup.
 
 ## Quality control and known limitations
 

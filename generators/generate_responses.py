@@ -47,6 +47,7 @@ from generate_prompt import PROMPTS_DIR, REPO_ROOT  # noqa: E402
 RESPONSES_DIR = REPO_ROOT / "responses"
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 RECORD_FILE_RE = re.compile(r"prompt_(\d+)(?:\.(\d+))?\.yaml")
+YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 MAX_ATTEMPTS = 6
 # A long generation sends nothing back until it is finished, so a connection
 # that died (network drop, system sleep) looks just like one still waiting.
@@ -104,7 +105,7 @@ def create_run_dir(root):
     existing = [
         int(m.group(1))
         for p in root.glob("run_*")
-        if (m := re.fullmatch(r"run_(\d+)", p.name))
+        if (m := re.fullmatch(r"run_(\d+)(?:_[a-z].*)?", p.name))  # run_004_imported counts too
     ]
     n = max(existing, default=-1) + 1
     while True:
@@ -159,7 +160,7 @@ def record_yaml(record):
         else:
             text += yaml.safe_dump({key: value}, allow_unicode=True)
     try:
-        if yaml.safe_load(text) == record:
+        if yaml.load(text, Loader=YAML_LOADER) == record:
             return text
     except yaml.YAMLError:
         pass

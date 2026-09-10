@@ -85,7 +85,9 @@ what here".
    tool-call markup, or request-less dialogues; the only leaks are two batch 009
    prompts (IDs 01002 and 01201) that begin with the line "This is my final
    answer." before an otherwise normal prompt, the leak the template's closing
-   paragraph now names explicitly. They are still in place. Batch 033 also lost
+   paragraph now names explicitly. The line was stripped from both files on
+   2026-09-07 (commit 4dcf3b06); the imported response runs 004 and 005, collected
+   before that, carry the earlier text in their `prompt` field. Batch 033 also lost
    65 of 10,000 generations to empty or errored responses, which the generator
    skipped; since batch 034 it retries such generations, up to four attempts,
    instead.
@@ -198,6 +200,8 @@ parameters and 8-bit-or-better endpoints only.
 | run_001 | Qwen3.5-122B-A10B | 1,000 | 0 | 0 | 0 | 4,477 / 6,637 | 64% | $10.10 |
 | run_002 | DeepSeek V4 Pro 0813, effort high | 100 | 0 | 0 (five regenerated, see above) | 0 | 12,423 / 19,717 | 86% | $4.15 |
 | run_003 | DeepSeek R1 0528 | 1,000 | 0 | 0 | 0 | 2,605 / 3,809 | 37% | $5.89 |
+| run_004_imported | Qwen3.5-397B-A17B-FP8 (imported, see README) | 22,367 x 2 | 29 | 0 | 0 | 3,936 / 5,405 | about 55% by words | none (self-hosted) |
+| run_005_imported | DeepSeek R1 0528 (imported) | 22,367 x 2 | 18 | 0 | 5 (all truncated inside the reasoning) | 2,349 / 3,091 | about 34% by words | none (self-hosted) |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -208,3 +212,15 @@ DeepSeek V4 Pro, none of 1,000 for R1 0528). The repeated-phrase flags were refr
 The one truncated response (run 000, prompt 32085, on Solomonoff induction) spent
 its whole 32,768-token budget reasoning and never reached an answer; it is kept
 with `finish_reason: length` and an empty `answer`.
+
+The two imported runs were checked the same way, and their flags are artifacts of
+the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers
+contain a `<think>` tag: the collector split each output at the first `</think>`,
+and the model had either emitted a second closing tag, so that the answer begins
+with the tail of the reasoning, or written the tag inside its answer. 22 and 4
+records have no reasoning; R1's 5 empty answers are all records truncated inside
+the reasoning. The 148 and 48 refusal-phrase hits are dialogue lines ("I can't
+write down the formula") and quoted phrases, and Qwen's 130 answers under 40 words
+are 93 JSON-only answers and 37 requested one-liners. The records were imported as
+they were; consumers should filter on `finish_reason` and on a `<think>` tag in the
+answer, as with the other runs.
