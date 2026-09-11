@@ -1,0 +1,40 @@
+I'm a staff engineer on the reliability team at a mid-size B2B SaaS company, and I own an internal tool we call the what-if ledger. After every incident review, the postmortem document gets parsed for sentences of the form "if X, Y," and each one becomes a row in a database that feeds our quarterly reliability backlog. The volume is roughly two hundred rows a quarter across about thirty postmortems, plus ad hoc submissions from on-call engineers. Each row carries a score, and that score determines whether the claim becomes funded work, so a mis-scored row can consume a team's capacity for three months on something that would not have prevented anything. Postmortems are nominally blameless here, but a subset of these rows name a person or a team decision in the antecedent, and those rows get read by managers, which raises the cost of getting them wrong.
+
+The classifier underneath the ledger is embarrassingly naive. It keys on verb form: a past-perfect antecedent with "would" in the consequent is treated as a genuine what-if and scored by the reviewer's estimate of how much harm it would have averted; everything else is treated as a hypothesis about what actually happened and routed to whoever owns the relevant telemetry. I've become convinced this is the largest single source of bad rows, because it assumes grammatical form tracks the kind of claim being made, and I now doubt that it does. I have no philosophy background — I picked up what I know from a few articles and one half-read book — so please treat my characterizations of the theory below as a layman's paraphrase and correct them before you build on them.
+
+Four things I believe, any or all of which may be garbled:
+
+1. There is a well-known pair of examples involving the Kennedy assassination in which an indicative and a subjunctive conditional built on the same subject matter come apart — one is something you would accept and the other something you would reject. If I have the shape of that right, it suggests verb form is doing real work, but I can't tell whether the work is semantic or merely evidential.
+
+2. For indicative conditionals, what governs how strongly you should accept one is the conditional probability of the consequent given the antecedent, which is not the same thing as the sentence's truth conditions; a conditional whose antecedent turns out false can be trivially true in the truth-conditional sense and still be worthless as a claim. I think this is associated with Adams.
+
+3. For subjunctives, the standard account evaluates them by looking at the hypothetical situations that differ from actuality as little as possible, with a bias toward keeping the past exactly as it was up to shortly before the change and then permitting one small, localized departure from how things normally go. I think this is Lewis.
+
+4. Subjunctive form does not guarantee a false antecedent. If the sample had been contaminated, we would be seeing exactly these numbers can be part of an argument that the sample was contaminated.
+
+Separately, I invented an enum for the ledger called divergence_class, meant to capture how much of the actual history has to be rewritten for the antecedent to hold:
+
+- KNOB: only a setting, a configuration value, or a decision that was genuinely open at the time differs; the rest of the timeline is intact.
+- CHAIN: the antecedent's difference requires changing something upstream as well — a different deploy order, a different rotation, an earlier alert — so the minimal world involves a modest rewrite.
+- REBUILD: the antecedent describes a system we do not have and could not have had at the time — a different consistency model, a different vendor, no legacy service — so holding the past fixed leaves nothing determinate.
+
+I suspect this is either a real distinction, a re-badging of something already named, or the wrong cut entirely. Tell me which, and if it's the wrong cut, propose a replacement field and say what it costs a reviewer to compute.
+
+What I want is a decision procedure a reviewer on my team can run on one row in about five minutes and reach a defensible verdict, with two reviewers tending to agree. Specifically:
+
+- An ordered sequence of tests. For each, give the question in plain English that someone with no theory can answer, what counts as a sufficient answer to it, and which verdict each possible answer forces. Say where the sequence stops early with a not-evaluable verdict.
+- A closed set of four to six verdicts that go into a single ledger field, each with the one-line justification string the reviewer records for audit.
+- Tie-breaker rules for when two tests point at different verdicts.
+- Explicit flags on every step that is a judgment call wearing a procedure's clothing, and on every point where the question is one of risk appetite or fairness rather than fact and therefore has to be handed to our reliability council instead of answered by the reviewer.
+- A short list of the theoretical distinctions the procedure deliberately discards — I expect the dispute over whether indicative conditionals have truth conditions at all is one of them — with a sentence on why discarding each is safe in this setting, or a warning if it isn't.
+- A limits section naming the classes of claim this procedure will systematically misfile, and a cheap triage signal for each.
+
+Then run the procedure end to end on three real rows and show the ledger output for each.
+
+Row 4471, from the March outage: If the migration had been applied before the deploy instead of after it, the connection pool would not have been exhausted and customers would not have seen errors. Recorded elsewhere in the same document: an unrelated retry bug in the payments client was independently driving the pool up, it was already at roughly eighty percent when the migration ran, and the authors estimated it would have exhausted on its own within about twenty minutes. My team has cited this row twice to justify a quarter of work on migration ordering, and I want the procedure applied to it honestly even if the verdict undercuts that argument.
+
+Row 5102, submitted by an on-call engineer who never checked: If the cache was cold when the traffic spike hit, the origin database took the whole load. Our parser filed this as a hypothesis about what actually happened. I can't tell whether it is one, whether it is a what-if in indicative clothing, or whether it is simply ambiguous, and I want to know what the reviewer should do when the antecedent is still open and telemetry exists that would settle it.
+
+Row 5290, from the vendor-incident review: If we didn't depend on a third party for session validation, one vendor incident could not have taken down the product. This appears true, but the antecedent describes an architecture we do not have and could not have reached without a year of work.
+
+Please keep the whole thing to roughly fifteen hundred to twenty-two hundred words, prose plus numbered lists, and skip the reading list — I have no time to chase sources this quarter. Where a distinction I've invented already has a standard name, give me the name, because I want our internal vocabulary to be consistent.

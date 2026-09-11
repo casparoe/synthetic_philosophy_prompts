@@ -1,0 +1,30 @@
+So I have this running game with a friend and I need a second opinion before she beats me to it. Context: I'm a backend engineer, zero philosophy training. My friend Nadia did a philosophy degree, then ended up in data engineering, and she still thinks about this stuff for fun. Every so often I send her a scenario from our production systems and she tells me what the right answer is, then we argue about it for a week.
+
+The topic she got me hooked on is dispositions. She started me off with two toy examples. First: a wire that conducts electricity, except there's a box wired to it that makes it stop being conductive the instant a conductor touches it — she says that wire is *not* live, full stop, not "live but prevented." Second: a glass that would shatter if you dropped it, except it ships encased in packing foam so it never actually would — she says that one *is* still fragile, the foam is just in the way. She has technical names for those two situations (finks, masks, antidotes, she uses them interchangeably and won't correct me) but I've never reliably remembered which is which, so ignore my vocabulary.
+
+Then I started sending her real cases from work. Our ingest worker has a parser bug: hand it a malformed record and the process throws and dies. Here's her track record, in order:
+
+1. Bug present, nothing else bolted on. → "Yes, obviously it's disposed to die."
+2. We put a supervisor around it that restarts the process about two seconds after it dies. Bug untouched, process genuinely exits, users see two seconds of 500s. → "Still disposed. It died. You cleaned up afterward, that's not the same as it not dying."
+3. We put a schema validator upstream that rejects malformed records before they ever reach the worker. Worker's bug untouched. → "The worker is still disposed to die. The *pipeline* isn't. Those are two different questions and you keep asking me the wrong one."
+4. The worker dies at 50k concurrent uploads but is completely fine at 10k. → "Disposed to die at 50k. Not disposed to die at 10k. Don't ask me about 30k, that's a boring question and I'd answer it in a way you'd hate."
+5. We ran a hot-patching daemon that watched the queue and swapped in a fixed parser a few milliseconds before any malformed record got parsed, so the process never actually died. → "Not disposed. It wouldn't have died. End of story." I pointed out the buggy parser was still sitting in the artifact registry, and she said "so what, it wasn't in *the thing*."
+6. Same daemon, but shipped as a library inside the worker process instead of a separate service. → Also not disposed, and she got irritated when I suggested the location of the rescuing code might matter: "I don't care whether the code that saves it lives in the same binary."
+7. A nightly maintenance window where a feature flag disables the buggy code path; enabled the rest of the day. → "Disposed to die, except between 02:00 and 02:20, when it isn't. Dispositions come with timestamps. Deal with it."
+
+Here's the case she hasn't seen yet. Another team added a catch-all exception handler two stack frames above our parser call site — not for us, they wanted better logging on a totally unrelated failure and their wrapper happened to enclose our call. So now: hand the worker a malformed record and the buggy parser still runs, still throws the exact same exception it's always thrown, the exception propagates up two frames, gets caught, the record lands in a dead-letter queue, and the process keeps going. Nobody patched anything. No flag changed. No external service got involved. The parser code in the running binary is byte-for-byte identical to the code that's been killing us for two years.
+
+Two wrinkles that I think matter:
+- the handler only catches from that one call site. If the same malformed data reaches the parser by any other route — a replay job, a manual curl to the admin endpoint — the process still dies.
+- the handler has its own bug. Two malformed records inside the same second overflow a counter in it and it throws, and then the process dies.
+
+Question: is the worker disposed to die when handed a malformed record?
+
+What I want from you:
+
+- Your best guess at Nadia's answer, with the reasoning, not just the verdict. Specifically I want the rule she could be running that makes all seven earlier answers come out right *and* makes this one come out however you're predicting. I'm confident there's more than one candidate rule that fits the seven, so lay out the genuinely different ones, say what each predicts for the new case, and if more than one survives, tell me which you'd bet on and why. Be honest about which of her earlier answers are doing the real work in ruling things out and which ones are compatible with almost anything.
+- Then design one more scenario I could send her that would force the surviving rules apart — a case where they'd have to give different answers, not just different explanations of the same answer. Bonus points if it's something I could actually build, because half the fun is that these are real systems and I can go check.
+- Call out anything about the new case that makes my question ill-posed. My suspicion is that "the worker" is doing a ton of work here — am I asking about the process, the deployed binary, the parser function, the service as an ops entity? Her answer to number 3 makes me think she'd tell me I'm pointing at the wrong object again, and I want to know whether there's a phrasing of the question where that dodge isn't available to her.
+- Also, does the fact that the exception genuinely gets thrown and propagates two frames before being caught change anything? It feels different from the foam case, where the glass never even starts to break. But I can't tell if I'm onto something or just describing a stack trace.
+
+Plain English please, and no reading list. I'm not going to read it and I dont care who said what in a journal in the 90s. I care about the cases.

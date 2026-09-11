@@ -1,0 +1,48 @@
+I'm a backend engineer, not a philosopher, so please treat my vocabulary as rough and correct me where I've mislabeled something. For the past year I've been building an internal risk-scoring service: given a proposed change — a deploy, a feature-flag flip, a schema migration — it estimates the probability that the change causes a customer-visible incident within 24 hours. A downstream policy consumes that estimate to decide whether to force a staged rollout, and a human on-call engineer sees it on a dashboard.
+
+My problem is that the honest output of this thing is not a single number. Different defensible priors, training windows, and assumptions about which upstream dependency is in play yield genuinely different answers, and picking one feels like manufacturing precision I don't have. So I've been moving toward interval outputs, written as (low, high), and I've been keeping a running list of my own gut verdicts about when intervals are acceptable and how one should act on them. I want to know what principle, if any, they add up to.
+
+My verdicts:
+
+1. A weather forecast saying "30% chance of rain" I accept without complaint. A deploy-risk score saying "0.12" I do not accept, even from a better-instrumented pipeline. The difference seems to be that rain is a repeatable event with a huge history of past days behind it, whereas my incident risk is a one-off.
+2. An interval of [0.45, 0.55] is fine. It's a point estimate with honest error bars and nobody is being misled.
+3. An interval of [0.05, 0.95] is useless to me for the decision I actually have to make — and yet I would rather see it on the dashboard than the confident 0.50 the model emits today. I can't explain why 0.50 feels like a lie and [0.05, 0.95] feels like an admission.
+4. Say the model gives [0.2, 0.4]. I can query which of two upstream regions the traffic is being routed through; conditional on region A the range would tighten to [0.05, 0.15], conditional on region B it would tighten to [0.6, 0.8]. So if I run the query, my range in advance of seeing the answer becomes [0.05, 0.8] — wider than what I had before I asked. (I believe there's a name for this, something like dilation; name it in passing if so, and move on.) My verdict: that is unacceptable behavior for a system, an "information" request that leaves me knowing less. And also: I would be irrational not to run the query. I hold both.
+5. An engineer who declines to look at a dashboard because they know it will widen their range is being cowardly and irrational, even though everything they say about the widening is true.
+6. Two reviewers, same evidence. One says [0.1, 0.3]; the other says [0.15, 0.25]. I don't think the second is more likely to be correct or better calibrated. But I'd rather have the second one on the incident call, and if the truth turns out to be 0.6 I'd blame the second one more.
+7. If one subsystem says [0.1, 0.3] and another says [0.4, 0.7], I refuse to let the combined answer be the empty set. Widening to [0.1, 0.7] is right; treating disagreement as a reason to become more definite is wrong.
+8. When the decision is irreversible and the stakes are high — roll forward or roll back during a live incident — I act on the worst case in the interval. When the stakes are low — which queue topology to use — I act on the midpoint. Both feel correct, and any principle that hands me a single fixed rule (always worst case, always midpoint) seems to be missing something real.
+9. But I also think reaching for the midpoint is suspicious, because the midpoint of [0.05, 0.95] is 0.50, and I just said 0.50 is a lie. This is the pair I cannot reconcile with verdict 8.
+10. "I don't know" is a more honest answer than any number, and "I don't know" is not an acceptable answer to a change that has to be approved before the release train leaves at 16:00. I hold both.
+11. I will happily assert probability 0 for "this branch is reachable" when static analysis proves it, and I will never assert 0 or 1 about a production forecast. That asymmetry looks inconsistent and I can't see why it isn't.
+12. If the truth turns out to be 0.3 and my interval was [0.1, 0.5], I don't feel I was right. Containment is not success.
+13. Yet verdict 12 opens a loophole: a system that always outputs [0, 1] can never be caught out that way. I think that system should score strictly worse than one that says 0.5 forever, and I don't know how to make that come out.
+14. A narrow interval from a source I know to be biased feels worse to me than a wide interval from a source I trust. Narrowness is not a virtue in itself — but I catch myself treating it as one every time I ask the model for more precision.
+
+What I'd like from you:
+
+- State one principle, or at most two or three competing ones, precisely enough that I could implement it. Every clause should be tied to the verdicts that motivate it, and I want to see which clause exists to handle which case.
+- Take a position on the hard pairs: 4 against 5, 8 against 9, and 3 against 12 and 13. Say explicitly which of my verdicts survive and which get revised.
+- Where your principle implies a decision rule or a scoring rule for interval forecasts, state it as a rule rather than as an attitude.
+- Then apply it to two situations I have no verdict on: (i) aggregating per-service intervals into a system-level interval for a change that touches five services at once; (ii) whether to show the interval to the on-call human at all, or only the recommended action, given that in practice wide intervals seem to make people freeze and defer.
+
+No citations, references, or reading list — I want the reasoning, not pointers to papers.
+
+Format: give whatever prose you need to state the principles, then a coverage table with exactly these columns: `verdict_id`, `my_verdict_briefly`, `status` (one of preserved / revised / overturned), `handling_clause`, `note`. Then a single valid JSON object with this schema and no extra keys:
+
+```
+{
+  "recommended_principle": {
+    "name": "",
+    "statement": "",
+    "clauses": [{"clause": "", "motivating_verdict_ids": [""], "what_it_does": ""}]
+  },
+  "alternatives": [{"name": "", "statement": "", "verdicts_it_saves": [""], "verdicts_it_costs": [""], "why_rejected": ""}],
+  "hard_pair_resolutions": [{"verdict_ids": [""], "resolution": ""}],
+  "dropped_or_revised": [{"verdict_id": "", "what_changes": "", "why": ""}],
+  "new_case_predictions": [{"case": "", "prediction": "", "confidence": "high | medium | low", "rationale": ""}],
+  "decision_rule": "",
+  "scoring_rule": "",
+  "biggest_open_question": ""
+}
+```
