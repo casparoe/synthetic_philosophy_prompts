@@ -36,12 +36,14 @@ re-render from the batch's snapshot; those should simply be zero.
 | 021 | Sonnet 5 (Message Batches) | 9,977 | 1.7% | 4.6% | n/a | adjudication example 2, 134 prompts |
 | 028 | Qwen3.8-27B (local) | 944 | 7.4% | 14.6% | n/a | interview-questions example 0, 19; adjudication examples, 28 |
 | 030 | Sonnet 5 (streaming) | 93 | 1.1% | 5.4% | 0% / 0% | classroom-activity example 0, 1 prompt |
+| 031 | Qwen3.8-27B (local) | 958 | 16.3% | 37.0% | 7.4% / 10.4% | adversarial-collaboration example 0, 20; procedure example 0, 17 |
 | 032 | DeepSeek V4 Pro (OpenRouter) | 969 | 5.9% | 17.2% | 12.5% / 2.7% | how-to-teach example 0, 10 prompts |
 | 033 | DeepSeek V4 Pro (OpenRouter) | 9,931 | 5.7% | 21.0% | 18.4% / 6.3% | classroom-activity example 0, 106; procedure example 0, 85 |
 | 034 | GLM-5.3 (OpenRouter) | 1,000 | 5.5% | 21.7% | 11.5% / 2.2% | classroom-activity example 0, 11; procedure example 0, 9 |
 | 035 | GLM-5.3 (OpenRouter) | 19,998 | 5.3% | 21.7% | 11.1% / 3.2% | classroom-activity example 0, 230; procedure example 0, 154 |
 | 036 | Qwen3.8 2.4T-A95B (OpenRouter) | 999 | 1.7% | 11.8% | 5.6% / 1.8% | classroom-activity example 0, 7; procedure example 0, 5 |
 | 037 | Muse Spark 1.3 (OpenRouter, Meta) | 1,000 | 0.7% | 4.2% | 20.5% / 5.1% | classroom-activity example 0, 2 prompts |
+| 038 | Qwen3.8 2.4T-A95B (OpenRouter) | 19,997 | 1.7% | 10.5% | 2.8% / 2.1% | classroom-activity example 0, 125; procedure example 0, 88 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -51,7 +53,9 @@ what here".
 
 1. **Echo is mostly a property of the generating model.** Sonnet 5 sits at 1-2%
    heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, DeepSeek V4 Pro
-   and GLM-5.3 at about 6%, Qwen3.8-27B at about 7%.
+   and GLM-5.3 at about 6%, Qwen3.8-27B at about 7% in batch 028 and 16% in batch
+   031, whose task-type snapshot adds the adversarial-collaboration, procedure, and
+   classroom-activity examples that are the strongest magnets for every model.
    Within a model the rate is stable across batch sizes (032 vs. 033, 034 vs. 035).
 2. **A few examples act as magnets.** For Sonnet it is the extended-warranty
    adjudication example (its closing "adjudicate move by move" formula). For
@@ -74,7 +78,10 @@ what here".
    batch 033 (up to 274 shared eight-word phrases) quote the same passage of
    Carroll's Tortoise dialogue, Maimonides' Guide III.32, or Machiavelli's chapter
    25. That is expected from the passage-understanding type when the same domain
-   recurs.
+   recurs. Batch 038, whose generator searched and fetched about twice per prompt,
+   has 27 such pairs above 100 shared phrases (33 prompts): Aristotle's *Nicomachean
+   Ethics* on proportionate requital, Maimonides again, Polybius on the study of
+   history.
 6. **Defective prompts removed.** Batch 033 originally had three prompts that
    role-played the dataset builder ("I'm building a dataset of philosophy prompts
    and I need one ...": IDs 27747, 28529, 32852) and one dialogue with no request
@@ -90,7 +97,13 @@ what here".
    before that, carry the earlier text in their `prompt` field. Batch 033 also lost
    65 of 10,000 generations to empty or errored responses, which the generator
    skipped; since batch 034 it retries such generations, up to four attempts,
-   instead.
+   instead. Batch 031, made on the desktop with the older generator, arrived on
+   2026-09-10 with six more dataset-builder prompts (IDs 24015, 24132, 24270,
+   24635, 24728, 24753), deleted before the batch was committed, and one prompt
+   (24393) that opened with the line "here's a prompt for my dataset:", which was
+   stripped; the older generator also skipped 36 defective generations there
+   (17 empty or truncated thinking, 13 unfinished tool loops, 6 read timeouts),
+   so IDs 24841-24876 were never used.
 7. **Process notes before the prompt.** GLM-5.3 sometimes opens with a note on its
    own procedure ("Quick sanity check before I write this: the prompt involves
    Aumann's agreement theorem, but doesn't quote any text or lean on specific
@@ -142,12 +155,25 @@ what here".
   searches per prompt. SiliconFlow is its only host with a disclosed precision.
   That endpoint ends tool-calling rounds without a finish reason, and OpenRouter
   records those rounds at zero cost, so the sidecar costs (which are OpenRouter's
-  own figures) understate list price for prompts that used tools.
+  own figures) understate list price for prompts that used tools. The 20k batch
+  038 cost $706 in the sidecars plus about $7 for 302 retried generations and a
+  few dollars of requests lost to three sleep pauses; it took 33 hours of running
+  time at concurrency 48 (about 10 prompts a minute), and three prompts were given
+  up because their meta-prompt sent the model past the 32,768-token budget on all
+  four attempts.
 - Muse Spark 1.3 (batch 037, proprietary, standard tier, effort high) cost $23 per
   1,000 prompts at 24 prompts a minute, with no defective generation in 1,000. It
   has the lowest example echo of any generator but the highest instruction copying,
   writes the shortest prompts (median 314 words), and used the web tools once in
   1,000 prompts, so its prompts contain no fetched quotations.
+- Batch 031 (958 prompts) was generated on a second machine (a Framework desktop)
+  with a local llama-server (Qwen3.8-27B at Q8_0, eight parallel slots, 280k
+  context) between 2026-09-06 and 2026-09-10: about 240 prompts a day, 10,200
+  output tokens per prompt, no API cost. That machine ran the pre-034 generator,
+  which retried 135 read timeouts against the slow local server but skipped
+  defective generations instead of regenerating them (36 of 1,000) and did not
+  screen for preambles or dataset framing; the seven such prompts were curated
+  after the batch was copied here (observation 6).
 
 ## Responses
 
