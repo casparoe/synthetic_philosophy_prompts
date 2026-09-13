@@ -280,19 +280,35 @@ def answer_one(client, cfg, pid, path, sample_index):
             if response.status_code != 200:
                 problem = f"HTTP {response.status_code}"
             else:
-                data = response.json()
-                choices = data.get("choices") or [{}]
-                error = data.get("error") or choices[0].get("error")
-                if error:
+                try:
+                    data = response.json()
+                    if not isinstance(data, dict):
+                        raise ValueError("body is not a JSON object")
+                except ValueError as e:
+                    # a 200 with a truncated or non-JSON body (seen from SiliconFlow):
+                    # retry like any other transient failure instead of crashing
+                    data = None
+                    problem = f"malformed body ({e.__class__.__name__})"
+                choices = (data.get("choices") or [{}]) if data else [{}]
+                error = (data.get("error") or (choices[0].get("error") if isinstance(choices[0], dict) else None)) if data else None
+                if data is None:
+                    pass
+                elif error:
                     problem = f"provider error {error.get('code')}: {str(error.get('message'))[:200]}"
                 elif not data.get("choices"):
                     problem = "no choices in response"
                 else:
-                    record = make_record(cfg, pid, path, sample_index, messages, data)
+                    try:
+                        record = make_record(cfg, pid, path, sample_index, messages, data)
+                    except (KeyError, TypeError, IndexError, AttributeError) as e:
+                        record = None
+                        problem = f"unexpected response shape ({e!r})"
                     # A response is complete only if the model stopped by itself
                     # or hit the budget; some hosts return a cut-off generation
                     # with no finish reason and no answer at all.
-                    if record["finish_reason"] not in ("stop", "length"):
+                    if record is None:
+                        pass
+                    elif record["finish_reason"] not in ("stop", "length"):
                         problem = f"finish_reason={record['finish_reason']!r} from {record['provider']}"
                     elif not record["answer"] and record["finish_reason"] != "length":
                         problem = f"empty answer from {record['provider']}"
