@@ -14,7 +14,8 @@ The prompts are deliberately "in the weeds": specific enough that a model cannot
 answer by regurgitating a canned summary, while remaining answerable for a model
 without web access. Alongside the prompts, `responses/` collects responses to
 subsets of them from open-weight models, each with the model's full chain of
-thought (see [Responses](#responses)).
+thought (see [Responses](#responses)), and `preferences/` collects pairwise judgments
+of such responses by a strong model (see [Preference pairs](#preference-pairs)).
 
 ## Layout
 
@@ -30,6 +31,13 @@ responses/
   run_NNN/                a response run (run_NNN_imported/ if converted from the sister repo, see below)
     run.yaml              run-level settings (model, sampling parameters, provider preferences, prompt set)
     prompt_XXXXX.yaml     one file per response: the prompt as sent, chain of thought, answer, usage
+preferences/
+  judge_prompt.j2         the judge prompt: which of two responses to the same prompt is better, five options
+  pairs/NAME.yaml         a pair set: which two responses are compared for which prompts, in which A/B order
+  run_NNN/                a preference run: one judge over one pair set
+    run.yaml              judge model, effort, pair set, prices used for the cost field
+    judge_prompt.j2       the template as it was when the run started
+    prompt_XXXXX.yaml     one file per pair: verdict, the judge's visible reasoning and summarized thinking, usage
 meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
@@ -43,11 +51,14 @@ generators/
   generate_prompt_batch.py  generator: Anthropic Message Batches API
   generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
   generate_responses.py     model responses to a prompt set (OpenAI-compatible endpoints, OpenRouter)
+  judge_pairs.py            preference judgments over a pair set (Anthropic API, streamed or as Message Batches)
 tools/
   check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
+  make_pair_set.py          writes a pair set: complete response pairs from one run (two samples) or two runs, seeded sample
+  check_preferences.py      report for a preference run: coverage, verdicts, position balance, cost; agreement of two runs
 QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
@@ -167,6 +178,60 @@ split by the collector, and every record names its source collection and origina
 ID. Each `run.yaml` says `api: imported` and carries a `source` block with the
 collection files, dates, and serving setup.
 
+## Preference pairs
+
+`preferences/` holds pairwise judgments: which of two responses to the same prompt is
+the better reply. The first use is a small evaluation of weak judges against a strong
+one (asked many times and for confidence estimates, does a weak model recover the
+preferences of a strong one?), so the strong judge is a Claude model at maximum
+reasoning effort, while the responses being judged remain the open-weight models'.
+
+A *pair set* (`preferences/pairs/NAME.yaml`, written by `tools/make_pair_set.py`)
+fixes which two responses are compared for which prompts and which one is shown first
+(A) and which second (B), so that every judge sees exactly the same pairs. Pairs come
+either from one run with two samples per prompt (two answers by the same model) or
+from two runs (one answer each). Only complete pairs qualify: both responses have
+`finish_reason: stop`, a non-empty answer without a stray `<think>` tag, and the prompt
+text as it stands in `prompts/`. The A/B order is a coin flip per pair, drawn from the
+set's seed.
+
+`generators/judge_pairs.py` renders `preferences/judge_prompt.j2` with the prompt and
+the two answers (the responders' chains of thought are not shown), asks the judge to
+think it through and end with one of five verdicts (strongly A, weakly A,
+unsure/similar, weakly B, strongly B), and writes one YAML file per pair to
+`preferences/run_NNN/`. Requests are streamed one at a time per worker or submitted as
+Message Batches (half price). A judgment that ends without a verdict line or is cut
+off by the output budget is retried; nothing is edited. `tools/check_preferences.py`
+reports coverage, the verdict distribution, the balance between A and B (a position
+bias check, since the order is a coin flip), token usage and cost, and the agreement
+between two runs on the same pair set.
+
+Each judgment file has:
+
+| Field | Meaning |
+|---|---|
+| `id`, `pair_set`, `response_a`, `response_b` | prompt ID; the pair set; the two response files, in the order shown to the judge |
+| `judge_model`, `effort`, `api` | the judge, its reasoning effort, and whether the request was streamed (`messages`) or batched (`message_batches`) |
+| `verdict` | one of the five options, as parsed from the judge's final line |
+| `preferred`, `strength` | the preferred response file (null for unsure/similar) and `strong` or `weak` |
+| `stop_reason`, `input_tokens`, `output_tokens`, `cost_usd`, `message_id`, `attempts` | API metadata; cost at the per-token prices recorded in `run.yaml`; how many judgments it took to get a verdict |
+| `thinking`, `judgment` | the judge's thinking as the API returns it (a summary) and its visible reasoning, ending in the verdict line |
+
+Pair sets and runs so far:
+
+| Pair set | Pairs | Responses compared | Runs |
+|---|---|---|---|
+| `r1_imported_510` | 510 | the two DeepSeek R1 0528 samples of run_005_imported, for a seed-0 sample of prompts of batches 000–021 whose responses are complete in both imported runs | run_000: Claude Fable 5.1, effort max, via Message Batches; 503 judgments |
+| `qwen397b_imported_510` | 510 | the two Qwen3.5-397B-A17B samples of run_004_imported, for the same 510 prompts | run_001: Claude Fable 5.1, effort max, via Message Batches; 503 judgments |
+
+Both sets were drawn as 500 prompts and topped up to 510 by continuing the same seeded
+walk, so that each run has at least 500 judgments: the API blocked the judge's output
+("Output blocked by content filtering policy") on every attempt for seven pairs per run,
+four of them the same prompts in both runs; these are listed under `given_up` in each
+`run.yaml`. The judge shows a clear position bias in both runs, preferring the response
+shown second in about 62% of the decided pairs although the order is a coin flip; see
+`QUALITY_NOTES.md`.
+
 ## Quality control and known limitations
 
 - Every recent batch was swept for meta-commentary leaking into the prompt text
@@ -251,6 +316,12 @@ python generators/generate_responses.py --prompt-set responses/sets/open_1k.txt 
     --api-key-file api_keys/openrouter.txt --quantizations fp8,int8,bf16,fp16 \
     --provider-order deepinfra,parasail --concurrency 16
 python tools/check_run.py responses/run_000
+
+# preference pairs: fix the pairs, judge them with a Claude model, check the run
+python tools/make_pair_set.py preferences/pairs/r1_imported_510.yaml --runs responses/run_005_imported \
+    --complete-in responses/run_004_imported --sample 510 --seed 0
+python generators/judge_pairs.py --pairs preferences/pairs/r1_imported_510.yaml --api batches --prices 5,25
+python tools/check_preferences.py preferences/run_000
 ```
 
 The OpenAI-compatible generator expects a llama.cpp `llama-server` (launched with

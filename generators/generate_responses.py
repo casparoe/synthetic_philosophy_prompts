@@ -143,15 +143,15 @@ def literal_block(key, text):
     return f"{key}: |-\n{body}\n"
 
 
-def record_yaml(record):
+def record_yaml(record, text_fields=TEXT_FIELDS):
     """The record as YAML with the long text fields as literal blocks at the
     end. PyYAML would quote and escape a text that has a tab or a trailing
     space, so the blocks are written by hand and the result is checked by
     loading it back; if anything does not round-trip, the whole record falls
     back to PyYAML's own (less readable, always correct) rendering."""
-    head = {k: v for k, v in record.items() if k not in TEXT_FIELDS}
+    head = {k: v for k, v in record.items() if k not in text_fields}
     text = yaml.safe_dump(head, sort_keys=False, allow_unicode=True)
-    for key in TEXT_FIELDS:
+    for key in text_fields:
         if key not in record:
             continue
         value = record[key]
@@ -167,11 +167,11 @@ def record_yaml(record):
     return yaml.safe_dump(record, sort_keys=False, allow_unicode=True)
 
 
-def write_record(path, record):
+def write_record(path, record, text_fields=TEXT_FIELDS):
     """Write via a temporary file and rename, so a crash never leaves a
     truncated response file that --resume would mistake for a finished one."""
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(record_yaml(record), encoding="utf-8")
+    tmp.write_text(record_yaml(record, text_fields), encoding="utf-8")
     os.replace(tmp, path)
 
 

@@ -310,3 +310,76 @@ write down the formula") and quoted phrases, and Qwen's 130 answers under 40 wor
 are 93 JSON-only answers and 37 requested one-liners. The records were imported as
 they were; consumers should filter on `finish_reason` and on a `<think>` tag in the
 answer, as with the other runs.
+
+## Preference pairs
+
+Preference runs (`preferences/run_NNN/`) are checked with
+
+    .venv/bin/python tools/check_preferences.py preferences/run_NNN [--compare preferences/run_MMM]
+
+which reports coverage of the pair set, the verdict distribution, the balance between
+A and B, judgments without a verdict line or with a stop reason other than `end_turn`,
+retries, token usage, and cost, and, with `--compare`, the agreement of two runs on the
+same pair set. Things to track per run:
+
+- **Position balance.** The pair set decides by a coin flip which response is shown as
+  A, so a judge without position bias should prefer A and B about equally often; a
+  clear tilt toward A or B is a bias of the judge, not of the responses.
+- **Missing verdicts.** The judge is asked to end with `Verdict: <option>`. A judgment
+  without a parseable verdict line, or cut off by the output budget, is retried up to
+  three times and otherwise dropped, so records with a null verdict should not exist.
+- **Refusals** (`stop_reason: refusal`) are dropped without retry and would show up as
+  missing coverage.
+- **Cost.** Claude Fable 5.1 costs $10 per million input and $50 per million output
+  tokens on the Messages API and half of that through Message Batches. A judgment at
+  maximum effort reads 2,500–9,000 tokens (the prompt and two answers) and writes
+  8,000–13,000 (mostly thinking), so it costs about $0.40–0.75 streamed and half that
+  batched (pilot of 6 pairs, 2026-09-13).
+
+### Runs (2026-09-13)
+
+Both pair sets hold the same 510 prompts: a seed-0 sample of the 22,367 prompts of
+batches 000–021 that have complete responses in both imported runs (500 drawn first,
+then 10 more by continuing the same walk, see below). Each pair is two samples of the
+same model for the same prompt; the judge is Claude Fable 5.1 at effort max, sent as
+Message Batches (each round of a batch took about ten minutes).
+
+| Run | Pairs | Judgments | Strongly A / weakly A / unsure / weakly B / strongly B | A vs B among decided | Output tokens (mean / p90) | Cost |
+|---|---|---|---|---|---|---|
+| run_000 | `r1_imported_510` (DeepSeek R1 0528 x 2) | 503 | 35 / 155 / 6 / 233 / 74 | 38% vs 62% | 11,905 / 17,500 | $165 |
+| run_001 | `qwen397b_imported_510` (Qwen3.5-397B x 2) | 503 | 27 / 154 / 15 / 264 / 43 | 37% vs 63% | 12,138 / 17,900 | $167 |
+
+- **Position bias.** The order of the two responses is a coin flip per pair, yet the
+  judge preferred the response shown second (B) in 62–63% of the decided pairs in both
+  runs (z above 5 in each). Split by which sample was shown first, the tilt toward B is
+  the same either way, and the preferred *sample* (first or second draw of the model) is
+  balanced (245 vs 252, and 223 vs 265), so this is a bias for the second position, not
+  a difference between the samples. The bias is stronger among the "strongly" verdicts
+  (74 strongly B against 35 strongly A for R1; 43 against 27 for Qwen). Consumers who
+  need order-free judgments should judge each pair in both orders and combine, at
+  twice the cost; a run on the same pair sets with A and B swapped would do.
+- **Verdicts.** Same-model pairs are close calls: the judge said "unsure/similar" for
+  only 1% (R1) and 3% (Qwen) of the pairs and "weakly" for 77% and 83%; "strongly" for
+  22% and 14%. Every judgment ended with a parseable verdict line at the first attempt.
+- **Content-filter blocks.** The API rejected some requests with `Output blocked by
+  content filtering policy` (an `invalid_request_error` in the batch results): 13 of
+  500 R1 pairs and 14 of 500 Qwen pairs in the first round. About half passed when
+  resubmitted, but six per run were blocked on all three attempts; the sets were then
+  extended by 10 prompts, of which one was blocked in both runs as well, for seven
+  given up per run, four of them the same prompts in both. Most concern three texts:
+  Turing's 1950 "Computing Machinery and Intelligence" (four different prompts: 00891,
+  01012, 08668, 10548), von Neumann's 1955 "Can We Survive Technology?" (06003, 17300),
+  and Hobbes's Leviathan on authors and actors (08742); the others are Aquinas and
+  double effect (21044), Pascal on justice and force (02484), and Du Bois and Locke on
+  Black art (18024). The prompts are innocuous philosophy, so the filter seems to
+  react to something in the judge's own output about these texts. The pairs are
+  listed under `given_up` in each `run.yaml`; `judge_pairs.py --resume` skips them
+  unless `--retry-given-up` is passed.
+- **Redacted thinking.** Three judgments (run_000, prompts 12758 and 15779; run_001,
+  prompt 10080) have `thinking: null` although each used more than 10,000 output
+  tokens: the API returned the thinking redacted. Their judgment text and verdict are
+  complete.
+- **Cost and length.** $0.33 per judgment through Message Batches ($5/$25 per million
+  tokens): about 6,000 input tokens (the prompt and two answers) and 12,000 output
+  tokens, of which the visible judgment is about 470 words. The pilot of six pairs
+  through the streamed Messages API cost $0.60 per judgment.
