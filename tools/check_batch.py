@@ -2,7 +2,7 @@
 """Quality report for a prompt batch.
 
 Checks: counts and skips, cost / token / provider mix (where recorded), ID
-collisions across all batches, leak scans (tool-call markup, chat preambles,
+collisions across all batches, leak scans (tool-call markup, chat preambles, leaked deliberation,
 process notes before the prompt, dataset-construction framing, prompts wrapped
 in quotes), example echo (prompts
 reusing wording from the task-type examples they were shown), verbatim copying
@@ -57,6 +57,43 @@ PROCESS_NOTE_STRONG_RE = re.compile(
     re.I,
 )
 PROCESS_NOTE_WORDS = 60
+
+# The model's own deliberation leaking into the prompt text, seen with DeepSeek
+# V4.1 Flash: the answer opens with planning ("Let me actually settle. I'll pick:
+# Domain = ...", "The user wants a prompt only.") or with a fragment of a thought,
+# or the prompt is followed by a self-review ("--- Hmm, that's decent. Let me
+# check for issues."). Casual openers ("Ok,", "Let's do a role-play", "Let me
+# preface this") and "Constraints:" paragraphs are legitimate and not matched.
+DELIBERATION_HEAD_RE = re.compile(
+    r"^\s*(?:\.\.\.|Let me (?!preface|start by|begin by|explain|be )|Hmm\b|Actually[,:]|Wait\b"
+    r"|I'll (?:pick|go with|draft|write the prompt|write it)\b"
+    r"|I need to (?:pick|choose|decide|write (?:a |the )?(?:\w+ )?prompt)\b|The user wants\b|Options?:"
+    r"|Domain\s*[=:]|Type\s*[=:]|\w+ type[,:] |Now,? let me|First,? let me|Final check|Good\."
+    r"|I'm thinking about which|That'?s (?:decent|good|fine)|[:;)\]\-\u2013\u2014,.])",
+    re.I,
+)
+SELF_REVIEW_RE = re.compile(
+    r"^(?:Hmm\b|Let me (?:check|review|make sure|verify|double-?check|count|re-?read|refine|tighten|trim"
+    r"|polish|finalize|reconsider|decide|also make sure|see if|look at the|think about (?:the|which|whether))"
+    r"|That'?s (?:decent|pretty good|solid)\b|That'?s (?:good|fine)\. (?:Let me|Now|Length|Check|Final|I'll)"
+    r"|Good\.|Check(?:ing|s)?:|Final check|Word count|Length check"
+    r"|Now let me (?:check|review|make sure|verify|double-?check|count|re-?read|refine|tighten|trim|polish|finalize|reconsider)"
+    r"|OK[,.] (?:let me|that works)|Okay[,.] (?:let me|that works)"
+    r"|I (?:should|need to) (?:check|make sure|tighten|trim|double-check)|Wait[,\u2014-] (?:the|I|is|does|let)"
+    r"|Actually[,:] (?:let me|I should|I'll|wait|the instruction|the prompt))",
+    re.I,
+)
+PARAGRAPH_START_RE = re.compile(r"(?:^|\n\n|\n---+\n\n?)([^\n]+)")
+
+
+def leaked_deliberation(prompt_text):
+    """Return a short reason if the text carries the model's deliberation, else None."""
+    if DELIBERATION_HEAD_RE.match(prompt_text):
+        return "deliberation or a fragment before the prompt"
+    for m in PARAGRAPH_START_RE.finditer(prompt_text):
+        if m.start(1) >= 150 and SELF_REVIEW_RE.match(m.group(1).strip()):
+            return "self-review after the prompt"
+    return None
 
 
 def process_note(prompt_text):
@@ -147,6 +184,8 @@ def main():
     print("chat preamble at start:", flag(PREAMBLE, lambda t: t.strip())[:5] or "none")
     notes = [name for name, t in texts.items() if process_note(t)]
     print("process note before the prompt:", notes[:8] or "none")
+    leaks = [name for name, t in texts.items() if leaked_deliberation(t)]
+    print("model deliberation before or after the prompt:", leaks[:8] or "none")
     print("dataset-construction framing leaked:", flag(META)[:8] or "none")
     quoted = [name for name, t in texts.items() if t.strip().startswith(('"', "“")) and t.strip().endswith(('"', "”"))]
     print("wrapped in quotes / pure dialogue:", quoted[:5] or "none")

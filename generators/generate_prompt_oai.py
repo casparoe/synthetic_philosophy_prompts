@@ -101,6 +101,44 @@ def process_note(prompt_text):
 
 # A prompt that role-plays the dataset builder ("I'm building a dataset of
 # prompts and I need one on ...") is the meta-task leaking through.
+# The model's own deliberation leaking into the prompt text, seen with DeepSeek
+# V4.1 Flash: the answer opens with planning ("Let me actually settle. I'll pick:
+# Domain = ...", "The user wants a prompt only.") or with a fragment of a thought,
+# or the prompt is followed by a self-review ("--- Hmm, that's decent. Let me
+# check for issues."). Casual openers ("Ok,", "Let's do a role-play", "Let me
+# preface this") and "Constraints:" paragraphs are legitimate and not matched.
+DELIBERATION_HEAD_RE = re.compile(
+    r"^\s*(?:\.\.\.|Let me (?!preface|start by|begin by|explain|be )|Hmm\b|Actually[,:]|Wait\b"
+    r"|I'll (?:pick|go with|draft|write the prompt|write it)\b"
+    r"|I need to (?:pick|choose|decide|write (?:a |the )?(?:\w+ )?prompt)\b|The user wants\b|Options?:"
+    r"|Domain\s*[=:]|Type\s*[=:]|\w+ type[,:] |Now,? let me|First,? let me|Final check|Good\."
+    r"|I'm thinking about which|That'?s (?:decent|good|fine)|[:;)\]\-\u2013\u2014,.])",
+    re.I,
+)
+SELF_REVIEW_RE = re.compile(
+    r"^(?:Hmm\b|Let me (?:check|review|make sure|verify|double-?check|count|re-?read|refine|tighten|trim"
+    r"|polish|finalize|reconsider|decide|also make sure|see if|look at the|think about (?:the|which|whether))"
+    r"|That'?s (?:decent|pretty good|solid)\b|That'?s (?:good|fine)\. (?:Let me|Now|Length|Check|Final|I'll)"
+    r"|Good\.|Check(?:ing|s)?:|Final check|Word count|Length check"
+    r"|Now let me (?:check|review|make sure|verify|double-?check|count|re-?read|refine|tighten|trim|polish|finalize|reconsider)"
+    r"|OK[,.] (?:let me|that works)|Okay[,.] (?:let me|that works)"
+    r"|I (?:should|need to) (?:check|make sure|tighten|trim|double-check)|Wait[,\u2014-] (?:the|I|is|does|let)"
+    r"|Actually[,:] (?:let me|I should|I'll|wait|the instruction|the prompt))",
+    re.I,
+)
+PARAGRAPH_START_RE = re.compile(r"(?:^|\n\n|\n---+\n\n?)([^\n]+)")
+
+
+def leaked_deliberation(prompt_text):
+    """Return a short reason if the text carries the model's deliberation, else None."""
+    if DELIBERATION_HEAD_RE.match(prompt_text):
+        return "deliberation or a fragment before the prompt"
+    for m in PARAGRAPH_START_RE.finditer(prompt_text):
+        if m.start(1) >= 150 and SELF_REVIEW_RE.match(m.group(1).strip()):
+            return "self-review after the prompt"
+    return None
+
+
 DATASET_FRAMING_RE = re.compile(
     r"dataset of (philosoph[a-z]* )?prompts|prompt for (the|this|your) dataset"
     r"|prompts? (on|about) philosophical (topics|issues)|building a dataset of"
@@ -110,6 +148,21 @@ DATASET_FRAMING_RE = re.compile(
 
 MAX_TOOL_ROUNDS = 8
 MAX_ATTEMPTS = 4
+# Transport and gateway failures (connection errors, HTTP 429/5xx, error
+# bodies in place of choices) cost nothing and get their own budget with a
+# growing pause, so that a provider outage of most of an hour costs retries
+# rather than prompts.
+MAX_FAILURES = 10
+
+
+def failure_pause(n):
+    """Seconds to wait after the n-th failure of one prompt: 15, 30, 60, ...,
+    capped at eight minutes (about 48 minutes over MAX_FAILURES)."""
+    return min(15 * 2 ** (n - 1), 480)
+
+
+class GatewayError(Exception):
+    """A 200 response whose body is an error object instead of choices."""
 
 # TCP keepalive so that a connection killed while the machine sleeps fails
 # within a few minutes of waking instead of hanging until the read timeout.
@@ -216,6 +269,8 @@ def generation_defect(result):
         return f"implausibly short response ({where})"
     if process_note(prompt_text):
         return f"process note before the prompt ({where})"
+    if leaked_deliberation(prompt_text):
+        return f"{leaked_deliberation(prompt_text)} ({where})"
     if DATASET_FRAMING_RE.search(prompt_text):
         return f"dataset-construction framing in the prompt ({where})"
     return None
@@ -304,6 +359,15 @@ def main():
         help="never number a prompt below N, to stay clear of a batch being "
         "generated concurrently on another machine (default: 1, no effect)",
     )
+    parser.add_argument(
+        "--read-timeout",
+        type=float,
+        default=3600.0,
+        metavar="SECONDS",
+        help="give up on a request that has not answered after this long and retry "
+        "it (default: 3600; raise it for a slow self-hosted server, where a long "
+        "answer can take hours)",
+    )
     args = parser.parse_args()
     quantizations = args.quantizations.split(",") if args.quantizations else None
     # OpenRouter routing preferences, sent as the request's provider object.
@@ -325,7 +389,7 @@ def main():
     client = httpx.Client(
         base_url=args.base_url,
         headers=headers,
-        timeout=httpx.Timeout(3600.0, connect=30.0),
+        timeout=httpx.Timeout(args.read_timeout, connect=30.0),
         transport=httpx.HTTPTransport(retries=2, socket_options=KEEPALIVE_OPTIONS),
     )
     served = served_model_name(client, args.model)  # fails fast if the server is down
@@ -338,6 +402,9 @@ def main():
                 "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "num_prompts": args.num_prompts,
                 "concurrency": args.concurrency,
+                "read_timeout": args.read_timeout,
+                "provider_order": provider.get("order"),
+                "provider_ignore": provider.get("ignore"),
             }
         )
         (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -361,6 +428,7 @@ def main():
         "web_tools": args.web_tools,
         "num_prompts": args.num_prompts,
         "concurrency": args.concurrency,
+        "read_timeout": args.read_timeout,
         "num_domains": args.num_domains,
         "num_task_types": args.num_task_types,
     }
@@ -431,6 +499,10 @@ def main():
                 response = client.post("/v1/chat/completions", json=request)
                 response.raise_for_status()
                 data = response.json()
+                if "choices" not in data:
+                    # a 200 response carrying a gateway error object instead of
+                    # choices (provider overloaded, rate limited, ...)
+                    raise GatewayError(json.dumps(data.get('error', data))[:160])
                 choice = data["choices"][0]
                 message = choice["message"]
                 usage = data.get("usage") or {}
@@ -481,24 +553,43 @@ def main():
         # generation_defect) is retried, the whole conversation restarting
         # from scratch; after MAX_ATTEMPTS the prompt is skipped.
         problem = None
-        for attempt in range(MAX_ATTEMPTS):
+        attempt = 0  # generations that came back defective (these cost money)
+        failures = 0  # transport and gateway failures (these cost nothing)
+        while True:
+            if attempt >= MAX_ATTEMPTS or failures >= MAX_FAILURES:
+                print(
+                    f"warning: {problem}; giving up on this prompt",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return
             if problem:
                 print(
-                    f"warning: {problem}; retry {attempt}/{MAX_ATTEMPTS - 1}",
+                    f"warning: {problem}; retry ({attempt} defective of {MAX_ATTEMPTS}, "
+                    f"{failures} failed of {MAX_FAILURES})",
                     file=sys.stderr,
                     flush=True,
                 )
             try:
                 result = attempt_turns()
             except httpx.HTTPError as e:
-                problem = f"request failed ({e.__class__.__name__})"
-                time.sleep(60)
+                detail = e.__class__.__name__
+                if isinstance(e, httpx.HTTPStatusError):
+                    detail += f" {e.response.status_code}: {e.response.text[:120]!r}"
+                problem = f"request failed ({detail})"
+                failures += 1
+                time.sleep(failure_pause(failures))
+                continue
+            except GatewayError as e:
+                problem = f"gateway error in place of choices ({e})"
+                failures += 1
+                time.sleep(failure_pause(failures))
                 continue
             except (KeyError, IndexError, TypeError, ValueError) as e:
-                # a 200 response without the expected shape, e.g. a gateway
-                # error object in place of choices
+                # a 200 response without the expected shape
                 problem = f"malformed response ({e!r})"
-                time.sleep(10)
+                failures += 1
+                time.sleep(failure_pause(failures))
                 continue
             except Exception as e:
                 print(
@@ -510,13 +601,7 @@ def main():
             problem = generation_defect(result)
             if problem is None:
                 break
-        else:
-            print(
-                f"warning: {problem}; giving up on this prompt",
-                file=sys.stderr,
-                flush=True,
-            )
-            return
+            attempt += 1
         prompt_text = THINK_RE.sub("", result["content"]).strip()
         reasoning_summary = "\n\n".join(
             p.strip() for p in result["reasoning_parts"] if p.strip()

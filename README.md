@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 79,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 120,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -20,7 +20,8 @@ thought (see [Responses](#responses)).
 
 ```
 prompts/batch_NNN/
-  prompt_XXXXX.txt        the prompt text (IDs are globally unique across batches)
+  prompt_XXXXX.txt        the prompt text (IDs are globally unique across batches;
+                          five digits up to 99999, six from 100000 on)
   prompt_XXXXX.meta.yaml  per-prompt metadata (see below)
   batch.yaml              batch-level settings (model, API, sampling parameters)
   inputs/                 snapshot of the meta-prompt components used for this batch
@@ -73,11 +74,13 @@ fetching available for fact-checking and verbatim quotation.
 | 000–009, 013–017, 030 | claude-sonnet-5 | Anthropic API, streaming |
 | 010–012 | claude-haiku-4-5 | Anthropic API, streaming |
 | 018–021 | claude-sonnet-5 | Anthropic Message Batches API |
-| 022–029, 031 | Qwen 3.8 27B | self-hosted llama.cpp; client-executed web tools (DuckDuckGo search + page fetch) |
+| 022–029, 031, 040 | Qwen 3.8 27B | self-hosted llama.cpp (batch 040 stopped by hand after 442 prompts); client-executed web tools (DuckDuckGo search + page fetch) |
 | 032–033 | DeepSeek V4 Pro | OpenRouter, fp8 providers only; client-executed web tools (DuckDuckGo search + page fetch) |
 | 034–035 | GLM-5.3 | OpenRouter, fp8 providers only, Z.ai's own endpoint excluded; client-executed web tools (DuckDuckGo search + page fetch) |
 | 036, 038 | Qwen3.8 2.4T-A95B | OpenRouter, fp8 provider only (SiliconFlow); client-executed web tools (DuckDuckGo search + page fetch) |
 | 037 | Muse Spark 1.3 (Meta, proprietary) | OpenRouter, Meta's own endpoint, standard tier; client-executed web tools offered but almost never used |
+| 039 | DeepSeek V4.1 Flash | OpenRouter, fp8 provider (Novita), Io Net and GMICloud excluded; stopped by hand after 488 prompts; client-executed web tools (DuckDuckGo search + page fetch) |
+| 041 | DeepSeek V4.1 Flash | OpenRouter, fp8 hosts load-balanced (Novita, Morph, Venice, Parasail, DeepInfra), Io Net and GMICloud excluded; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -210,9 +213,10 @@ apply to Claude outputs — in particular, restrictions on using outputs to trai
 models that compete with Anthropic. Batch 037 is the output of Muse Spark 1.3, a
 proprietary Meta model accessed through the standard tier of the
 [Meta Model API](https://developer.meta.com/ai/products/meta-model-api/) via
-OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029 and 031 were generated with Qwen
+OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
-032–033 with DeepSeek V4 Pro, an open-weights model released under the MIT license,
+032–033 with DeepSeek V4 Pro and batches 039 and 041 with DeepSeek V4.1 Flash,
+open-weights models released under the MIT license,
 and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
 above $10 billion in annual revenue; it places no restrictions on the use of

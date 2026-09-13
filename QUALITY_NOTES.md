@@ -44,6 +44,9 @@ re-render from the batch's snapshot; those should simply be zero.
 | 036 | Qwen3.8 2.4T-A95B (OpenRouter) | 999 | 1.7% | 11.8% | 5.6% / 1.8% | classroom-activity example 0, 7; procedure example 0, 5 |
 | 037 | Muse Spark 1.3 (OpenRouter, Meta) | 1,000 | 0.7% | 4.2% | 20.5% / 5.1% | classroom-activity example 0, 2 prompts |
 | 038 | Qwen3.8 2.4T-A95B (OpenRouter) | 19,997 | 1.7% | 10.5% | 2.8% / 2.1% | classroom-activity example 0, 125; procedure example 0, 88 |
+| 039 | DeepSeek V4.1 Flash (OpenRouter) | 488 | 4.7% | 15.6% | 8.2% / 5.2% | classroom-activity example 0, 6; procedure example 0, 4 |
+| 040 | Qwen3.8-27B (local) | 442 | 10.4% | 32.4% | 9.8% / 11.3% | classroom-activity example 0, 7; procedure and adversarial-collaboration examples 0, 5 each |
+| 041 | DeepSeek V4.1 Flash (OpenRouter) | 39,944 | 4.4% | 16.7% | 7.6% / 5.2% | classroom-activity example 0, 377; procedure example 0, 350 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -52,9 +55,9 @@ what here".
 ## Observations
 
 1. **Echo is mostly a property of the generating model.** Sonnet 5 sits at 1-2%
-   heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, DeepSeek V4 Pro
-   and GLM-5.3 at about 6%, Qwen3.8-27B at about 7% in batch 028 and 16% in batch
-   031, whose task-type snapshot adds the adversarial-collaboration, procedure, and
+   heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, DeepSeek V4.1
+   Flash at about 5%, DeepSeek V4 Pro and GLM-5.3 at about 6%, Qwen3.8-27B at about 7% in batch 028 and 10-16% in
+   batches 040 and 031, whose task-type snapshots add the adversarial-collaboration, procedure, and
    classroom-activity examples that are the strongest magnets for every model.
    Within a model the rate is stable across batch sizes (032 vs. 033, 034 vs. 035).
 2. **A few examples act as magnets.** For Sonnet it is the extended-warranty
@@ -114,6 +117,23 @@ what here".
    untouched. The checker flags a short opening paragraph of this kind and the
    OpenAI-compatible generator retries it (it caught several more during the second
    half of batch 035). No Sonnet, Qwen, or DeepSeek batch shows the pattern.
+8. **Model deliberation leaking into the prompt.** DeepSeek V4.1 Flash sometimes
+   continues thinking in the answer channel: the content opens with planning
+   ("Let me actually settle. I'll pick: Domain = ...", "The user wants a prompt
+   only.") or with a fragment of a thought, runs for thousands of words, and only
+   then gives the prompt; in a second pattern the prompt comes first and a
+   self-review follows ("--- Hmm, that's decent. Let me check for issues."). The
+   checker's other scans miss both, because they look at a short opening
+   paragraph. A sweep on 2026-09-12 found 74 such prompts in batch 041 (0.2%): 57
+   deliberation-first texts were deleted, 16 trailing self-reviews were cut off,
+   and one prompt was recovered from between two deliberation blocks. The same
+   sweep found a few older cases from other models: in batch 033 one deleted
+   (26625) and one cut (32063), and label lines such as "Slogan type, social
+   construction of kinds." stripped from 033/27152, 035/40299, 035/56072, plus a
+   trailing "Word count: 1,181." in 036/57545. Originals are kept outside the
+   repository. The checker now scans for deliberation openers, fragment starts,
+   and self-review paragraphs, and the OpenAI-compatible generator retries such
+   generations.
 
 ## Possible mitigations (not done)
 
@@ -173,7 +193,47 @@ what here".
   which retried 135 read timeouts against the slow local server but skipped
   defective generations instead of regenerating them (36 of 1,000) and did not
   screen for preambles or dataset framing; the seven such prompts were curated
-  after the batch was copied here (observation 6).
+  after the batch was copied here (observation 6). Batch 040 (442 prompts) ran on
+  the same machine with the current generator and a three-hour read timeout from
+  2026-09-11 until it was stopped by hand on 2026-09-12 to free the machine: no
+  timeouts, no lost prompts, 20 retried generations (12 over the 24k-token budget,
+  6 with empty or truncated thinking, 2 with dataset framing), nothing to curate.
+- DeepSeek V4.1 Flash (batch 039, released the same day, MIT weights) cost $12 per
+  1,000 prompts at reasoning effort high via Novita's fp8 endpoint (mean $0.012,
+  median $0.010): about 8,600 output tokens per prompt and 16,000 input tokens,
+  the latter because it fetches a page for most prompts (1.4 searches and 0.9
+  fetches per prompt). It ran at 13 prompts a minute at concurrency 24 with a
+  single retry (one generation hit the 65,536-token budget). The batch was
+  stopped by hand after 488 prompts to judge the quality before deciding on a
+  larger batch; `batch.yaml` records the stop. The 40k batch 041 that followed
+  (2026-09-10 to 2026-09-12, about 47 hours of wall time including two sleeps and
+  five restarts) cost $412 in the sidecars (mean $0.010, median $0.008) plus about
+  $4 for 504 regenerated defective answers and a few dollars of requests abandoned
+  at the restarts; 24 prompts were lost in one twelve-minute outage before the
+  retry budget existed. Load-balanced across the fp8 hosts, Novita served 63% of
+  the rounds, Morph 35%, Venice 12%, Parasail 3%, DeepInfra 2% (a prompt's rounds
+  can land on several hosts). The leak filters regenerated 30 dataset-framing and
+  31 truncated-thinking answers; nothing needed curation afterwards. Shared long
+  quotations (Tocqueville on equality, Augustine on lying, Machiavelli's dedication)
+  give 118 prompt pairs with 100 or more shared 8-grams among 40,000 prompts.
+- A self-hosted server needs a longer read timeout. With eight slots busy, the
+  desktop's llama-server generates about 4.6 tokens a second per slot, so an
+  answer above roughly 16,000 tokens takes longer than the generator's one-hour
+  read timeout; the client then gives up and regenerates while the server
+  finishes the abandoned answer anyway. Batch 031 hit this 135 times and lost six
+  prompts to it. The generator has had `--read-timeout` since 2026-09-11; batch
+  040 ran with three hours (recorded in `batch.yaml`) and saw no timeout.
+- Throughput on OpenRouter is bounded by the providers, not by the client. For
+  DeepSeek V4.1 Flash (batch 041) doubling the concurrency from 24 to 48 changed
+  nothing (13 prompts a minute either way) because every request went to Novita
+  first, which answered a share of them with HTTP 429; letting OpenRouter balance
+  across all fp8 hosts and raising the concurrency further helped modestly. Since
+  2026-09-11 the generator keeps two budgets per prompt: four paid attempts for
+  defective generations, and ten free retries for connection errors, HTTP 429/5xx,
+  and error bodies returned in place of choices, with pauses growing from 15
+  seconds to eight minutes, so that an outage of most of an hour costs retries
+  rather than prompts (the earlier fixed one-minute pause lost 24 prompts of
+  batch 041 in one twelve-minute outage).
 
 ## Responses
 
