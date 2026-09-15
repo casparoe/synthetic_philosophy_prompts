@@ -336,45 +336,54 @@ same pair set. Things to track per run:
   8,000–13,000 (mostly thinking), so it costs about $0.40–0.75 streamed and half that
   batched (pilot of 6 pairs, 2026-09-13).
 
-### Runs (2026-09-13)
+### Runs (2026-09-13 and 2026-09-14)
 
-Both pair sets hold the same 510 prompts: a seed-0 sample of the 22,367 prompts of
-batches 000–021 that have complete responses in both imported runs (500 drawn first,
-then 10 more by continuing the same walk, see below). Each pair is two samples of the
-same model for the same prompt; the judge is Claude Fable 5.1 at effort max, sent as
-Message Batches (each round of a batch took about ten minutes).
+Both pair sets hold the same 1,530 prompts: a seed-0 sample of the 22,367 prompts of
+batches 000–021 that have complete responses in both imported runs. 500 were drawn on
+2026-09-13, 10 more the same day and 1,020 more on 2026-09-14, each time by re-running
+the tool with a larger `--sample`, which continues the same seeded walk and leaves the
+earlier pairs unchanged. Each pair is two samples of the same model for the same
+prompt; the judge is Claude Fable 5.1 at effort max, sent as Message Batches (a round
+of 500 requests took about ten minutes, one of 1,020 about seventy).
 
 | Run | Pairs | Judgments | Strongly A / weakly A / unsure / weakly B / strongly B | A vs B among decided | Output tokens (mean / p90) | Cost |
 |---|---|---|---|---|---|---|
-| run_000 | `r1_imported_510` (DeepSeek R1 0528 x 2) | 503 | 35 / 155 / 6 / 233 / 74 | 38% vs 62% | 11,905 / 17,500 | $165 |
-| run_001 | `qwen397b_imported_510` (Qwen3.5-397B x 2) | 503 | 27 / 154 / 15 / 264 / 43 | 37% vs 63% | 12,138 / 17,900 | $167 |
+| run_000 | `r1_imported` (DeepSeek R1 0528 x 2) | 1,516 of 1,530 | 109 / 466 / 33 / 688 / 220 | 39% vs 61% | 11,925 / 17,376 | $498 |
+| run_001 | `qwen397b_imported` (Qwen3.5-397B x 2) | 1,515 of 1,530 | 79 / 489 / 40 / 771 / 136 | 39% vs 62% | 12,047 / 17,634 | $500 |
 
 - **Position bias.** The order of the two responses is a coin flip per pair, yet the
-  judge preferred the response shown second (B) in 62–63% of the decided pairs in both
-  runs (z above 5 in each). Split by which sample was shown first, the tilt toward B is
+  judge preferred the response shown second (B) in 61–62% of the decided pairs in both
+  runs (z of 8.6 and 8.8). Split by which sample was shown first, the tilt toward B is
   the same either way, and the preferred *sample* (first or second draw of the model) is
-  balanced (245 vs 252, and 223 vs 265), so this is a bias for the second position, not
-  a difference between the samples. The bias is stronger among the "strongly" verdicts
-  (74 strongly B against 35 strongly A for R1; 43 against 27 for Qwen). Consumers who
-  need order-free judgments should judge each pair in both orders and combine, at
-  twice the cost; a run on the same pair sets with A and B swapped would do.
+  close to balanced (713 vs 770, and 710 vs 765), so this is a bias for the second
+  position, not a difference between the samples. The bias is stronger among the
+  "strongly" verdicts (220 strongly B against 109 strongly A for R1; 136 against 79 for
+  Qwen). Consumers who need order-free judgments should judge each pair in both orders
+  and combine, at twice the cost; a run on the same pair sets with A and B swapped
+  would do.
 - **Verdicts.** Same-model pairs are close calls: the judge said "unsure/similar" for
-  only 1% (R1) and 3% (Qwen) of the pairs and "weakly" for 77% and 83%; "strongly" for
-  22% and 14%. Every judgment ended with a parseable verdict line at the first attempt.
+  only 2–3% of the pairs and "weakly" for 76% (R1) and 83% (Qwen); "strongly" for 22%
+  and 14%. Every judgment that came back ended with a parseable verdict line; the
+  records with `attempts` above 1 (11 and 8) are pairs whose earlier attempts the
+  content filter blocked, not malformed judgments.
 - **Content-filter blocks.** The API rejected some requests with `Output blocked by
   content filtering policy` (an `invalid_request_error` in the batch results): 13 of
-  500 R1 pairs and 14 of 500 Qwen pairs in the first round. About half passed when
-  resubmitted, but six per run were blocked on all three attempts; the sets were then
-  extended by 10 prompts, of which one was blocked in both runs as well, for seven
-  given up per run, four of them the same prompts in both. Most concern three texts:
-  Turing's 1950 "Computing Machinery and Intelligence" (four different prompts: 00891,
-  01012, 08668, 10548), von Neumann's 1955 "Can We Survive Technology?" (06003, 17300),
-  and Hobbes's Leviathan on authors and actors (08742); the others are Aquinas and
-  double effect (21044), Pascal on justice and force (02484), and Du Bois and Locke on
-  Black art (18024). The prompts are innocuous philosophy, so the filter seems to
-  react to something in the judge's own output about these texts. The pairs are
-  listed under `given_up` in each `run.yaml`; `judge_pairs.py --resume` skips them
-  unless `--retry-given-up` is passed.
+  500 R1 pairs and 14 of 500 Qwen pairs in the first round of the first 500, and 18 and
+  16 of the 1,020 added later. About half pass when resubmitted; the rest are blocked
+  on all three attempts and given up on: 14 pairs in the R1 run and 15 in the Qwen
+  run, 9 of them the same prompts in both. The prompts are innocuous philosophy, but
+  they cluster on a few texts and debates: Turing's 1950 "Computing Machinery and
+  Intelligence" (seven different prompts: 00891, 01012, 05575, 07820, 08668, 10548,
+  11411), von Neumann's 1955 "Can We Survive Technology?" (06003, 17300), Popper on
+  falsifiability and evolution (02904, 04884, 10013), Hobbes's Leviathan on authors and
+  actors (08742), Keynes's 1930 "Economic Possibilities for our Grandchildren" (18087),
+  Frederick Douglass's constitutional theory (08654), Aquinas and double effect (21044),
+  Pascal on justice and force (02484), Du Bois and Locke on Black art (18024), the FIRE
+  movement (08135), and a novel about a housing dispute (01916). The filter evidently
+  reacts to something in the judge's own output about these texts, and the same prompt
+  tends to trip it for both models' pairs. The pairs are listed under `given_up` in
+  each `run.yaml`; `judge_pairs.py --resume` skips them unless `--retry-given-up` is
+  passed.
 - **Redacted thinking.** Three judgments (run_000, prompts 12758 and 15779; run_001,
   prompt 10080) have `thinking: null` although each used more than 10,000 output
   tokens: the API returned the thinking redacted. Their judgment text and verdict are
