@@ -13,12 +13,15 @@ files in this directory:
                                   configurable probability, optionally led in by
                                   a preamble shared by the whole group
 
-One draw is recorded as a *sample*: which domains and task types were offered
-and which additional instruction each group contributed. Samples use the same
-keys as the per-prompt .meta.yaml sidecars and the samples.yaml files under
-prompts/, so the meta-prompt behind any existing prompt can be rebuilt from its
-batch's inputs/ snapshot. (Batches before 029 predate
-additional_instructions.yaml; rebuild those with the code at commit 515faeef.)
+One draw is recorded as a *sample*: which domains and task types were offered,
+which of each type's examples were shown and in which order (one to five of
+them, drawn at random; samples from before batch 046 lack this key and showed
+every example in file order), and which additional instruction each group
+contributed. Samples use the same keys as the per-prompt .meta.yaml sidecars
+and the samples.yaml files under prompts/, so the meta-prompt behind any
+existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
+before 029 predate additional_instructions.yaml; rebuild those with the code at
+commit 515faeef.)
 
 The generators in generators/ import this module. Run it directly to print one
 assembled meta-prompt:
@@ -57,9 +60,16 @@ COMPONENT_FILES = [
 # The record of one draw, in the order the .meta.yaml sidecars use.
 SAMPLE_KEYS = [
     "task_types_offered",
+    "task_type_examples",
     "additional_instructions",
     "domains_offered",
 ]
+# Keys a sample may lack (older sidecars); render() then falls back to the
+# behaviour of the time: every example of a task type, in file order.
+OPTIONAL_SAMPLE_KEYS = {"task_type_examples"}
+# For each offered task type, how many of its examples are shown: a number
+# from 1 to this drawn uniformly, capped by how many examples the type has.
+MAX_EXAMPLES_SHOWN = 5
 
 
 def _load_lines(path):
@@ -141,16 +151,21 @@ class Components:
     instruction_groups: dict  # group name -> InstructionGroup, in file order
     template: object  # jinja2.Template
 
-    def sample(self, num_domains=5, num_task_types=3, rng=random):
+    def sample(self, num_domains=5, num_task_types=3, rng=random, max_examples=MAX_EXAMPLES_SHOWN):
         """Draw the parameters for one prompt. Pass a seeded random.Random as
-        rng for a reproducible draw."""
+        rng for a reproducible draw. For every offered task type, a number of
+        examples from 1 to max_examples is drawn, then that many of the type's
+        examples (fewer if it has fewer), in random order; task_type_examples
+        records their indices into the type's example list."""
+        offered = rng.sample(self.task_types, k=min(num_task_types, len(self.task_types)))
+        shown = {}
+        for t in offered:
+            n = len(t.get("examples") or [])
+            k = min(rng.randint(1, max_examples), n)
+            shown[t["type"]] = rng.sample(range(n), k) if k else []
         return {
-            "task_types_offered": [
-                t["type"]
-                for t in rng.sample(
-                    self.task_types, k=min(num_task_types, len(self.task_types))
-                )
-            ],
+            "task_types_offered": [t["type"] for t in offered],
+            "task_type_examples": shown,
             "additional_instructions": {
                 name: rng.choices(group.texts, weights=group.weights)[0]
                 for name, group in self.instruction_groups.items()
@@ -179,7 +194,10 @@ class Components:
             )
         return self.template.render(
             domains=sample["domains_offered"],
-            task_types=[by_name[name] for name in sample["task_types_offered"]],
+            task_types=[
+                self._task_type_shown(by_name[name], sample.get("task_type_examples"))
+                for name in sample["task_types_offered"]
+            ],
             # In the components' group order, however the sample was stored.
             additional_instructions=[
                 self._with_preamble(name, chosen[name])
@@ -189,6 +207,25 @@ class Components:
             web_tools=web_tools,
             strict_quotes=strict_quotes,
         )
+
+    def _task_type_shown(self, task_type, shown):
+        """The task type with only the examples the sample shows, in the
+        sample's order; every example in file order for samples that predate
+        task_type_examples."""
+        examples = task_type.get("examples") or []
+        if shown is None:
+            return task_type
+        if task_type["type"] not in shown:
+            raise ValueError(
+                f"sample records no examples for task type {task_type['type']!r}"
+            )
+        indices = shown[task_type["type"]]
+        if not all(isinstance(i, int) and 0 <= i < len(examples) for i in indices):
+            raise ValueError(
+                f"sample has example indices out of range for task type "
+                f"{task_type['type']!r} in {self.source}: {indices}"
+            )
+        return {**task_type, "examples": [examples[i] for i in indices]}
 
     def _with_preamble(self, name, text):
         """The group's preamble, if it has one, ahead of the drawn option; the
@@ -269,11 +306,11 @@ def main():
         parser.error(str(e))
     if args.sample:
         data = yaml.safe_load(Path(args.sample).read_text())
-        missing = [key for key in SAMPLE_KEYS if key not in data]
+        missing = [key for key in SAMPLE_KEYS if key not in data and key not in OPTIONAL_SAMPLE_KEYS]
         if missing:
             hint = " (a pre-029 sidecar; see commit 515faeef)" if "length" in data else ""
             parser.error(f"{args.sample} lacks sample keys: {', '.join(missing)}{hint}")
-        sample = {key: data[key] for key in SAMPLE_KEYS}
+        sample = {key: data[key] for key in SAMPLE_KEYS if key in data}
     else:
         rng = random.Random(args.seed) if args.seed is not None else random
         sample = components.sample(args.num_domains, args.num_task_types, rng)

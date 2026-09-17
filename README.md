@@ -63,7 +63,8 @@ QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
-offered during sampling, the additional instructions drawn (persona, writing style,
+offered during sampling (from batch 046 on also which of each type's examples were
+shown, in which order, under `task_type_examples`), the additional instructions drawn (persona, writing style,
 length, and from batch 029 on further groups such as epistemic and output-format
 requests; recorded as one `additional_instructions` mapping from batch 029 on and as
 separate `length`/`persona`/`writing_style` keys before), token counts, the number
@@ -77,7 +78,11 @@ genres, and additional instructions (a persona, a writing style, and a length
 instruction; from batch 029 on, `meta_prompt/additional_instructions.yaml` defines
 the groups, which also include epistemic requests, output-format requests, and
 prompt-engineering phrasing, each drawn with its own probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
-a model to write one prompt. The generating models had web search and page
+a model to write one prompt. Each offered genre comes with example prompts of that
+genre; from batch 046 on, only a random subset of them is shown (a number from one to
+five is drawn, that many examples are sampled without replacement, and they appear in
+random order), so that no single example shapes every prompt of a genre. Earlier
+batches showed every example in file order. The generating models had web search and page
 fetching available for fact-checking and verbatim quotation.
 
 | Batches | Model | Notes |

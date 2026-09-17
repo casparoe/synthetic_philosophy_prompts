@@ -259,7 +259,8 @@ def main():
         bad = 0
         for m in metas.values():
             try:
-                comp.render({k: m[k] for k in assemble.SAMPLE_KEYS}, web_tools=True, strict_quotes=True)
+                sample = {k: m[k] for k in assemble.SAMPLE_KEYS if k in m or k not in assemble.OPTIONAL_SAMPLE_KEYS}
+                comp.render(sample, web_tools=True, strict_quotes=True)
             except Exception:
                 bad += 1
         print(f"sidecars that fail to re-render from the snapshot: {bad}")

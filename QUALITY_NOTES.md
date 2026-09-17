@@ -16,8 +16,10 @@ re-render from the batch's snapshot; those should simply be zero.
   task type. A generated prompt *echoes* an example when it shares at least one
   eight-word phrase with it (case- and punctuation-insensitive). *Heavy echo* means
   five or more shared eight-word phrases, which in practice is a copied sentence or
-  a copied structural skeleton rather than a stock phrase. Measured against the
-  examples in the batch's own `inputs/` snapshot.
+  a copied structural skeleton rather than a stock phrase. Measured against all
+  examples in the batch's own `inputs/` snapshot, although from batch 046 on a
+  prompt's generator saw only a random subset of one to five examples per offered
+  type (recorded in the sidecar under `task_type_examples`).
 - **Instruction copying.** The additional instructions (output format, epistemic
   request, persona, ...) are meant to be realized in the prompt, not pasted into it.
   A prompt *copies* an instruction when it shares eight consecutive words with the
