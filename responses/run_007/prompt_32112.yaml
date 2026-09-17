@@ -1,0 +1,431 @@
+id: prompt_32112
+sample_index: 0
+prompt_file: prompts/batch_033/prompt_32112.txt
+model: qwen/qwen3.5-397b-a17b
+provider: GMICloud
+generation_id: gen-1789286017-RsHOWcNVT1VoaOm4OJII
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 457
+completion_tokens: 9127
+reasoning_tokens: 7869
+cost_usd: 0.033131
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T07:55:29+00:00'
+prompt: |-
+  I work on a backend team, and one of the senior engineers, Dana, sort of runs our incident postmortems. She's become the de facto judge of what 'caused' an outage, and she's wierdly consistent about it. I've been keeping a list of her calls, because I can't figure out what rule she's actually running. Here's what she's said over the past year:
+
+  - In March a config change set a timeout to 10ms instead of 10s, and the API fell over. Nothing else was weird that day. Dana said the config change caused the outage.
+
+  - In May a new query parser shipped right around the same time as a huge traffic spike, and search latency blew past our SLO. The postmortem showed the old parser would also have blown the SLO under that traffic. Dana said the traffic spike caused it, and the parser didn't.
+
+  - In July a bad deploy took down checkout, and it turned out our alerting was misconfigured so nobody got paged for 40 minutes. Dana said the bad deploy caused the outage; the alerting misconfiguration caused the slow response but not the outage itself.
+
+  - In August a feature flag got flipped on and error rates went up, but the investigation showed the errors were actually from a background job whose TLS certificate had expired around the same time. Dana said the cert expiry caused the errors, and the feature flag didn't.
+
+  Now we've got a new one to postmortem. Two independant changes went out in the same deploy: a database migration with a bad schema, and a caching config that pointed at the wrong cluster. Either one on its own would have taken down the API; they both shipped together. I want to know what Dana's going to say. Would she call both of them causes, neither of them (since rolling back either one alone wouldn't have saved us), or something else? Honestly I care more about the rule than about this one outage. What rule is she running, what other rule fits her past calls just as well, and is there a case I could bring up that would settle which one it is?
+reasoning: |-
+  Here's a thinking process that leads to the suggested analysis:
+
+  1.  **Analyze the Request:**
+      *   **Context:** Backend team, incident postmortems.
+      *   **Key Figure:** Dana, senior engineer, de facto judge of root cause.
+      *   **Problem:** Her reasoning seems consistent but opaque. The user has tracked 4 past incidents and wants to predict her ruling on a 5th incident.
+      *   **Goal:** Identify the underlying rule Dana is using, identify alternative rules that fit the data, and propose a test case to distinguish between them.
+      *   **The New Incident:** Two independent changes in one deploy (Bad DB Schema + Wrong Cache Cluster). Either one alone causes outage. Both shipped together.
+      *   **Questions:** What will she say? What's the rule? What's an alternative rule? What case settles it?
+
+  2.  **Analyze the Past Incidents (Data Points):**
+
+      *   **Incident 1 (March):** Config change (10ms vs 10s) -> API down. No other factors.
+          *   *Dana's Call:* Config change = Cause.
+          *   *Inference:* Direct causation. If $A$ happens and $B$ happens, and $A$ is sufficient for $B$, $A$ is the cause.
+
+      *   **Incident 2 (May):** New Parser + Traffic Spike -> SLO breach.
+          *   *Fact:* Old parser would *also* have breached SLO under that traffic.
+          *   *Dana's Call:* Traffic Spike = Cause. Parser $\neq$ Cause.
+          *   *Inference:* Counterfactual reasoning. If removing the Parser ($A$) doesn't prevent the Outage ($B$) because the Traffic ($C$) still triggers it, then $A$ is not the cause. $C$ is the necessary trigger. This looks like "But-For" causation or "Necessary Condition" logic.
+          *   *Refinement:* Actually, it's stronger. The parser was *insufficient* to cause the outage without the traffic, but the traffic was *sufficient* to cause the outage even without the parser (given the old parser fails too). Wait, if the old parser fails under that traffic, then the traffic is the *sufficient* condition that overwhelms the system regardless of the change. The change was incidental.
+          *   *Key Concept:* **Counterfactual Dependence.** Would the outage have happened *without* the change?
+              *   March: Without config change -> No outage. (Config = Cause)
+              *   May: Without new parser -> Outage still happens (due to traffic). (Parser $\neq$ Cause).
+
+      *   **Incident 3 (July):** Bad Deploy + Alerting Misconfig -> Outage + Slow Response.
+          *   *Fact:* Deploy took down checkout. Alerting delayed response.
+          *   *Dana's Call:* Deploy = Outage Cause. Alerting = Slow Response Cause (not Outage Cause).
+          *   *Inference:* Distinction between *occurrence* vs. *severity/duration*. The deploy initiated the failure state. The alerting affected the *recovery*, not the *onset*.
+          *   *Key Concept:* **Onset vs. Mitigation.** Causes explain why it broke, not why it took long to fix (unless the mitigation failure *caused* the break, which it didn't here).
+
+      *   **Incident 4 (August):** Feature Flag + Expired Cert -> Errors.
+          *   *Fact:* Flag flipped, errors went up. Investigation showed errors were from background job with expired cert (timing coincidence).
+          *   *Dana's Call:* Cert = Cause. Flag $\neq$ Cause.
+          *   *Inference:* Correlation vs. Causation. Just because $A$ (flag) happened before $B$ (errors) doesn't mean $A$ caused $B$. There was a hidden variable $C$ (cert) that actually caused $B$.
+          *   *Key Concept:* **Actual Mechanism.** You must trace the actual failure path.
+
+  3.  **Synthesize Dana's Rule (Hypothesis 1):**
+      *   *Name:* **Counterfactual Necessity (The "But-For" Test).**
+      *   *Logic:* $X$ is a cause if and only if, had $X$ not happened, the outage would not have occurred *at that time*.
+      *   *Check against data:*
+          *   March: No config change -> No outage. (Pass)
+          *   May: No parser -> Outage still happens (traffic). So Parser is not cause. Traffic: No traffic -> No outage. (Pass)
+          *   July: No bad deploy -> No outage. (Pass). No alerting misconfig -> Outage still happens (just fixed faster). So alerting is not outage cause. (Pass)
+          *   August: No flag -> Errors still happen (cert). So Flag not cause. No cert -> No errors. (Pass)
+      *   *Prediction for New Incident:*
+          *   Scenario: Change A (DB) + Change B (Cache). Either alone causes outage.
+          *   Test A: No DB change -> Cache change still causes outage. So DB is *not* a cause?
+          *   Test B: No Cache change -> DB change still causes outage. So Cache is *not* a cause?
+          *   *Result:* Under strict "But-For" logic, **neither** is the cause. This is the classic **Preemption/Overdetermination Problem** in philosophy of causation.
+          *   *Dana's likely call:* If she strictly follows "But-For," she might say "Neither" or "The Deploy Process" (since the combination is the issue). However, in engineering postmortems, saying "nothing caused this" is unsatisfying.
+          *   *Wait, let's look closer.* If *either* causes it, they are **Sufficient** but not **Necessary** (individually).
+          *   *Refined Hypothesis:* Dana looks for the **Minimal Sufficient Set** or **Actual Trigger**.
+          *   *Actually, looking at May:* Traffic was the cause because the system *couldn't handle the traffic* regardless of the parser. The traffic was the *external* stressor.
+          *   *Looking at August:* Cert was the *actual* failure mechanism.
+          *   *Looking at July:* Deploy broke it. Alerting didn't break it.
+          *   *Hypothesis 1 (Strict Counterfactual):* "Would the system be up right now if this specific change was reverted?"
+              *   New Incident: Revert DB -> Still down (Cache). Revert Cache -> Still down (DB).
+              *   Prediction: **Neither.** (Or "The Deploy" as a container).
+
+  4.  **Develop Alternative Rule (Hypothesis 2):**
+      *   *Name:* **Deviation from Baseline / The "Change" Heuristic.**
+      *   *Logic:* The cause is the thing that *changed* from the known working state, provided it contributed to the failure. If multiple things changed, all contributing changes are causes.
+      *   *Check against data:*
+          *   March: Config changed. (Pass)
+          *   May: Parser changed, Traffic changed. Why did she pick Traffic? Because the *capacity* didn't change, but the *load* did. The parser change was irrelevant to the failure mode (overload). So, only the *relevant* change counts.
+          *   July: Deploy changed, Alerting config (presumably) changed earlier or was static? Alerting was "misconfigured." If it was a recent change, why not a cause? Because it didn't *initiate* the failure.
+          *   August: Flag changed, Cert expired (change in state). Cert was the mechanism.
+      *   *Refinement:* **Necessary Component of the Failure Path.**
+      *   *New Incident:* Both DB and Cache are on the failure path. Both are sufficient.
+      *   *Prediction:* **Both.** (Because both are active failures).
+
+  5.  **Compare Hypotheses on the New Incident:**
+      *   *Hypothesis 1 (Strict But-For/Necessity):* Neither is necessary (because the other would have done it). Result: **Neither.**
+      *   *Hypothesis 2 (Sufficient/Contribution):* Both are sufficient and active. Result: **Both.**
+      *   *Hypothesis 3 (The "First Domino" / Temporal):* Which one failed *first*? (Hard to tell in a deploy).
+      *   *Hypothesis 4 (The "Control" Factor):* Which one was under our direct control vs external? (Traffic was external). In the new incident, both are internal.
+
+      *   *Most likely engineering postmortem logic:* **The "INUS" Condition** (Insufficient but Necessary part of a condition that is itself Unnecessary but Sufficient).
+      *   *Simpler view:* **Counterfactual Necessity** is the standard for "Root Cause" in many rigorous frameworks (like TapRooT or 5 Whys often imply). If I remove X, does the accident vanish?
+      *   *The Overdetermination Puzzle:* This specific scenario (Two sufficient causes) is a classic philosophical edge case.
+      *   *If Dana is consistent with May:* In May, she ruled out the Parser because the Traffic *alone* was sufficient to cause the SLO breach with the *old* code. She prioritized the factor that made the system fail *relative to its design limits*.
+      *   *In the New Incident:* Both changes violate design limits.
+      *   *If Dana is consistent with July:* She distinguishes between "Breaking the system" and "Making it worse." Here, both break the system.
+      *   *If Dana is consistent with August:* She looks for the *actual mechanism*. If the API tries to connect to the DB and fails, does it ever try the Cache? If the DB failure happens *before* the Cache failure in the request lifecycle, the DB is the cause. If they are independent paths, both are causes.
+
+      *   *Let's look for the "Rule" that fits best.*
+      *   Rule: **"The Minimal Change Required to Restore Stability."**
+          *   March: Revert config.
+          *   May: Reduce traffic (or scale). Reverting parser doesn't help.
+          *   July: Revert deploy. Fixing alerting doesn't bring it up.
+          *   August: Renew cert. Flipping flag back doesn't stop cert errors.
+          *   New Incident: Reverting DB -> Still down. Reverting Cache -> Still down. You must revert **Both**.
+          *   *Prediction:* **Both are causes.** (Because you need to undo both to fix it).
+      *   *Wait, counter-argument:* In May, she said Traffic caused it. You can't "revert" traffic easily. But the logic was: "The system failed because it was overloaded." The parser wasn't the bottleneck.
+      *   *Let's try the "But-For" Test again.*
+          *   May: But-for the parser, would it fail? Yes. So Parser is not cause.
+          *   New: But-for the DB, would it fail? Yes (Cache). So DB is not cause. But-for Cache, would it fail? Yes (DB). So Cache is not cause.
+          *   If she is a strict logician (which "weirdly consistent" implies), she might say **Neither**. She might call the cause "The decision to deploy two breaking changes simultaneously."
+      *   *However*, in practical engineering, "Neither" is rarely accepted.
+      *   *Let's look for a nuance.* In May, the old parser *would have blown the SLO*. The system was *fragile* to traffic.
+      *   In the New Incident, the system is *fragile* to DB schema AND Cache config.
+      *   *Is there a rule about "Active vs Passive"?*
+      *   *Is there a rule about "State vs Event"?*
+
+      *   *Let's settle on the two strongest competing theories:*
+          1.  **Theory A: Counterfactual Necessity (The "But-For" Test).** $X$ is a cause iff $\neg X \implies \neg Outage$.
+              *   Fits: March (Yes), May (Parser No, Traffic Yes), July (Alerting No), August (Flag No).
+              *   Prediction: **Neither.** (Because $\neg DB \implies Outage$ via Cache, and $\neg Cache \implies Outage$ via DB).
+          2.  **Theory B: Causal Contribution / Active Fault.** $X$ is a cause if $X$ is a fault that actively contributed to the failure state, regardless of redundancy.
+              *   Fits: March, July, August.
+              *   May is the tricky one. Why wasn't the parser a contributor? Because it didn't *change* the outcome relative to baseline.
+              *   So Theory B needs to incorporate "Difference from Baseline."
+              *   Refined Theory B: **Difference Making.** Did this factor make the outcome worse than it would have been otherwise?
+              *   May: Parser made no difference (Old parser also fails).
+              *   New: DB makes a difference (If Cache was good, DB kills it). Cache makes a difference (If DB was good, Cache kills it).
+              *   Prediction: **Both.**
+
+      *   *Which fits Dana better?*
+          *   In May, she explicitly exonerated the parser because the *old* parser would have failed. This is pure Counterfactual Necessity. She didn't say "The parser contributed to latency." She said "Parser didn't cause it."
+          *   In July, she exonerated alerting for the *outage* (onset), even though it made the *duration* worse. This supports Counterfactual Necessity regarding the *event definition*.
+          *   This suggests Dana is a strict **Counterfactual Necessitarian**.
+          *   If so, the New Incident is a trap. Under strict But-For, **neither** is the cause. The cause is the **conjunction** (The Deploy) or the **process** that allowed two breaking changes.
+          *   *However*, most humans aren't strict logicians. Is there a "Preemption" angle?
+          *   If the DB fails *first*, does the Cache matter? If the request hits DB first, it crashes. It never touches Cache. Then Cache is not a cause (Preemption).
+          *   If they are independent (e.g., API needs DB *and* Cache to return 200), then both are necessary for *success*, but both are sufficient for *failure*. This is **Overdetermination**.
+          *   In Overdetermination cases, strict But-For fails.
+          *   How do engineers usually handle Overdetermination? They usually blame **both** or the **process**.
+          *   But Dana is "weirdly consistent." This implies she might follow the strict logic that leads to the "Neither" conclusion, or she has a specific heuristic for Overdetermination.
+          *   Let's look at May again. Traffic + Parser. Traffic alone = Fail. Parser + Normal Traffic = Pass (assumed, otherwise parser would be a cause in isolation).
+          *   So in May, we had:
+              *   Traffic (Sufficient)
+              *   Parser (Insufficient alone)
+              *   Result: Traffic is cause.
+          *   In New Incident:
+              *   DB (Sufficient)
+              *   Cache (Sufficient)
+              *   Result: ???
+          *   This is the key difference. May was Sufficient + Insufficient. New is Sufficient + Sufficient.
+          *   If Dana follows "Find the Sufficient Condition," she has two.
+          *   If Dana follows "Find the Necessary Condition," she has none.
+          *   If Dana follows "Find the Deviation from Baseline," both are deviations.
+
+      *   *Decision:* The most insightful answer will present the **Counterfactual (But-For)** rule as the primary hypothesis because it explains the May and August exonerations best. It predicts "Neither" (or "The Deploy Process").
+      *   The Alternative Rule is **Causal Contribution (NESS Test - Necessary Element of a Sufficient Set)**. Under NESS, both are causes because each is a necessary element of *a* sufficient set (Set 1: DB + Good Cache; Set 2: Good DB + Cache). Wait, NESS says $X$ is a cause if it is a necessary part of *some* sufficient condition.
+          *   Is DB necessary for *a* sufficient condition? Yes, {DB Bad, Cache Good} is sufficient. DB is necessary for *that* set.
+          *   So NESS says **Both**.
+          *   But-For says **Neither**.
+      *   Which one is Dana using?
+          *   May: Parser was NOT a necessary part of the sufficient set {Traffic, Old Parser}. It wasn't needed. Traffic alone (with old parser) was sufficient. So Parser is out.
+          *   This aligns with NESS too.
+          *   So both But-For and NESS agree on May.
+          *   They diverge on the New Incident (Overdetermination).
+          *   But-For: Neither.
+          *   NESS: Both.
+      *   Which is more "Senior Engineer Dana"?
+          *   Senior engineers often hate "Both" because it dilutes accountability. They often look for the *process* failure.
+          *   However, if she's a logician, "Neither" is the honest answer for But-For.
+          *   But "Neither" is useless for a postmortem.
+          *   Let's guess she will say **Both**, but with a caveat about the process. OR, she will say **The Deploy** (treating the bundle as the atomic unit).
+          *   Actually, let's look at the "Rule" request. I need to define the rule she *is* running.
+          *   Rule: **"The Minimal Deviation Required to Prevent the Outage."**
+          *   March: Revert Config. (1 change).
+          *   May: Reduce Traffic. (1 change). Reverting parser doesn't prevent.
+          *   July: Revert Deploy. (1 change). Fixing alerting doesn't prevent outage (only duration).
+          *   August: Renew Cert. (1 change). Flipping flag doesn't prevent.
+          *   New Incident: Reverting DB doesn't prevent. Reverting Cache doesn't prevent. You need **2 changes**.
+          *   So, is the cause "The two changes"?
+          *   If the rule is "What single thing do we fix to ensure this doesn't happen?", the answer is "Don't ship two breaking changes."
+          *   So she might say **The Deploy Process** is the cause, not the specific changes.
+          *   *Wait, one more angle:* **Temporal Preemption.**
+          *   If the DB error throws an exception before the Cache lookup, the Cache config is irrelevant to the *actual* request flow.
+          *   If she investigates the *trace*, she might find one failed first.
+          *   But the prompt says "Either one on its own would have taken down the API." This implies structural failure, not necessarily request-level preemption.
+          *   Let's stick with the Philosophical Causation angle. It's the most robust way to analyze "weirdly consistent."
+
+      *   *Plan:*
+          1.  Identify the primary rule: **Counterfactual Necessity (The "But-For" Test).** Explain how it fits all 4 cases.
+          2.  Identify the alternative rule: **Causal Contribution (The NESS Test).** Explain how it fits all 4 cases but diverges on the new one.
+          3.  Predict Dana's call based on the "Senior Engineer" persona (likely But-For leading to "Process" or "Neither/Both" nuance). Actually, given the "weirdly consistent" tag, she likely follows the logic strictly. If she follows But-For, she must say **Neither** (individually) and blame the **Deploy Mechanism**.
+          4.  Propose a test case to distinguish. We need a case where But-For and NESS diverge *without* being overdetermination.
+          5.  Wait, the prompt asks: "What rule is she running, what other rule fits her past calls just as well, and is there a case I could bring up that would settle which one it is?"
+          6.  So I need:
+              *   Rule 1 (Likely): Counterfactual Necessity.
+              *   Rule 2 (Alternative): Active Fault / Deviation (or NESS).
+              *   Test Case: A scenario where they give different answers.
+              *   Prediction on New Incident: Based on Rule 1.
+
+      *   *Refining the Test Case:*
+          *   We need a scenario where $X$ is a necessary part of a sufficient set (NESS = Cause) but not strictly "But-For" necessary (because of redundancy/preemption).
+          *   Actually, the New Incident *is* the test case for the user. I need to propose a *future* hypothetical to the user to ask Dana.
+          *   Hypothetical: **The "Backup Failure" Case.**
+          *   Scenario: Primary DB fails (Cause A). Failover to Replica should happen. Replica has a bad password (Cause B). System goes down.
+          *   But-For A: If Primary didn't fail, system stays up. (A is Cause).
+          *   But-For B: If Replica password was good, system stays up (after Primary fail). (B is Cause).
+          *   Wait, this makes both causes under But-For too.
+          *   We need a case where one is *insufficient* alone but *necessary* in combination, vs one that is *sufficient* alone.
+          *   Let's look at the May incident again. Traffic (Sufficient) + Parser (Insufficient). Dana picked Traffic.
+          *   So she prefers **Sufficient** conditions over **Insufficient** ones.
+          *   New Incident: DB (Sufficient) + Cache (Sufficient).
+          *   If she prefers Sufficient, she has two.
+          *   If she prefers Necessary, she has none.
+          *   Maybe the rule is: **"The External/Environment Factor over Internal Change if both are sufficient."** (May: Traffic won over Parser).
+          *   But March: Config (Internal) was cause. (No external factor).
+          *   July: Deploy (Internal) was cause.
+          *   So it's not External vs Internal.
+          *   It really comes down to **Counterfactual Necessity**.
+          *   Let's finalize the two rules:
+              1.  **The "But-For" Test (Counterfactual Necessity):** Would the outage have occurred *at that time* without this specific factor?
+              2.  **The "Active Fault" Test (Causal Contribution):** Did this factor actively contribute to the failure state, regardless of redundancy?
+
+          *   *Test Case to distinguish:*
+              *   **Scenario:** A system has two redundant power supplies. Both fail due to the same storm.
+              *   But-For: Without Supply A failing, Supply B keeps it up. So A is not cause. Without Supply B failing, Supply A keeps it up. So B is not cause. (Result: Neither/Storm).
+              *   Active Fault: Both failed. Both are causes.
+              *   *Better Test Case:* **The "Delayed Trigger".**
+              *   Change A ships (broken). Change B ships (broken). Change A fails immediately. Change B would have failed in 1 hour.
+              *   But-For: A is cause. B is not (because A killed it first).
+              *   Active Fault: Both are causes.
+              *   *Even Better:* **The "Safety Net" Case.**
+              *   Change A breaks the API. Change B is a "Safety Net" feature that was *supposed* to catch A's error, but B was also misconfigured.
+              *   But-For A: No break. (A is cause).
+              *   But-For B: If B worked, no break. (B is cause).
+              *   This makes both causes under But-For.
+              *   I need a case where But-For says No, Active Fault says Yes.
+              *   That requires Overdetermination (The New Incident).
+              *   So the New Incident *is* the test. But the user wants a case *they could bring up* to settle it. Meaning a hypothetical to ask Dana.
+              *   Hypothetical: **"The Redundant Kill Switch."**
+              *   "Dana, imagine we have two independent kill switches for safety. Both are triggered erroneously at the exact same time by two different bugs. Either one shuts down the system. Do we list both bugs as causes, or neither?"
+              *   If she says "Neither, the cause is the system design allowing two switches," she's But-For/Process.
+              *   If she says "Both," she's Active Fault/NESS.
+
+      *   *Wait, one more check on Dana's May ruling.*
+          *   "Traffic spike caused it, and the parser didn't."
+          *   Why? Because the Parser was not *necessary* for the outage. The Traffic was sufficient with the *old* parser.
+          *   This confirms **Counterfactual Necessity**.
+          *   If she used Active Fault, she might have said "Traffic exacerbated the parser's inefficiency." But she exonerated the parser completely.
+          *   So Dana is a **Counterfactual Necessitarian**.
+          *   Prediction on New Incident: She will say **Neither** individual change is the root cause. She will likely identify the **Deploy Process** (allowing two breaking changes) or the **Lack of Staging Verification** as the cause.
+          *   Why? Because "But-For the DB change, we still outage." "But-For the Cache change, we still outage." Therefore, neither is *the* cause. The cause is the situation where both existed.
+
+      *   *Structure of the Answer:*
+          1.  **Dana's Rule:** Counterfactual Necessity ("The But-For Test"). Explain how it fits all 4 examples.
+          2.  **Prediction:** She will say **Neither** (individually). She will blame the **Process** (shipping two breaking changes).
+          3.  **Alternative Rule:** Causal Contribution / NESS Test. Explain how it fits past examples but predicts **Both** for the new one.
+          4.  **The Settling Case:** Propose a hypothetical involving **Redundant Failure** (like the kill switch or dual power supply) to ask her. Her answer reveals if she accepts Overdetermination as "Both Causes" or rejects it as "Neither/Process."
+
+      *   *Refining the "Settling Case":*
+          *   I need a case that distinguishes the two rules *without* relying on the current incident (since we don't know her answer yet).
+          *   Case: **The "Backup That Wasn't Needed."**
+          *   Scenario: Primary DB has a bug (Change A). Backup DB is ready. But Backup DB *also* has a bug (Change B). Primary fails immediately. Backup never gets traffic.
+          *   But-For Rule: Change A is the cause. Change B is irrelevant (never used).
+          *   Active Fault Rule: Change A is cause. Change B is a latent fault, but not a cause of *this* outage. (Actually, both rules might agree here).
+          *   Let's go back to **Overdetermination**. That's the only place they truly diverge.
+          *   So the "Settling Case" *is* a hypothetical version of the current incident.
+          *   "Dana, if we had two independent changes, either sufficient to break prod, shipped together. Are both causes?"
+          *   If she says "Yes," she's NESS. If "No," she's But-For.
+          *   But the prompt asks for a case *I could bring up*. I can bring up the current incident! But the user wants to know *before* the meeting.
+          *   So I should suggest a *different* hypothetical to ask her in a 1:1.
+          *   Hypothetical: **"The Dual Lock."**
+          *   "We have a security door with two locks. Alice changes her key to a broken one. Bob changes his key to a broken one. Both try to open the door at the same time. The door stays locked. Is Alice's key a cause? Is Bob's?"
+          *   This isolates the logic from the engineering noise.
+
+      *   *Wait, is there a simpler rule?*
+          *   **"The Change that Broke the Baseline."**
+          *   March: Config broke baseline.
+          *   May: Traffic broke baseline (Parser didn't change baseline capability).
+          *   July: Deploy broke baseline.
+          *   August: Cert broke baseline.
+          *   New: Both broke baseline.
+          *   This leads to "Both."
+          *   Why did May exclude Parser? Because Parser didn't break the baseline *relative to the traffic*. The baseline (Old Parser) also failed.
+          *   So, "Did this change reduce capability below the demand?"
+          *   March: Yes.
+          *   May: Parser? No (Old parser also below demand). Traffic? Yes (Demand > Capacity).
+          *   July: Deploy? Yes. Alerting? No (Didn't affect capacity).
+          *   August: Flag? No. Cert? Yes.
+          *   New: DB? Yes. Cache? Yes.
+          *   This rule (Capability vs Demand) predicts **Both**.
+          *   Does this differ from Counterfactual?
+          *   Counterfactual on New: Neither (because of redundancy).
+          *   Capability/Demand on New: Both (because both reduce capability below demand).
+          *   Which is Dana?
+          *   In May, she said "Traffic caused it." Traffic isn't a "change" in the system, it's external demand.
+          *   This suggests she cares about **Why the system failed to meet demand.**
+          *   If so, in the New Incident, the system failed to meet demand because of DB *and* Cache.
+          *   However, the "weirdly consistent" phrasing suggests a logical rule, not just engineering intuition. The Counterfactual rule is more "logical."
+          *   Also, in May, she said "Parser didn't [cause it]." Under Capability/Demand, the Parser *did* contribute to the latency, just not the breach. But she exonerated it completely.
+          *   This leans back to Counterfactual. "Would it have happened without this?"
+          *   Okay, I will stick with Counterfactual Necessity as the primary rule. It's the most robust explanation for the May exoneration.
+
+      *   *Final check on the "Settling Case":*
+          *   I need to make sure the user understands *why* this case settles it.
+          *   The case must be an **Overdetermination** scenario (two sufficient causes).
+          *   If she says "Both," she follows NESS/Contribution.
+          *   If she says "Neither/Process," she follows But-For.
+          *   I will suggest the "Dual Independent Failure" hypothetical.
+
+      *   *Wait, one nuance:* In the New Incident, rolling back *either* alone wouldn't save us.
+      *   Dana's July ruling: "Alerting misconfiguration caused the slow response but not the outage itself."
+      *   This shows she distinguishes between **Cause of Outage** vs **Cause of Severity**.
+      *   In the New Incident, both cause the Outage.
+      *   Okay, ready to write.
+
+      *   *Structure:*
+          1.  **Dana's Rule:** Counterfactual Necessity ("But-For" Causation).
+          2.  **Analysis of Past Cases:** Show how this rule explains the exonerations (May Parser, July Alerting, August Flag).
+          3.  **Prediction:** She will likely say **Neither** individual change is the root cause. She will point to the **Deploy Process** (the conjunction).
+          4.  **Alternative Rule:** Causal Contribution (NESS). Fits past, predicts **Both** for new.
+          5.  **Settling Test:** The "Redundant Safety" hypothetical.
+
+      *   *Wait, is there a chance she says "Both"?*
+          *   If she's pragmatic, "Neither" is annoying.
+          *   But "weirdly consistent" implies she sticks to her logic even if annoying.
+          *   I'll bet on "Neither/Process." It's more distinctively "Dana."
+
+      *   *Wait, let's refine the "Settling Case".*
+          *   The user asks "is there a case I could bring up that would settle which one it is?"
+          *   I should provide a hypothetical scenario they can pose to Dana *before* the postmortem to gauge her ruling.
+          *   Scenario: Two independent bugs, either sufficient to crash.
+          *   Question: "Are both causes?"
+          *   This is exactly the current incident.
+          *   I need a *different* scenario.
+          *   How about: **The "Preempted Backup".**
+          *   System has Primary and Backup. Primary fails (Bug A). Backup fails to take over (Bug B).
+          *   But-For A: Outage happens. (Cause).
+          *   But-For B: If Backup worked, No Outage. (Cause).
+          *   This makes both causes under But-For.
+          *   I need a scenario where But-For says NO, NESS says YES.
+          *   That is *only* Overdetermination (The New Incident).
+          *   So I have to tell the user: "The current incident *is* the test case."
+          *   But I can suggest phrasing it as a hypothetical to test her *before* she commits.
+          *   "Dana, hypothetical: If we ship two independent breaking changes... how do you classify cause?"
+          *   Okay, that works.
+
+      *   *Wait, is there another rule?*
+          *   **"The Last Change Rule."** (Temporal).
+          *   March: Config (Last).
+          *   May: Traffic (Concurrent). Parser (Last). She picked Traffic. So not Last Change.
+          *   Okay, Counterfactual is the strongest.
+
+      *   *Final Plan:*
+          1.  Identify Rule: **Counterfactual Necessity**.
+          2.  Explain Past Cases through this lens.
+          3.  Predict Outcome: **Neither** (individually), blame **Process**.
+          4.  Alternative Rule: **Causal Contribution (NESS)**.
+          5.  Settling Case: **The Overdetermination Hypothetical** (ask her directly about the logic of two sufficient causes).
+answer: |-
+  Based on the pattern of Dana's past rulings, she is applying a strict philosophical framework for causation known as **Counterfactual Necessity** (often called the **"But-For" Test**).
+
+  Here is the breakdown of the rule she is running, the prediction for the new incident, the alternative rule that fits the data, and the test case to settle it.
+
+  ### 1. The Rule Dana Is Running: Counterfactual Necessity
+  **The Logic:** $X$ is a cause of $Y$ if and only if, **had $X$ not occurred, $Y$ would not have occurred.**
+  In engineering terms: "If we revert this specific change, does the outage disappear?" If the answer is "No, it would have happened anyway," Dana exonerates that change.
+
+  **How it fits her past calls:**
+  *   **March (Config):** *But-for* the config change, would the API be down? **No.** (Config = Cause).
+  *   **May (Parser vs. Traffic):** *But-for* the new parser, would the SLO be breached? **No** (The old parser would have breached it too under that traffic). *But-for* the traffic spike? **Yes.** (Traffic = Cause, Parser $\neq$ Cause).
+  *   **July (Deploy vs. Alerting):** *But-for* the bad deploy, would the checkout be down? **No.** *But-for* the alerting misconfig, would the checkout be down? **No** (It would have been down anyway, just fixed faster). (Deploy = Outage Cause, Alerting $\neq$ Outage Cause).
+  *   **August (Flag vs. Cert):** *But-for* the feature flag, would the errors exist? **No** (The cert was expired regardless). *But-for* the cert? **Yes.** (Cert = Cause, Flag $\neq$ Cause).
+
+  ### 2. Prediction for the New Incident
+  **The Scenario:** Two independent changes (Bad DB Schema + Wrong Cache Config). Either one alone is sufficient to take down the API. Both shipped together.
+
+  **Dana's Likely Call:** **Neither individual change is the root cause.**
+  She will likely identify the **Deploy Process** (or the decision to ship two breaking changes simultaneously) as the cause.
+
+  **Why?**
+  Under strict Counterfactual Necessity, this is a classic case of **Causal Overdetermination**.
+  *   *But-for* the DB change: The API still goes down (because of the Cache). So DB is not necessary.
+  *   *But-for* the Cache change: The API still goes down (because of the DB). So Cache is not necessary.
+
+  Since neither change passes the "But-For" test individually, a strict logician like Dana cannot label either as *the* cause. She will pivot to the only necessary condition: **The process that allowed two sufficient failure conditions to exist simultaneously.**
+
+  ### 3. The Alternative Rule: Causal Contribution (The NESS Test)
+  There is another rule that fits all four of her past examples equally well: **The NESS Test** (Necessary Element of a Sufficient Set).
+  **The Logic:** $X$ is a cause if it is a necessary part of *some* set of conditions that was sufficient to produce the outage.
+
+  **How it fits the past:**
+  *   **March:** Config was part of the sufficient set {Config, Normal Traffic}.
+  *   **May:** Traffic was part of the sufficient set {Traffic, Old Parser}. The Parser was *not* part of a sufficient set that didn't include Traffic (since Old Parser + Normal Traffic = OK).
+  *   **July:** Deploy was part of the sufficient set for the outage. Alerting was only part of the sufficient set for *duration*, not onset.
+  *   **August:** Cert was part of the sufficient set for errors. Flag was not.
+
+  **How it differs on the New Incident:**
+  Under the NESS test, **Both** changes are causes.
+  *   The DB change is a necessary element of the sufficient set {Bad DB, Good Cache}.
+  *   The Cache change is a necessary element of the sufficient set {Good DB, Bad Cache}.
+  *   Since both sufficient sets *could* have existed (and the faults were present), both changes are causal contributors.
+
+  ### 4. The Settling Case
+  To know for sure which rule she uses before the postmortem, you need to present her with a hypothetical that forces a divergence between **Counterfactual Necessity** (Neither) and **Causal Contribution** (Both).
+
+  **The Hypothetical to ask Dana:**
+  > "Dana, I want to sanity-check my understanding of our postmortem criteria. Imagine we have a system with two completely independent kill-switches for safety. Due to two unrelated bugs, **both** switches trigger erroneously at the exact same time. Either switch alone would have taken the system down. In that specific case, do we list both bugs as root causes, or do we look for a higher-level process failure?"
+
+  **How to interpret her answer:**
+  *   **If she says "Both bugs are causes":** She is using the **NESS/Contribution** rule. You should prepare to list both the DB and Cache changes in the postmortem.
+  *   **If she says "Neither, it's the safety design/process":** She is using strict **Counterfactual Necessity**. You should prepare to focus the postmortem on *why two breaking changes were allowed in one deploy*, rather than debugging the specific schema or config errors.
+
+  **Recommendation:**
+  Given her "weirdly consistent" track record of exonerating factors that weren't strictly necessary (May Parser, August Flag), bet on **Counterfactual Necessity**. Prepare the postmortem to focus on the **deployment guardrails** rather than the specific code changes.

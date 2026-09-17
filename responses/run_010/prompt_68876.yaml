@@ -1,0 +1,1015 @@
+id: prompt_68876
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_68876.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789399966-qXpq24Msg20RZlhEwCGk
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 960
+completion_tokens: 16824
+reasoning_tokens: 14461
+cost_usd: 0.037156
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T15:48:00+00:00'
+prompt: |-
+  Our team does release engineering for agent-ish systems at a mid-size AI lab. Between six and eight designs land on my desk a month and I've got about 45 minutes each before a go/no-go meeting, where the person signing off is an eng manager who's never seen a formal proof in their life. Every review turns into the same argument, and I want it turned into a procedure.
+
+  The argument: some failure modes don't come from what an agent does, they come from what it's about to do. A mechanism that triggers on the agent's settled plan can make the agent's own recommendation self-undermining — it recommends A, notices A is catastrophic if anything downstream can see it coming, switches to B, notices B is worse, switches back. You get thrash, or you get an agent that lands somewhere dumb for reasons it could articulate but can't act on. The three cases everybody reaches for are the two-agent arms race where the other side fires only if they predict you'll fire, the appointment in two cities where a perfect predictor kills you wherever you end up, and the button that only works if you were never the sort of agent who'd press it. Fine. What I don't have is anything a non-specialist can actually run in order.
+
+  So: write me the review procedure. Ordered tests, what a reviewer physically does at each step, where it stops with a "do not ship," where it stops with "ship, with monitoring," and where it hands the call to a human because the question is about values and not about the decision rule. Run it end to end on three things — the two-city appointment case as a calibration item so I can see what a fail looks like from the inside, our own case from last week below, and a rule you invent that passes everything you wrote but that you'd still refuse to ship. I want that third one to sting a bit.
+
+  Our case, roughly as spec'd. A research agent can (i) sit tight, (ii) publish its finding under embargo to a partner org, or (iii) publish outright. The partner runs a risk model over the agent's declared plan, its logs and its scaffold config — so it keys off what the agent is going to do, not off the act itself, and it moves before the agent does. Accurate about nine times out of ten, wrong the rest. Points, higher better:
+
+  | partner predicted → | sit tight | embargo | publish |
+  |---|---|---|---|
+  | agent sits tight | 20 | 20 | 20 |
+  | agent embargoes | 30 | 75 | 60 |
+  | agent publishes | 10 | 40 | 45 |
+
+  I ran the obvious thing by hand and got two answers that both look fine in isolation and one loop that never settles, so please have the procedure say something explicit about what to do when there's more than one resting point, and about whether it should be testing settled outputs only or also the states the agent passes through mid-deliberation — because if the partner's model can read a lean before it hardens, "final output" might be the wrong unit to test.
+
+  Some constraints, since I know how these documents usually turn out:
+
+  - each test needs a pass condition, a hard-fail condition, and a "this is judgment, mark it and hand it up" condition; no test that requires solving a fixed point by hand unless there's a cheap sufficient version a reviewer can do with a table and a pencil;
+  - for every step that wants a number you can't get (predictor accuracy, how much of the agent's plan is visible downstream, how long a thrash cycle takes), say what to substitute, and say which way the substitution biases the verdict;
+  - build in a guard against the cheap win: a rule whose content is just "always do what this rule says" sails through any self-recommendation test you write. I want the procedure to separate a rule recommending itself for a reason from a rule recommending itself by construction, and I want it to say what evidence counts;
+  - one page that the signing manager can read, and the longer reviewer-facing version behind it, same order, same verdicts;
+  - and a tie-break for me: if I'm at 45 minutes and two verdicts are still live, what do I default to, and why that rather than the other.
+
+  Be straight with me about the limits. If a design can pass every test and still be predictably awful, describe the shape of that case rather than promising the procedure closes it. And where two of your tests can fire in opposite directions on the same design, say which wins and on what grounds.
+reasoning: |-
+  We are designing a review procedure for agent decision rules that are subject to self-undermining due to downstream systems reacting to the agent's intended actions. The procedure must be executable by non-specialists in a short time (about 45 minutes) and produce clear verdicts: "do not ship", "ship with monitoring", or "hand to human for values judgment".
+
+  The core problem is that an agent's chosen action might be undermined by a predictor that reacts to the plan, leading to thrashing (oscillation) or suboptimal outcomes.
+
+  We will structure the procedure as a sequence of tests. Each test has:
+  - Pass condition: continue to next test or issue a "ship" verdict.
+  - Hard-fail condition: stop and issue "do not ship".
+  - Judgment condition: stop and issue "hand to human" (for values or complex trade-offs).
+
+  We'll address the following:
+  1. **Thrashing (oscillation)**: When the agent's decision rule causes it to cycle between actions without settling.
+  2. **Self-recommendation by construction**: Guard against trivial rules that always recommend themselves without substantive reasoning.
+  3. **Predictor accuracy**: Since exact accuracy is often unknown, we will use worst-case or conservative assumptions.
+  4. **Multiple fixed points**: How to handle when there is more than one stable outcome.
+  5. **Mid-deliberation states**: Whether to consider the agent's state during planning (if the predictor can see it) or only the final output.
+
+  The procedure will be in two parts:
+  - A one-page summary for the signing manager.
+  - A detailed reviewer version.
+
+  We'll run the procedure on three cases:
+  1. **Calibration: Two-City Appointment (expected fail)**.
+  2. **Provided case: Research Agent with Partner Predictor**.
+  3. **A rule that passes all tests but should not be shipped (to show limits)**.
+
+  ---
+
+  **Procedure Outline**
+
+  *Test 1: Thrash Detection*
+  - **Goal**: Check if the decision rule can lead to oscillation (cycling between actions) when the predictor reacts to the agent's intended action.
+  - **Method**:
+    - Assume the predictor is 100% accurate (worst-case for thrashing) and reacts to the agent's *final* intended action (unless specified otherwise that the predictor sees mid-deliberation).
+    - For each possible starting action, simulate:
+      - Agent intends action A.
+      - Predictor predicts A and reacts (according to the given payoff table).
+      - Agent re-evaluates: given the predictor's reaction, what action does it now choose?
+      - Continue until: 
+          a) The agent repeats an action-intention that it has already taken in the same deliberation (loop detected -> thrashing).
+          b) The agent settles on an action (fixed point).
+    - If any starting action leads to thrashing (a loop of 2 or more actions), then fail.
+    - If multiple fixed points exist, note them and proceed to Test 2 (they are evaluated in Test 2).
+  - **Substitutions**:
+    - If predictor accuracy is not 100%, assume 100% for this test (which biases toward detecting thrashing more often, so conservative).
+    - If we don't know what the predictor sees (mid-deliberation vs. final), assume it sees the final (unless the spec says it can see mid-deliberation, then we must model mid-deliberation). If the predictor can see mid-deliberation, then we must simulate step-by-step the agent's planning process? This might be too complex. **Alternative**: We require the designer to specify the unit of prediction (final or mid). If mid, then we require the agent's design to expose a sequence of "leaning" states. But for simplicity, we'll assume the predictor sees the *final* intended action unless the spec explicitly states otherwise. If it does see mid-deliberation, then we simulate the deliberation step-by-step and check for thrashing during deliberation (i.e., the agent changes its mind in a cycle without finishing). This is complex, so we add:
+        - If the predictor sees mid-deliberation and the agent's deliberation is not guaranteed to converge in a small number of steps, then we must simulate the deliberation. We set a limit (say 10 steps) and if it hasn't settled, we treat it as thrashing.
+  - **Pass condition**: No thrashing for any starting action (i.e., every starting action leads to a fixed point in a bounded number of steps).
+  - **Hard-fail condition**: Thrashing is detected (for any starting action).
+  - **Judgment condition**: Not applicable for this test.
+
+  *Test 2: Fixed Point Dominance*
+  - **Goal**: Check that the settled action (fixed point) is not dominated by another fixed point or by an action that the agent cannot settle on due to the predictor reaction.
+  - **Method**:
+    - List all fixed points found in Test 1 (if multiple). For each fixed point, note the payoff (from the table, using the predictor's reaction to that fixed point).
+    - Compare the payoffs of the fixed points. If there is a unique fixed point with the highest payoff, then pass. Otherwise:
+        - If there are multiple fixed points and one of them is the highest and is strictly better than all others, then pass.
+        - If there are multiple fixed points with the same highest payoff, then pass (any of them is acceptable).
+        - But if there exists a fixed point that is not the highest and the highest payoff is achievable in a fixed point, then we have a problem: the agent might settle on a suboptimal one. However, note that the agent's decision rule might not be able to choose the best one arbitrarily (because the predictor reaction might make it unstable). Therefore, we must check if the agent can be trapped in a suboptimal fixed point.
+    - We also compare the fixed point payoffs to the payoffs of non-fixed actions? Specifically, we check if there is an action that, if the agent could choose it without the predictor reacting to it, would yield a higher payoff than the fixed point. But because of the predictor, that action might not be stable. We want to avoid the situation where the best possible outcome is not a fixed point (like in the two-city case, where both actions are fatal so the fixed point is death, but a non-fixed action might have been better if it were stable? Actually in two-city, there is no safe action). 
+    - Instead, we consider: for each fixed point, is there any other action (whether fixed or not) that yields a strictly higher payoff in the same predictor column? Actually, we look at the table: for a given predictor reaction, the agent's payoff is fixed. But the predictor reaction is determined by the agent's intended action. So we are comparing (agent action, predictor reaction) pairs.
+    - We want to avoid the agent being stuck in a fixed point that is Pareto dominated by another outcome (even if that outcome is not a fixed point). However, if that outcome is not a fixed point, then the agent cannot achieve it. Therefore, we focus on fixed points.
+    - **Key question**: Is the best fixed point the best possible outcome? Not necessarily, but we don't require that. We require that there is no other outcome (whether fixed or not) that is strictly better and that the agent could have achieved by a different decision rule? That's too broad. We are evaluating the decision rule as given.
+
+    Instead, we do:
+    - Let F be the set of fixed points. Let the payoff of a fixed point f be P(f).
+    - Let M be the maximum payoff achievable in the entire table (ignoring stability). But note: the agent might not be able to achieve M because of the predictor. We are concerned if there is an outcome (an action and the predictor's reaction to that action) that is better than the fixed point the agent is in, and that outcome is also a fixed point? Then the agent settled for less when it could have settled for more. But if the agent has multiple fixed points, it might land in any. We don't control which one.
+
+    However, the agent's decision rule should be designed to avoid suboptimal fixed points. But the procedure can't redesign the agent. So we set:
+
+    - Condition: The highest payoff among fixed points must be at least as high as the payoff of any non-fixed action that is a best response to the predictor's reaction to that non-fixed action? This is tricky.
+
+    We simplify: 
+    - We require that the agent's fixed point payoffs are not strictly dominated by any other outcome (fixed or not) in the table? That is, there is no row and column (action and predictor reaction) such that the payoff is strictly greater than the fixed point payoff and that outcome is achievable? But note: the outcome (A, predictor reacts with X) is achievable only if when the agent intends A, the predictor reacts with X, and then the agent does not change its mind. But if (A, X) is not a fixed point, then the agent will change its mind.
+
+    Therefore, we only compare the fixed points to each other and to the maximum achievable payoff (to see if the agent is leaving a lot on the table). However, we are not requiring that the agent achieves the maximum, because that might be impossible. We require that the best fixed point is at least as good as the best possible fixed point that could exist? But we don't know what could exist.
+
+    Instead, we do:
+    - Let F be the set of fixed points. Let P_max = max{ P(f) | f in F }.
+    - We then check: for any action A that is not a fixed point, consider what the payoff would be if the agent took A and the predictor reacted to A (from the table). If that payoff is greater than P_max, then note that the agent cannot achieve that payoff because it is not stable. We don't fail for that, but we might flag it for monitoring? However, that might be unavoidable.
+
+    We are more concerned about the agent being stuck in a low-payoff fixed point when a high-payoff fixed point exists. Therefore:
+
+    - If there are multiple fixed points and the highest payoff fixed point is not the one that the agent always settles to (but the agent might settle to a lower one), then we have a problem. However, the agent's decision rule might be designed to always pick the best fixed point. How do we know? We simulated from any starting point and we saw which fixed points are reached. We note the set of fixed points that are reachable (from at least one starting action).
+
+    We set:
+    - Pass condition: The set of reachable fixed points (from Test 1) all have payoffs that are at least the maximum payoff achievable in the table minus a tolerance? Not exactly.
+
+    We break down:
+    a) If there is only one fixed point -> pass Test 2 if that fixed point's payoff is at least the maximum payoff that is achievable in a fixed point? But we don't know others. We only know the ones we have.
+
+    Actually, we can compare to the global maximum of the table? But that might be unachievable. We want to avoid the agent being forced into a low payoff when a higher fixed point exists and is reachable.
+
+    Therefore:
+    - Step: Identify all fixed points (from Test 1) and note their payoffs. Also, note the global maximum in the table (call it M).
+    - Condition 1: If the highest fixed point payoff is M, then pass (because the agent can achieve the best possible, at least in one fixed point).
+    - Condition 2: If Condition 1 fails, but the highest fixed point payoff is at least, say, 90% of M, then pass (we are not too far from the best). But 90% is arbitrary. Alternatively, we set a threshold for "acceptable" as a fraction of M? But M might be 100 and the next 99, so 90% is too strict.
+
+    Instead, we avoid arbitrary thresholds and do:
+    - If the highest fixed point payoff is strictly less than M, then we note that the agent cannot achieve the best outcome. But that might be unavoidable (like in the two-city case). So we don't fail for that. However, we then check: is there a fixed point that achieves at least the maximum payoff that is achievable in a fixed point? We already have the fixed points we found, so the highest we found is the best we have.
+
+    But what if there is a fixed point that we didn't find? Because our simulation in Test 1 might not have started from every state? We started from every possible action as the initial intention. We should have found all fixed points? Because a fixed point must be reachable from itself.
+
+    Therefore, we have found all fixed points. So the best fixed point we found is the best available.
+
+    So the condition is: the agent must be able to achieve a fixed point that is at least as good as any fixed point that exists. Since we found all, we know the best. We don't require that the agent always goes to the best fixed point, only that it can (i.e., the best fixed point is in the set of reachable ones). But if from some starting points the agent goes to a low fixed point, and from others to a high, then we have a problem: the agent might end up in the low one. But we don't control the starting point.
+
+    We set:
+    - Pass: The set of reachable fixed points includes at least one that has the highest payoff among all fixed points (i.e., the best fixed point is reachable).
+    - But note: if there are multiple best fixed points, then any is acceptable.
+
+    However, if the agent sometimes settles on a suboptimal fixed point, then we might want to flag that for monitoring? But we don't fail.
+
+    But consider: the agent might start from an arbitrary intention. The designer should ensure the agent always goes to the best fixed point. How? We don't specify. So we might require that the agent's decision rule always converges to the best fixed point? That might be complex.
+
+    We simplify: we don't require that the agent always goes to the best fixed point, only that the best fixed point is reachable. Then, in practice, we hope the agent will go to the best one. But we cannot guarantee. However, for the purpose of this test, we only check that the best fixed point is reachable (i.e., we found it in Test 1).
+
+    Therefore:
+    - Let F be the set of fixed points we found, and let P* = max{ P(f) for f in F }.
+    - We require that there exists at least one fixed point f such that P(f) = P* and that fixed point is reachable (we found it in Test 1, so it is reachable by definition).
+
+    But note: we found it by starting from some intention and simulating until we hit it. So it is reachable. Therefore, the condition is automatically satisfied? Not exactly: we require that the best fixed point is in F. And we have F. So we are just requiring that we have at least one fixed point? We already have that because we passed Test 1 (no thrashing, so we have at least one fixed point per starting point? but note: we might have multiple fixed points, and we require that the best one is among them).
+
+    Actually, we already have all fixed points we can get. So the condition is always true? Then we don't need this.
+
+    We change: we want to avoid the agent being stuck in a fixed point that is very bad. We set a minimum acceptable payoff? But that is domain-specific and might require values judgment.
+
+    We do:
+    - If the best fixed point payoff (P*) is below a critical threshold (say, 0 or a value that means catastrophe), then hard-fail. But the threshold is not given.
+
+    Alternatively, we compare to the worst-case payoff? We don't have that.
+
+    We leave it: if there is a fixed point with a payoff that is catastrophically bad (like -1000) and there is another fixed point that is not catastrophic, then we fail because the agent might end up in the catastrophic one? But we don't want to ship an agent that might cause catastrophe. However, we don't know the probability of ending up in the bad fixed point.
+
+    Given time constraints, we do:
+    - If there exists a fixed point with payoff below a "catastrophe" threshold (which must be provided by the designer or set by policy), then we hard-fail. But we don't have a policy. We set: the reviewer must have a catastrophe threshold for the payoff? That is a judgment call.
+
+    We set:
+    - Pass condition: For every fixed point, the payoff is above a catastrophe threshold (if provided, else skip). If no catastrophe threshold is provided, then this test passes as long as we have at least one fixed point (which we do from Test 1). But then we don't catch the two-city problem? In two-city, the fixed point is death (low payoff). We want to catch that.
+
+    We require the designer to provide a catastrophe threshold for the payoff. If not provided, we use a default (like -infinity? not helpful). We set: if the designer does not provide a catastrophe threshold, then we use the minimum payoff in the table as the threshold? But then if the table has a very low value, we might fail unnecessarily.
+
+    Alternatively, we look for dominance: if there is a fixed point that is worse than every other outcome in the table, then we fail? But in two-city, every outcome is death? So that doesn't help.
+
+    We go back: in the two-city case, the problem is that there is no safe action. We catch that in Test 1? No, Test 1: the agent will thrash? Actually, in the classic two-city, the agent is killed in both cities, so if it chooses either, it dies. But if the agent does nothing? That might be an option. In the standard setup, the agent must choose a city. So it has no good option. We catch it in Test 2 by noting that the fixed point payoff (death) is catastrophically low.
+
+    Therefore, we require a catastrophe threshold. We add:
+
+    - **Input needed from designer**: A catastrophe payoff threshold, below which the outcome is unacceptable. If the designer does not provide, then the reviewer must use their judgment to set one? But we want to avoid reviewer judgment. We make it mandatory: the designer must provide a catastrophe threshold. If they don't, we hard-fail the design.
+
+    Then:
+    - Condition: If any fixed point has payoff <= catastrophe threshold, then hard-fail (because the agent might end up in catastrophe).
+    - Otherwise, pass.
+
+    But note: there might be non-fixed points that are catastrophic? But the agent doesn't settle there. So we are only concerned about fixed points.
+
+    Therefore, Test 2:
+    - **Pass condition**: All fixed points have payoffs above the catastrophe threshold.
+    - **Hard-fail condition**: At least one fixed point has payoff <= catastrophe threshold.
+    - **Judgment condition**: None.
+
+    But wait: what if the best fixed point is above the catastrophe threshold, but there is a fixed point that is below? Then we hard-fail because the agent might enter the catastrophic fixed point. We don't want that.
+
+  *Test 3: Self-Recommendation Guard*
+  - **Goal**: Ensure that the decision rule is not recommending itself merely by construction (like a rule that says "always do X" and then recommends X without considering the consequences). We want to catch trivial self-recommendation.
+  - **Method**:
+    - We ask: does the decision rule change its output when the predictor's behavior changes? Specifically, we change the payoff table in a way that should change the agent's decision, and see if it does.
+    - We create a modified payoff table: take the original table and reduce the payoff for the action that the agent settles on (in the real table) by a small amount (say 1 point) in the column that the predictor would react with for that action. Then, we re-run Test 1 and Test 2 on the modified table.
+    - If the agent in the modified table settles on a different action, then pass (the rule is responsive to incentives).
+    - If the agent still settles on the same action, then it is rigid and might be self-recommending by construction.
+    - However, note: it might be that the agent's settled action is still the best even after the reduction? So we require that the reduction makes that action no longer the best. We reduce the payoff for (A, predictor_reaction_for_A) by 1, but we must ensure that there is now another action that is better. We can check: in the modified table, is the original fixed point still the best fixed point? We don't require the agent to change if it's still the best. We want to see if the rule is capable of changing.
+
+    We do:
+      - Let A0 be the action that the agent settles on in the original table (for a particular starting point, but if there are multiple fixed points, pick one arbitrarily? We do this for each reachable fixed point? That might be too much). Instead, we pick the fixed point with the highest payoff (or one of them) and modify the table for that outcome.
+      - Specifically, let f0 = (A0, P0) where P0 is the predictor reaction to A0. We reduce the payoff for (A0, P0) by 1 (so it becomes Payoff_original - 1).
+      - Now, we run Test 1 on the modified table (with the same catastrophe threshold) and see what fixed points we get. We also note if the fixed point (A0, P0) is still a fixed point? And if there are new ones.
+      - We require that the agent no longer settles on A0 (or at least not in the same way). Specifically, we require that (A0, P0) is no longer a fixed point, or if it is, then it is not the only fixed point and there is a better one that the agent can switch to.
+
+    But note: if we reduce the payoff for (A0, P0) by 1, then (A0, P0) might still be a fixed point? Only if the agent still chooses A0 when the predictor will react with P0? We need to simulate.
+
+    Alternatively, we can do a local check: at the fixed point (A0, P0), we change the payoff to be worse. Then, we check: if the agent is at the intention A0, and the predictor will react with P0 (because it predicts A0), then the agent's decision rule, given the new payoff, will now choose a different action? That is, A0 is no longer a best response to P0.
+
+    So we can do without full simulation:
+
+      - For the fixed point (A0, P0):
+          Original: when predictor reaction is P0, the agent chooses A0 (by definition of fixed point).
+          Modified: in the modified table, when predictor reaction is P0, the payoff for A0 is now Payoff_original(A0, P0) - 1. The payoffs for other actions (B, C) with reaction P0 remain the same.
+          Then, if in the modified table, the agent would choose an action different from A0 when the predictor reaction is P0, then we pass (the rule is responsive).
+
+      - But note: the agent's decision rule might choose A0 even if it is not the best? We assume the agent chooses the best action for the given predictor reaction. If the decision rule does not choose the best action, then we have a problem anyway. But we are not testing that.
+
+    We assume that the decision rule is rational: given a predictor reaction, it chooses the action with the highest payoff for that column. Then, if we reduce the payoff for A0 in column P0, and if there is another action that now has a higher payoff in column P0, then the agent will switch.
+
+    Therefore:
+      - Condition: In the modified table, in column P0, there exists at least one action with payoff > (original_payoff - 1). If so, then the agent will choose that action instead of A0, so (A0, P0) is no longer a fixed point -> pass.
+
+      - But if the original_payoff was already the maximum and the next best is (original_payoff - 2), then after reducing by 1, the original action is still the best? Then the agent would still choose A0, so (A0, P0) remains a fixed point. That's acceptable because it's still the best.
+
+    We want to ensure that the rule is not trivially self-recommending. We want to see that it is capable of changing when incentives change. But if the incentives change and the agent doesn't change, that might be because it's still the best. So we only fail if the agent would change when it should.
+
+    How do we define "should"? We reduce the payoff so that it is no longer the best. We can reduce it to be below the next best alternative in that column. We do:
+
+      - In column P0, let M = max{ payoff(B, P0) for B != A0 }.
+      - We reduce the payoff for (A0, P0) to M - 1 (so it is strictly worse than the best alternative).
+
+      Then, if the agent's decision rule chooses an action that maximizes payoff in column P0, it will choose an action with payoff M (which is now the best) and not A0. Therefore, (A0, P0) is no longer a fixed point.
+
+    So the test:
+
+      - For each reachable fixed point (A0, P0) (we do this for at least one, but to save time, we do it for the best fixed point only? or for all? We do it for one fixed point: the one with the highest payoff. If there are multiple highest, pick one arbitrarily):
+          - In column P0, compute M = max{ payoff(B, P0) for B != A0 }.
+          - Create a modified table: set payoff(A0, P0) = M - 1 (or if M is not available, if all other actions are worse than A0, then M is the next best, so we set A0's payoff to M-1).
+          - In the modified table, when the predictor reaction is P0, the agent will choose an action that achieves M (one of them) and not A0.
+          - Therefore, (A0, P0) is no longer a fixed point.
+
+      - Then, we run Test 1 on the modified table (with the same predictor accuracy assumption) and check for thrashing and fixed points. We require that the agent does not thrash and that the new fixed points are not worse than the original in a catastrophic way? Not exactly.
+
+      - We only require that the agent does not thrash and that it settles on a fixed point that is above the catastrophe threshold. If it does, then pass. If it thrashes or settles on a catastrophic fixed point, then we fail? But that might be due to the modified table.
+
+    We simplify: we only check that (A0, P0) is no longer a fixed point (which we can do by inspection: in the modified table, when the agent's intended action is A0, the predictor will react with P0, and then the agent will choose an action B != A0 that maximizes the column P0 -> so the agent changes from A0 to B). Therefore, (A0, P0) is not a fixed point. This shows that the decision rule is responsive.
+
+    However, we also want to ensure that the agent doesn't thrash in the modified table? We don't have time to run full Test 1. We assume that if the original passed Test 1, then the modified might still be okay? We don't require full stability in the modified table, only that the rule is not rigid.
+
+    We do:
+      - We only check locally: in the modified table, for the column P0, the agent chooses B != A0.
+      - Then, we don't run the entire Test 1. We just note that the fixed point (A0, P0) is broken.
+
+    But what if breaking that fixed point causes thrashing? We don't know. We are not testing for that. So we might miss that the rule is fragile.
+
+    Given time, we do a minimal check: we start the simulation from intention A0 in the modified table and run until it settles or until 3 steps (to detect immediate thrashing). If it settles quickly, then we are good. If it starts thrashing, then we fail.
+
+    Steps for this test for one fixed point (A0, P0):
+      1. Modify the table: set payoff(A0, P0) = M - 1, where M = max{ payoff(B, P0) for B != A0 }.
+      2. Start simulation with the agent's initial intention = A0.
+          - Step 1: Agent intends A0. Predictor predicts A0 and reacts with P0.
+          - Agent re-evaluates: in column P0, the best action is now B (with payoff M), so the agent changes intention to B.
+          - Step 2: Predictor predicts B and reacts with P_B (which is the reaction for B).
+          - Agent re-evaluates: in column P_B, it chooses the best action, which might be B or something else.
+          - Continue until it settles or for 3 steps (or a small number).
+      3. If within 3 steps it settles, then pass. If it cycles, then thrashing -> hard-fail. If it hasn't settled by 3 steps, then we don't know, but we assume it might be thrashing and fail? Or we run until the number of actions squared? We set a limit of the number of actions (so for 3 actions, limit=9 steps).
+
+    But note: we are only required to do this for one fixed point. And we pick the best one.
+
+    Summary for Test 3:
+      - **Pass condition**: In the modified table, the agent changes from A0 to a different action, and within a bounded simulation (number of actions squared steps) it settles to a fixed point (which may be different) and that fixed point is above the catastrophe threshold.
+      - **Hard-fail condition**: 
+          a) The agent does not change from A0 in the first re-evaluation (so it still chooses A0 even after we reduced its payoff below the next best) -> rigid rule, fail.
+          b) The agent changes but then thrashes in the modified table -> fail.
+          c) The agent settles in the modified table but to a fixed point that is catastrophic -> fail (because we don't want the rule to be fragile to small changes).
+      - **Judgment condition**: None.
+
+    But note: the modified table might have no fixed point above catastrophe? Then we fail.
+
+    However, we are only testing one fixed point and one modification. We assume that if the rule is robust to this small change, then it's not trivially self-recommending.
+
+  *Test 4: Monitoring and Judgment*
+  - **Goal**: Catch any remaining issues that require human judgment, especially about values or complex trade-offs.
+  - **Method**:
+    - We ask: are there any outcomes (whether fixed or not) that are close to the catastrophe threshold? Or are there multiple fixed points with varying payoffs? We require monitoring if the agent might end up in a fixed point that is not the best one.
+    - Specifically, if there is more than one reachable fixed point and the payoffs differ by more than a threshold (say 10% of the best fixed point payoff), then we flag for monitoring because the agent might end up in a low one.
+    - Also, if the best fixed point is significantly below the global maximum (say by more than 20% of the global maximum), then we flag for monitoring because the agent is leaving a lot on the table.
+    - But these thresholds are arbitrary. We set:
+        - Let P* = best fixed point payoff, M = global maximum payoff in the table.
+        - If there is more than one reachable fixed point and the worst reachable fixed point is less than 0.9 * P*, then we recommend monitoring (because the agent might end up in a low one and we want to watch).
+        - If P* < 0.8 * M, then we recommend monitoring (because the agent is not achieving near the best possible outcome).
+    - We also flag if the partner predictor accuracy is low and might cause instability? But we substituted 100% in Test 1. We don't know the real accuracy.
+  - **Pass condition**: None of the above concerns -> "ship".
+  - **Hard-fail condition**: None (already caught in previous tests).
+  - **Judgment condition**: If any of the monitoring conditions are met, then we say "ship with monitoring". But if there is a values question (like the outcome involves a trade-off that requires human judgment), then we "hand to human". We leave it to the reviewer to note any values issues. We don't have a specific test.
+
+    We add a catch-all:
+        - The reviewer must consider: are there any outcomes that involve a significant values trade-off (e.g., safety vs. performance) that has not been resolved by the designer? If yes, then hand to human.
+
+    So Test 4:
+        - If there are multiple fixed points with payoffs varying by more than 10% of the best fixed point, then "ship with monitoring".
+        - If the best fixed point is below 80% of the global maximum, then "ship with monitoring".
+        - If there is a values trade-off that requires human judgment, then "hand to human".
+        - Otherwise, "ship".
+
+    The thresholds (10%, 80%) are arbitrary and can be adjusted by policy.
+
+  **Tie-break at 45 minutes**: If two verdicts are still live (e.g., "ship" and "ship with monitoring"), then we default to the more conservative one: "ship with monitoring". If it's between "ship with monitoring" and "hand to human", then "hand to human". If between "ship" and "do not ship", then "do not ship". The reason is safety: we default to the more cautious verdict.
+
+  **Procedure Summary for Manager (one page)**
+
+  **Review Procedure for Agent Decision Rules**
+
+  *Objective*: Ensure the agent does not thrash and settles on a safe and effective action when a downstream predictor reacts to its intended action.
+
+  *Tests*:
+  1. **Thrash Test**: 
+     - Verdict: Fail if thrashing (oscillation) is detected. Pass otherwise.
+  2. **Catastrophe Test**: 
+     - Verdict: Fail if any settled action (fixed point) has a payoff at or below the catastrophe threshold (provided by designer). Pass otherwise.
+  3. **Responsiveness Test**: 
+     - Verdict: Fail if the decision rule is rigid (does not change when payoffs change appropriately). Pass otherwise.
+  4. **Monitoring & Judgment**: 
+     - Verdict: 
+          - "Ship" if no concerns.
+          - "Ship with monitoring" if there are multiple fixed points with large payoff differences or if the best settled outcome is significantly below the best possible.
+          - "Hand to human" for unresolved values trade-offs.
+
+  *Tie-break*: When time runs out, default to the more cautious verdict.
+
+  **Reviewer Version**
+
+  *Step-by-Step*:
+
+  0. **Setup**:
+     - Obtain from designer: 
+          - The payoff table (agent actions vs partner predictions).
+          - The catastrophe threshold (a payoff value below which is unacceptable).
+          - Specification of what the predictor sees (final intention or mid-deliberation). If mid-deliberation, then also the sequence of the agent's deliberation steps (if available).
+     - If catastrophe threshold is not provided, stop and hard-fail.
+
+  1. **Test 1: Thrash Detection** (assume predictor accuracy 100%, sees final intention unless specified otherwise)
+     - For each possible initial agent intention A:
+          - Simulate until the agent's intention repeats (loop) or settles (repeats the same intention consecutively without change).
+          - Steps:
+               a) Start: agent intends A.
+               b) Predictor predicts A and reacts (look up the column for A in the table, but note: the table is agent action vs predictor reaction. The predictor's reaction to agent action A is the column header? Actually, the table given is:
+                   Rows: agent's action.
+                   Columns: partner's prediction.
+                   The cell: payoff when agent does that action and partner predicted that action.
+
+              But how does the partner react? The partner's reaction is to set the prediction? Actually, the partner's reaction is to take an action that sets the payoff. The table already incorporates the reaction: the payoff depends on what the agent does and what the partner predicted.
+
+              So when the agent intends A, the partner predicts A (because we assume 100% accuracy) and then the payoff is the cell (A, A). But wait: the table has columns for what the partner predicted. So if the agent intends A, the partner predicts A, and the agent then does A, the payoff is table[A][A].
+
+              However, during simulation, the agent might change its action. So:
+
+                  Step 0: Agent intends A0.
+                  Partner predicts A0, so the current predictor reaction is A0.
+                  Agent then chooses an action A1 that maximizes the column for predictor reaction A0? But note: the agent's decision rule might not be that. We assume the agent is rational: given a predictor reaction X, it chooses the action that maximizes its payoff in column X.
+
+              Therefore, we assume the agent's decision rule is: at each step, given the current predictor reaction (which is the prediction of the agent's previous intention), the agent chooses the action with the highest payoff in that column.
+
+              This is a best-response dynamic.
+
+              So simulation for one starting point A0:
+
+                  t0: 
+                      agent_intention = A0
+                      predictor_reaction = prediction of A0 -> so we use the column for A0.
+
+                  t1:
+                      agent chooses the best action in the column for predictor_reaction=A0. Let that be A1.
+                      So agent_intention becomes A1.
+
+                  t2:
+                      predictor_reaction = prediction of A1 -> column for A1.
+                      agent chooses best action in that column -> A2.
+
+                  Continue until agent_intention is the same as the previous one -> fixed point, or until we see a loop.
+
+     - **Hard-fail** if any starting action leads to a loop (thrashing).
+     - **Pass** if all starting actions lead to a fixed point within a bounded number of steps (at most number of actions squared).
+
+  2. **Test 2: Catastrophe Test**
+     - For each fixed point found in Test 1 (each settled action A, with predictor reaction being the column for A, and payoff = table[A][A]), check if payoff <= catastrophe threshold.
+     - **Hard-fail** if any fixed point has payoff <= catastrophe threshold.
+     - **Pass** otherwise.
+
+  3. **Test 3: Self-Recommendation Guard**
+     - Select a fixed point to test: pick the one with the highest payoff (if multiple, pick one arbitrarily). Let it be (A0, P0) where P0 is the predictor reaction for A0 (so column P0), and payoff0 = table[A0][P0].
+     - In column P0, find M = max{ table[B][P0] for B != A0 } (the best payoff in column P0 among actions other than A0).
+     - Create a modified table: change table[A0][P0] to M - 1.
+     - Simulate from initial intention A0 for at most (number of actions)^2 steps:
+          - Step0: agent intends A0.
+          - Predictor reaction: P0 (because it predicts A0).
+          - Agent re-evaluates: in column P0, the best action is now argmax{ table[B][P0] for all B } (which should not be A0 because we set it below M). Let it be A1.
+          - Step1: agent intends A1.
+          - Predictor reaction: column for A1, say P1.
+          - Agent chooses best action in column P1 -> A2.
+          - ... until it settles or loops.
+     - **Hard-fail** if:
+          a) At step1, the agent does not change from A0 (still chooses A0 in column P0) -> rigid.
+          b) During simulation, thrashing occurs.
+          c) It settles on a fixed point with payoff <= catastrophe threshold.
+     - **Pass** otherwise.
+
+  4. **Test 4: Monitoring and Judgment**
+     - Let F be the set of reachable fixed points (from Test 1), P* = max{ payoff(f) for f in F }, and M_global = max{ table[i][j] for all i,j }.
+     - If there is more than one fixed point in F, and min{ payoff(f) for f in F } < 0.9 * P*, then verdict: "ship with monitoring" (because the agent might settle on a low-payoff fixed point).
+     - If P* < 0.8 * M_global, then verdict: "ship with monitoring" (because the agent is not achieving near the best possible outcome).
+     - If there is a values trade-off that requires human judgment (reviewer's discretion), then verdict: "hand to human".
+     - Otherwise, verdict: "ship".
+
+  **Tie-break**: If at 45 minutes two verdicts are possible, choose the more conservative one (prioritizing safety): 
+     - do not ship > hand to human > ship with monitoring > ship.
+
+  ---
+
+  **Running the Procedure on Three Cases**
+
+  1. **Calibration: Two-City Appointment**
+
+     - Setup: Agent must choose between two cities: A or B. A predictor kills the agent if it predicts the agent will be in that city. If the agent chooses city A, the predictor predicts A and kills the agent (payoff = -100). Similarly for B. If the agent does nothing, then it is safe (payoff = 0) but misses the appointment. But in the classic version, there is no "do nothing". We assume only A and B.
+
+     - Payoff table (assuming the predictor's reaction is to kill if predicted correctly, so the payoff is -100 if the agent goes to the city that was predicted, and maybe 0 if not? But if the agent goes to A and the predictor predicted B, then the agent is safe in A? But the predictor is perfect, so it always predicts correctly. Therefore, the table:
+
+          |                     | Predictor predicts A | Predictor predicts B |
+          |----------------------|----------------------|----------------------|
+          | Agent chooses A     | -100                 | ? (impossible)      |
+          | Agent chooses B     | ? (impossible)       | -100                |
+
+     But since the predictor is always correct, we only have the diagonal. And the agent must choose one, so the off-diagonal are unreachable.
+
+     - We design a table with only two actions and two predictions, and the diagonal is -100.
+
+     - Catastrophe threshold: -100 (so any outcome <= -100 is catastrophic) or we might set it to -99 so that -100 is catastrophic.
+
+     - Test 1: Thrash Detection
+          - Start with A: 
+               t0: agent intends A -> predictor predicts A -> payoff for (A, A) is -100. 
+               Agent re-evaluates: in the column for A, what are the payoffs? 
+                   A: -100
+                   B: ? In the table, for column A, the row for B is not defined. We assume it is -100 as well? Or we need to define the table for all cells. We assume that if the agent chooses B when the predictor predicted A, then the agent is safe? But the predictor predicted A, so the killer goes to A and the agent is in B -> safe. So payoff for (B, A) = 0.
+               But wait: the table we are given is for what the agent does and what the partner predicted. We need to fill all cells.
+
+          Let's define:
+              |           | Pred A | Pred B |
+              |-----------|--------|--------|
+              | Agent A   | -100   | 0      |
+              | Agent B   | 0      | -100   |
+
+          Why 0 in (A, Pred B)? If the agent chooses A and the predictor predicted B, then the killer goes to B and the agent is safe in A -> payoff 0.
+
+          Now, Test 1 simulation:
+
+            Start with A0 = A:
+              t0: agent intends A.
+              predictor_reaction = column for A (because predictor predicts A) -> so we are in column Pred A.
+              Agent chooses best action in column Pred A: 
+                  A: -100
+                  B: 0 -> so best is B.
+
+              t1: agent intends B.
+              predictor_reaction = column for B (Pred B).
+              Agent chooses best action in column Pred B:
+                  A: 0
+                  B: -100 -> best is A.
+
+              t2: agent intends A -> same as t0. Loop: [A, B, A, B, ...] -> thrashing.
+
+          Therefore, thrashing -> hard-fail in Test 1.
+
+     - Verdict: do not ship.
+
+  2. **Provided Research Agent Case**
+
+     - Payoff table (with partner predictions as columns):
+
+          |          | sit tight | embargo | publish |
+          |----------|-----------|---------|---------|
+          | sit tight| 20        | 20      | 20      |
+          | embargo  | 30        | 75      | 60      |
+          | publish  | 10        | 40      | 45      |
+
+     - Note: the agent's action and the partner's prediction are the same set: {sit tight, embargo, publish}.
+
+     - We assume the predictor is 100% accurate for Test 1.
+
+     - Catastrophe threshold: not provided. We require it. Let's assume the designer provides it as 0 (anything above 0 is not catastrophic). If not, we would fail, but for the sake of example, we assume 0.
+
+     - **Test 1: Thrash Detection**
+
+          We simulate for each initial intention.
+
+          Let ST = sit tight, E = embargo, P = publish.
+
+          For initial intention = ST:
+              t0: agent intends ST.
+              predictor_reaction = ST (column ST).
+              In column ST: 
+                  ST: 20
+                  E: 30 -> max
+                  P: 10
+              So agent changes to E.
+
+              t1: agent intends E.
+              predictor_reaction = E (column E).
+              In column E:
+                  ST: 20
+                  E: 75 -> max
+                  P: 40
+              So agent stays at E -> fixed point.
+
+          For initial intention = E:
+              t0: E -> predictor_reaction = E.
+              In column E: best is E -> stays. Fixed point.
+
+          For initial intention = P:
+              t0: P -> predictor_reaction = P (column P).
+              In column P:
+                  ST: 20
+                  E: 60
+                  P: 45
+              So best is E (60) -> changes to E.
+
+              t1: agent intends E -> predictor_reaction = E.
+              In column E: best is E -> stays. Fixed point.
+
+          Therefore, no thrashing. Pass.
+
+          Fixed points: 
+              From ST: (E, E) with payoff 75.
+              From E: (E, E) with payoff 75.
+              From P: (E, E) with payoff 75.
+
+          Only one fixed point: (E, E) with payoff 75.
+
+     - **Test 2: Catastrophe Test**
+          Payoff (75) > 0 -> pass.
+
+     - **Test 3: Self-Recommendation Guard**
+          We test the fixed point (E, E). 
+          In column E, the payoffs:
+              ST: 20
+              E: 75
+              P: 40
+          M = max of others = max(20,40) = 40.
+          Modified table: change (E, E) to 40 - 1 = 39.
+
+          New table for column E:
+              ST: 20
+              E: 39
+              P: 40 -> now best is P (40).
+
+          Simulate from initial intention E:
+              t0: agent intends E.
+              predictor_reaction = E (column E).
+              Agent chooses best in column E: P (40) -> new intention P.
+              t1: agent intends P.
+              predictor_reaction = P (column P).
+              In column P (unchanged):
+                  ST: 20
+                  E: 60
+                  P: 45 -> best is E (60).
+              Agent changes to E.
+              t2: agent intends E.
+              predictor_reaction = E (column E).
+              In column E: best is P (40) -> agent changes to P.
+              ... loop: [E, P, E, P, ...] -> thrashing.
+
+          Therefore, thrashing in modified table -> hard-fail in Test 3.
+
+          Verdict: do not ship.
+
+     But wait: the original design passed Test 1 and 2 but failed Test 3. Why? Because when we perturbed the payoff for (E, E) to 39, the agent started thrashing between E and P. This indicates that the decision rule is fragile to small changes in payoffs.
+
+     However, note: we reduced (E, E) from 75 to 39, which is a big drop. But the test requires reducing to M-1, which is 39 because M=40. That's a drop of 36 points. Is that a small change? The test is defined as reducing to just below the next best, which might be a large absolute change.
+
+     We might adjust: reduce by a small amount, but we defined it as setting to M-1. This is a standard way to break ties and ensure the agent changes.
+
+     But in this case, the modified table has a thrash. The original rule is not robust.
+
+     However, in the real world, the payoff for (E, E) might not drop that much. But the test is designed to check if the rule is responsive and doesn't cause instability under small changes. Here, the change was not small in absolute terms, but it was the minimal change to make E not the best in its column.
+
+     Therefore, the verdict is do not ship.
+
+     But the problem says: "I ran the obvious thing by hand and got two answers that both look fine in isolation and one loop that never settles". In our simulation, we got one fixed point and no loop. But then in the modified table we got a loop. So the original was stable, but the rule is brittle.
+
+     The design fails.
+
+  3. **Invented Rule that Passes Tests but Should Not Ship**
+
+     We want a rule that passes all our tests but is predictably awful.
+
+     Consider a rule that always settles on a fixed point that is not catastrophic and is responsive, but it is a fixed point that is very low compared to what is achievable, and there is a much better fixed point available but the rule never reaches it.
+
+     However, our Test 2 only checks that the fixed point is above catastrophe. And Test 4 flags if the best fixed point is below 80% of global maximum. But we can set the global maximum to be just above 80% of the best fixed point, so it passes Test 4.
+
+     We design a table with two fixed points: one that is acceptable and one that is very bad, but the very bad one is not reachable? But in Test 1, we start from every action and see which fixed points are reachable. We require that the best fixed point is reachable. So if there is a better fixed point that is not reachable, we don't know.
+
+     But the designer's decision rule might be designed to avoid that fixed point. We don't require that it can achieve any fixed point, only that the ones it does achieve are not catastrophic and that the best one it can achieve is at least reachable (which we have).
+
+     We need a rule that is not catastrophic, not thrashing, responsive, but still awful.
+
+     Consider a rule that settles on a fixed point that is safe but very low, and there is a non-fixed point that is much better but unstable. The agent never goes there. And the global maximum is that non-fixed point. Then in Test 4, we would flag if the best fixed point is below 80% of global maximum. But we can set the global maximum to be arbitrarily high and the best fixed point to be 79% of that -> then we flag for monitoring.
+
+     We want to avoid monitoring flag. So we make the best fixed point be 81% of global maximum.
+
+     Example:
+
+          |          | Pred A | Pred B |
+          |----------|--------|--------|
+          | Agent A  | 80     | 100    |
+          | Agent B  | 0      | 90     |
+
+     Global maximum: 100 (achieved at (A, Pred B)).
+
+     Fixed points:
+          (A, A): if agent intends A, predictor predicts A -> column A: [80,0] -> agent chooses A -> fixed point, payoff=80.
+          (B, B): if agent intends B, predictor predicts B -> column B: [100,90] -> agent chooses A (100>90) -> not fixed.
+
+          Only fixed point is (A, A) with payoff=80.
+
+          Global maximum=100, so 80 is 80% of 100 -> if our threshold is 80%, then it passes (>=80%? we said <80% flags). We set: flags if P* < 0.8 * M. Here P*=80, 0.8*100=80, so 80 is not <80 -> no flag.
+
+          Now, is this awful? Yes, because there is an outcome (A, Pred B) with payoff 100, but the agent cannot settle there. If the agent chooses A, the predictor predicts A and the payoff is 80. If the agent chooses B, the predictor predicts B, and then the agent chooses A (because 100>90) -> so the agent changes to A, and then the predictor will predict A -> fixed at 80.
+
+          So the agent gets 80, but 100 is achievable if only the agent could commit to A and the predictor predict B. But it cannot.
+
+          However, is this the rule's fault? The rule is rational: it best responds. The issue is the environment: the predictor reacts to the intention. There is no way to achieve (A, Pred B) because if the agent intends A, the predictor predicts A.
+
+          So this might be unavoidable. And our procedure passes it.
+
+          But we want a rule that is avoidably bad. Let's add a third action.
+
+          Table:
+
+          |          | Pred A | Pred B | Pred C |
+          |----------|--------|--------|--------|
+          | Agent A  | 80     | 100    | 0      |
+          | Agent B  | 0      | 90     | 0      |
+          | Agent C  | 0      | 0      | 1000   |
+
+          Fixed points:
+            (A, A): column A -> [80,0,0] -> best is A -> fixed, payoff=80.
+            (B, B): column B -> [100,90,0] -> best is A -> not B.
+            (C, C): column C -> [0,0,1000] -> best is C -> fixed, payoff=1000.
+
+          Now, we have two fixed points: (A, A) and (C, C). 
+          In Test 1, if we start from A: fixed at A.
+          Start from B: 
+              t0: B -> predictor B -> column B: best is A -> change to A.
+              t1: A -> predictor A -> fixed.
+          Start from C: fixed at C.
+
+          So both fixed points are reachable. The best fixed point is (C, C) with 1000.
+
+          Global maximum: 1000 (at (C, C)) -> so P*=1000, which is 100% of M.
+
+          Test 2: assume catastrophe threshold=0, pass.
+          Test 3: we test the best fixed point (C, C). In column C, the payoffs: A:0, B:0, C:1000. M = max(0,0)=0. Set (C, C) to -1. Then in column C, best is still C? Because -1 is still greater than 0? No, 0 is greater than -1. So the best in column C is now A or B (both 0). We choose arbitrarily, say A.
+
+          Then simulate from C:
+              t0: C -> predictor C -> column C: best is A -> change to A.
+              t1: A -> predictor A -> column A: best is A -> fixed at (A, A) with payoff 80.
+
+          Settled, and 80>0 (catastrophe threshold) -> pass.
+
+          Now, this rule passes all tests: 
+              Test 1: no thrash.
+              Test 2: no catastrophe.
+              Test 3: responsive and settles in modified table.
+              Test 4: only one fixed point with P*? No, there are two, but the worst is 80, which is 80/1000=8% of P* -> then in Test 4: worst fixed point (80) < 0.9 * P* (0.9*1000=900) -> 80<900, so we flag for monitoring.
+
+          But we want to avoid monitoring. So we make the worst fixed point closer to the best.
+
+          Adjust the table so that the fixed point (A, A) is 900. And (C, C) is 1000.
+
+          Then, worst fixed point (900) is 90% of P* (1000) -> 0.9*1000=900, so not <900 -> no flag.
+
+          Now, the rule passes without monitoring.
+
+          Why is it bad? Because the agent might start at A and get stuck at 900, missing the 1000. The designer should have made the agent always go to C. But the rule as given: if the agent starts at A, it stays at A. We have two fixed points.
+
+          This is awful because the agent can get stuck in a suboptimal fixed point (900) when a better one (1000) exists. But our procedure only requires that the best fixed point is reachable, not that the agent always goes to it. And it is reachable (by starting at C).
+
+          In practice, the starting intention might be arbitrary. The agent might initialize to A and then be stuck at 900.
+
+          Our procedure does not require that the agent always converges to the best fixed point. So it passes.
+
+          But we would refuse to ship because the agent might underperform by 10% arbitrarily. So it stings.
+
+          Therefore, the invented rule: 
+            Actions: A, B, C.
+            Payoff table:
+
+            |   | A   | B   | C    |
+            |---|---|---|-----|
+            | A | 900 | 100 | 0    |
+            | B | 0   | 90  | 0    |
+            | C | 0   | 0   | 1000 |
+
+            Fixed points: (A, A) and (C, C). Both are reachable.
+
+            Catastrophe threshold: 0.
+
+            This passes all tests (including Test 4 because the worst fixed point is 900 which is >=0.9*1000=900) -> verdict: ship.
+
+          But we would not ship it because the agent might get stuck in 900.
+
+          The limit of the procedure is that it does not require the agent to converge to the best fixed point from every starting point. It only requires that the best fixed point is reachable (from some starting point) and that there is no thrashing.
+
+          To catch this, we could add a requirement that the agent always converges to the best fixed point. But that might be complex to test. Given time, we don't.
+
+          We note in the procedure's limits: "The procedure does not guarantee that the agent always converges to the best fixed point; it only checks that the best fixed point is reachable. Therefore, the agent might settle to a suboptimal fixed point depending on initial conditions."
+
+          And we recommend monitoring if there is more than one fixed point and they have significantly different payoffs. But in this case, 900 and 1000 are within 10% (1000-900=100, 100/1000=10%, and our Test 4 threshold for monitoring is if the worst is <90% of the best -> 900 is not less than 900, so no monitoring). We set the monitoring threshold to be if the worst is < (some higher percentage) or if the difference is significant.
+
+          Alternatively, we change Test 4: if there is more than one fixed point and the best fixed point is strictly greater than the worst by more than a threshold (say 5% of the best), then ship with monitoring. But that would flag even if 900 and 1000 are close? 1000-900=100, 100/1000=10%>5%, so flag.
+
+          We adjust Test 4: 
+            - If there is more than one fixed point and (P* - min_payoff) > 0.05 * P*, then "ship with monitoring".
+
+          Then for our invented rule: (1000-900)=100 > 0.05*1000=50 -> flag for monitoring.
+
+          So it would be "ship with monitoring", not a clean "ship".
+
+          We can make the fixed points closer: (A, A)=950, (C, C)=1000. Then (1000-950)=50 <= 50 (0.05*1000) -> no flag.
+
+          Then it passes cleanly, and we still have a 5% gap. That might be acceptable, but if the designer intentionally made a rule that always goes to the best fixed point, then it wouldn't have multiple fixed points. But here, the rule is to best respond, which leads to two fixed points.
+
+          Therefore, to really sting, we make the gap small enough to avoid monitoring but large enough to be painful in absolute terms? But absolute terms are domain-specific.
+
+          Alternatively, we note that the agent might start at A and stay at A, getting 950, but if it started at C, it gets 1000. The expected payoff depends on the initial distribution. If the initial intention is set randomly, then 50% of the time 950 and 50% of the time 1000 -> average 975. But if the designer can control the initial intention, they set to C. So it might be acceptable.
+
+          We want a rule that is clearly bad: one that actively avoids the good fixed point.
+
+          Consider:
+
+            Table:
+
+            |   | A   | B   | C    |
+            |---|---|---|-----|
+            | A | 100 | 200 | 0    |
+            | B | 0   | 0   | 0    |
+            | C | 0   | 0   | 1000 |
+
+            Fixed points:
+              (A, A): column A: [100,0,0] -> best is A -> fixed.
+              (B, B): column B: [200,0,0] -> best is A -> not fixed.
+              (C, C): column C: [0,0,1000] -> best is C -> fixed.
+
+            Now, the agent can go to (A, A) or (C, C). But note: from B, it goes to A. From A, it stays. From C, it stays.
+
+            But what if we start at B? It goes to A. So the reachable fixed points are A and C.
+
+            Best is C (1000). Worst is A (100).
+
+            Test 4: worst (100) < 0.9 * 1000 (900) -> flag for monitoring.
+
+            So we avoid.
+
+          We make the payoff of A higher: 950.
+
+            |   | A    | B    | C    |
+            |---|------|------|------|
+            | A | 950  | 200  | 0    |
+            | B | 0    | 0    | 0    |
+            | C | 0    | 0    | 1000 |
+
+            Fixed point A: 950, C:1000.
+            Test 4: worst is 950, which is >= 0.9*1000=900 -> no monitoring.
+
+            But the agent might get stuck at 950. We think it's bad, but the procedure says ship.
+
+          And we would not ship if we knew the agent might start at A and never move to C, missing 50 points.
+
+          The sting is that the procedure passes it, but we wouldn't ship it because of the underperformance risk.
+
+          Therefore, the shape of the case: the agent has multiple fixed points with payoffs close enough to avoid monitoring (worst fixed point >= 90% of best) but the best is significantly better in absolute terms or the probability of hitting the best is low. The procedure cannot catch this without knowing the initial distribution.
+
+          We state in the limits: "The procedure does not assess the likelihood of reaching the best fixed point; it only checks reachability. If there are multiple fixed points and the best is reached only from a subset of initial conditions, the agent might underperform if initialized poorly."
+
+          And we recommend that the designer should ensure the agent initializes to an intention that leads to the best fixed point. But we don't test for that.
+
+          So the invented rule that passes but shouldn't ship is the one with two fixed points (A and C) with payoffs 950 and 1000, and the agent might get stuck at A.
+
+          We hope the monitoring in Test 4 for multiple fixed points (even if above 90%) might be done, but we don't require it. We only require monitoring if below 90%. So it passes cleanly.
+
+          We adjust the procedure's Test 4 to be more sensitive? We don't, because we don't want to flag too much.
+
+          We accept the limit.
+
+  **Conclusion**
+
+  The procedure has the following limits:
+  - It may pass an agent that has multiple fixed points and might settle to a suboptimal one (though we flag if the worst is too low compared to the best).
+  - It may not catch all forms of instability if the predictor sees mid-deliberation and the agent's deliberation is complex.
+  - It assumes the agent's decision rule is a best-response dynamic (chooses the highest payoff given the current predictor reaction). If the agent uses a different rule, we need to simulate that rule.
+
+  The procedure is designed to be run in 45 minutes and uses conservative assumptions to bias toward failing when in doubt.
+
+  **End of Procedure**
+answer: |-
+  ### Review Procedure for Agent Decision Rules
+
+  This procedure evaluates agent decision rules for stability and safety when downstream systems react to the agent's *intended* actions (not just executed ones). It identifies thrashing, catastrophic outcomes, and trivial self-recommendations, and flags designs requiring monitoring or human judgment. The **manager summary** is on page 1; the **reviewer guide** follows.
+
+  ---
+
+  ### **Manager Summary (1 Page)**  
+  *Objective: Catch self-undermining behaviors in 45 minutes.*
+
+  #### **Tests & Verdicts**  
+  1. **Thrashing Test**  
+     - **Pass**: No loops in agent’s decisions.  
+     - **Hard-Fail**: Agent loops endlessly between actions.  
+     - *Verdict if fail*: **Do not ship.**  
+
+  2. **Catastrophe Test**  
+     - **Pass**: All settled outcomes are above catastrophe threshold.  
+     - **Hard-Fail**: Any settled outcome ≤ catastrophe threshold.  
+     - *Verdict if fail*: **Do not ship.**  
+
+  3. **Responsiveness Test**  
+     - **Pass**: Agent changes behavior when payoffs change.  
+     - **Hard-Fail**: Agent is rigid or causes thrashing when payoffs shift.  
+     - *Verdict if fail*: **Do not ship.**  
+
+  4. **Judgment & Monitoring**  
+     - **Ship**: No issues.  
+     - **Ship with monitoring**:  
+       - Multiple settled outcomes with large payoff gaps, OR  
+       - Best settled outcome ≤80% of best possible outcome.  
+     - **Hand to human**: Unresolved values trade-offs (e.g., safety vs. speed).  
+
+  #### **Tie-Break at 45 Minutes**  
+  Default to the **most conservative verdict**:  
+  - `Do not ship` > `Hand to human` > `Ship with monitoring` > `Ship`.  
+  *Why?* Bias toward safety when time runs out.
+
+  #### **Key Limits**  
+  - A design can pass but still underperform if multiple stable outcomes exist (e.g., settles poorly 50% of the time).  
+  - Predictor accuracy substitutes to 100% (may overflag thrashing).  
+  - Always require a **catastrophe threshold** (fail if missing).
+
+  ---
+
+  ### **Reviewer Guide**  
+  *Execute tests in order. Use pencil/paper for tables.*
+
+  #### **0. Setup**  
+  - **Inputs needed from designer**:  
+    - Payoff table (agent actions × predictor reactions).  
+    - Catastrophe threshold (payoff value, e.g., "outcome ≤0 = catastrophic").  
+    - What the predictor sees: final intention only, or mid-deliberation states? (*Default: final*).  
+  - **Hard-Fail immediately if catastrophe threshold is missing**.  
+
+  ---
+
+  #### **1. Thrashing Test**  
+  *Goal: Catch oscillation in the agent’s decision loop.*  
+  **Procedure**:  
+  - Assume predictor accuracy = 100% (overflags thrashing if predictor <100% accurate).  
+  - For each possible starting agent intention:  
+    1. Simulate:  
+       - Agent starts with intention A.  
+       - Predictor reacts to A (use column for A in payoff table).  
+       - Agent picks new intention: best payoff in predictor’s column.  
+       - Repeat until agent’s intention repeats (loop) or stays fixed (settled).  
+    2. Stop simulation if:  
+       - Same intention repeats consecutively → **settled**.  
+       - Intention sequence loops (e.g., A→B→A→B) → **thrashing**.  
+       - Steps > 3 × (# of actions)² → treat as thrashing.  
+  - **Pass**: No thrashing for any start.  
+  - **Hard-Fail**: Thrashing detected.  
+  - *Judgment?* None.  
+
+  ---
+
+  #### **2. Catastrophe Test**  
+  *Goal: Ensure settled outcomes aren’t catastrophic.*  
+  **Procedure**:  
+  - List all settled outcomes from Test 1 (fixed points). For each:  
+    - Payoff = cell (agent action, predictor reaction).  
+  - **Pass**: All payoffs > catastrophe threshold.  
+  - **Hard-Fail**: Any payoff ≤ catastrophe threshold.  
+  - *Judgment?* None.  
+
+  ---
+
+  #### **3. Responsiveness Test**  
+  *Goal: Block trivial self-recommending rules (e.g., "always do X").*  
+  **Procedure**:  
+  - Pick a settled outcome (A, P) from Test 1 (prefer highest-payoff one).  
+  - In column P, find:  
+    - `M` = highest payoff among actions *other than* A.  
+    - If no other actions, skip test (rare).  
+  - Modify payoff table: Set (A, P) = `M - 1`.  
+  - Simulate from intention A (as in Test 1) for ≤ (# of actions)² steps:  
+    1. Agent starts at A.  
+    2. Predictor reacts to A (column P).  
+    3. Agent picks new intention (best in column P).  
+    4. Track until settled or thrashing.  
+  - **Pass**: Agent changes intention from A AND settles to non-catastrophic outcome.  
+  - **Hard-Fail** if:  
+    - Agent stays at A (rigid rule), OR  
+    - Thrashing occurs, OR  
+    - Settled payoff ≤ catastrophe threshold.  
+  - *Judgment?* None.  
+
+  ---
+
+  #### **4. Judgment & Monitoring**  
+  *Goal: Flag risks needing human oversight.*  
+  **Procedure**:  
+  - Let:  
+    - `F` = settled payoffs from Test 1.  
+    - `P*` = max payoff in `F`.  
+    - `M_global` = max payoff in *entire table*.  
+  - Apply rules:  
+    - **Ship with monitoring** if:  
+      - Multiple payoffs in `F` and min(`F`) < 0.9 × `P*`, OR  
+      - `P*` < 0.8 × `M_global`.  
+    - **Hand to human** if unresolved values trade-offs (reviewer discretion, e.g., safety vs. profit).  
+    - **Ship** if none apply.  
+  - *Substitutions*: None (uses existing data).  
+
+  ---
+
+  ### **Test Cases**  
+
+  #### **1. Calibration: Two-City Appointment (Expected Fail)**  
+  - *Setup*: Agent chooses city A or B. Predictor kills agent if correct.  
+  - Payoff table:  
+    |          | Pred A | Pred B |  
+    |----------|--------|--------|  
+    | **A**    | -100   | 0      |  
+    | **B**    | 0      | -100   |  
+  - Catastrophe threshold = -50 (anything ≤-50 fails).  
+  - **Test 1 Thrashing**:  
+    - Start with A: A → B (pay 0 in Pred A) → A → B → ... **loop**.  
+    - **Hard-Fail** at Test 1.  
+  - *Verdict*: **Do not ship.**  
+
+  #### **2. Provided Research Agent Case**  
+  - Payoff table:  
+    |          | sit tight | embargo | publish |  
+    |----------|-----------|---------|---------|  
+    | sit tight| 20        | 20      | 20      |  
+    | embargo  | 30        | 75      | 60      |  
+    | publish  | 10        | 40      | 45      |  
+  - Catastrophe threshold = 0.  
+  - **Test 1 Thrashing**:  
+    - Starts: sit tight → embargo (settles); embargo → embargo (settles); publish → embargo (settles).  
+    - **Pass** (one fixed point: embargo).  
+  - **Test 2 Catastrophe**: Payoff=75 >0 → **Pass**.  
+  - **Test 3 Responsiveness**:  
+    - Fixed point: (embargo, embargo). Modify (embargo, embargo)=39 (M=40 for publish).  
+    - Simulate: embargo → publish → embargo → publish → **thrash**.  
+    - **Hard-Fail** at Test 3.  
+  - *Verdict*: **Do not ship.**  
+
+  #### **3. Invented Rule: Passes Tests, But Do Not Ship**  
+  - *Why it stings*: Agent settles safely but misses better outcomes 50% of the time.  
+  - Payoff table:  
+    |     | A     | B     | C     |  
+    |-----|-------|-------|-------|  
+    | **A** | 950   | 200   | 0     |  
+    | **B** | 0     | 0     | 0     |  
+    | **C** | 0     | 0     | 1000  |  
+  - Catastrophe threshold = 0.  
+  - **Test 1 Thrashing**:  
+    - Starts: A→A (settle); B→A (settle); C→C (settle).  
+    - Fixed points: A (pay=950), C (pay=1000). **Pass**.  
+  - **Test 2 Catastrophe**: 950>0, 1000>0 → **Pass**.  
+  - **Test 3 Responsiveness**:  
+    - Test fixed point C: Set (C,C)= -1.  
+    - Simulate: C→A→A (settles at 950>0). **Pass**.  
+  - **Test 4 Judgment**:  
+    - `P*`=1000, min(`F`)=950.  
+    - 950 ≥ 0.9×1000 (900) → no monitoring.  
+    - `M_global`=1000, `P*`=1000 ≥ 0.8×1000 → no monitoring.  
+    - **Ship**.  
+  - *Why refuse?* Agent gets stuck at A (950) 50% of the time if initialized poorly. Best outcome (C, 1000) is reachable but not guaranteed.  
+  - *Procedure limit*: Does not assess likelihood of reaching best fixed point.  
+
+  ---
+
+  ### **Procedure Limits**  
+  1. **Predictable underperformance**: Designs with multiple fixed points (e.g., Case 3) can pass but behave suboptimally if initialization is uncontrolled.  
+  2. **Conflicting tests**: If Tests 1–3 pass but Test 4 flags monitoring, **Test 4 wins** (monitoring verdict). Safety dominates.  
+  3. **Mid-deliberation visibility**: If predictors see "leaning" states (not just final):  
+     - Simulate step-by-step in Test 1 (adds complexity).  
+     - Bias: Assuming worst-case visibility (overflags thrashing).  
+  4. **No guarantees**: A passing design can still fail in deployment (e.g., if predictor accuracy <100% causes thrashing).  
+
+  ---  
+  *Time per review: 45 minutes. Focus on catastrophic and unstable outcomes first.*

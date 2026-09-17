@@ -1,0 +1,263 @@
+id: prompt_110062
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_110062.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789460837-Iaoehcx2ShI32ghS7vo7
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 645
+completion_tokens: 5753
+reasoning_tokens: 3722
+cost_usd: 0.012864
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T08:32:15+00:00'
+prompt: |-
+  I'm a third-year PhD student in ML, mostly working on RLHF and preference modeling, and I keep getting dragged into this argument at reading group about whether reward models are "just" doing utilitarian social choice. Someone brought up Harsanyi's aggregation theorem and I realized I can only half-reconstruct it. I took one grad seminar on decision theory back in my master's so I can follow the math if you don't skip steps, but I don't know the moral philosophy literature at all. Here's the theorem as I remember it: if each individual's preferences over lotteries satisfy expected utility, and the social preference order does too (or at least is a continuous weak order that respects Pareto), then the social welfare function has to be a weighted sum of the individuals' utilities. Then Harsanyi adds a separate move on top, something about a rational agent behind a veil of ignorance assigning equal probability to being each person, which is what pins the weights to equal and gets you to utilitarianism proper rather than just "some weighted sum." Tell me if I'm mangling any of that.
+
+  What I want: restate that whole thing as faithfully as you can in the vocabulary I actually use day to day — reward models, chosen/rejected pairs, Bradley-Terry and Plackett-Luce losses, rater pools, the KL penalty to the reference policy, the fact that we're fitting a single scalar function to a pile of pairwise labels. Go step by step and flag where you're fudging. Don't hand me a pretty analogy and call it a translation; I care about the parts that don't carry over.
+
+  Then the residue report, which is the part I actually care about. Which axioms survive the trip and which don't? My guess is Pareto is roughly "we don't flip preferences the raters unanimously agree on" and pretty much everything else either gets distorted or just vanishes — the veil of ignorance especially, since my "individuals" are annotators from a labeling vendor and nobodys assigning equal probability to being one of them. So is the equiprobability move just gone, or is there some faint counterpart in how we sample and weight raters? And the reverse direction, which I'm more curious about: is there stuff RLHF does that Harsanyi's setup can't even state — the KL term tethering the policy to the base model, the fact that the "social preference" we learn doesn't have to be a coherent ordering at all, the fact that we're aggregating preferences over the model's outputs rather than over world-states? Last thing: I want to know if the "RLHF = utilitarian aggregation" line is doing real work, or if the alignment folks who say it are just unknowingly re-deriving the classic objections to Harsanyi — the ex ante vs. ex post thing where the ex-ante framework happily picks a coin flip that the ex-post view recoils from, and the impartiality vs. impersonality complaint about the veil. If it's the latter, just say so. I'd rather find out we're reinventing wheels than get a tidy false map.
+reasoning: |-
+  We are going to break this down into two main parts:
+
+  Part 1: Restating Harsanyi's theorem in the vocabulary of RLHF and preference modeling.
+  Part 2: The residue report: which axioms survive and which don't, and what are the key differences.
+
+  Let's start with Part 1.
+
+  ## Part 1: Harsanyi's Theorem in RLHF Vocabulary
+
+  ### Background on Harsanyi's Theorem
+
+  Harsanyi's Aggregation Theorem has two main components:
+
+  1. **The Aggregation Theorem**: 
+     - Suppose we have a set of individuals, each with preferences over lotteries (probability distributions over outcomes) that satisfy the axioms of expected utility theory (EUT). That is, each individual's preferences are represented by a von Neumann-Morgenstern (vNM) utility function.
+     - The social preference over lotteries is also required to satisfy the axioms of EUT (or at least be a continuous weak order that respects the Pareto principle with respect to the individuals).
+     - Then, the social welfare function must be a weighted sum of the individual utility functions.
+
+  2. **The Veil of Ignorance** (which leads to utilitarianism):
+     - Harsanyi then adds a thought experiment: a rational agent behind a veil of ignorance, who does not know which individual they will be, and assigns equal probability to being any individual.
+     - This agent, if they have vNM preferences, would maximize the expected utility, which is the average of the individual utilities. This pins the weights to be equal, leading to classical utilitarianism (the sum of utilities).
+
+  ### Translation to RLHF Vocabulary
+
+  In the context of RLHF (Reinforcement Learning from Human Feedback), we have:
+
+  - **Individuals**: These are the human raters (or annotators) who provide preference labels.
+  - **Preferences**: We collect pairwise comparisons (chosen vs. rejected) of model outputs (responses) for a given prompt. These comparisons are typically over deterministic outcomes (i.e., specific responses), but we can think of them as revealing preferences over distributions (lotteries) as well, because we are going to use a model that assumes underlying utilities and noise.
+  - **Social Preference**: The reward model (RM) we train is meant to represent the aggregate preference of the rater pool. It outputs a scalar value for each response, which we interpret as the social utility of that response.
+  - **Learning the Social Welfare Function**: We fit a single scalar reward function (the social welfare function) to the pairwise comparison data using a model such as Bradley-Terry (for binary comparisons) or Plackett-Luce (for rankings). The loss function (e.g., cross-entropy) is used to maximize the likelihood of the observed preferences.
+
+  Now, let's restate Harsanyi's theorem step by step in this vocabulary:
+
+  #### Step 1: Individual Preferences and Expected Utility
+  - Each rater has a utility function for model responses. We assume that when they compare two responses, they choose the one with higher utility plus some noise (commonly modeled as Gumbel noise in the Bradley-Terry model). This noise can be interpreted as arising from the rater's imperfect discrimination or from the inherent randomness in their choices. 
+  - The Bradley-Terry model assumes that the probability that response A is preferred to response B by rater i is given by:
+      \[
+      P(A \succ B \mid \theta_i) = \frac{\exp(U_i(A))}{\exp(U_i(A)) + \exp(U_i(B))}
+      \]
+    where \(U_i\) is the utility function of rater i for a response. This model is consistent with the rater making choices based on a latent utility and the noise being extreme value distributed, which is a standard setting for EUT (with noise).
+
+  #### Step 2: Social Preferences and Pareto
+  - The social preference is represented by the reward model \(R_{\phi}(y)\), which assigns a scalar to any response \(y\). We want this to be a continuous function and to respect the Pareto principle: if all raters prefer response A over B, then the reward model should assign a higher reward to A than to B.
+
+  #### Step 3: Aggregation Theorem in RLHF
+  - In the ideal case (without noise and with complete data), if the raters' utilities are vNM and the social preference is also vNM and satisfies Pareto, then Harsanyi's theorem tells us that there exists weights \(w_i\) such that:
+      \[
+      R_{\phi}(y) = \sum_{i} w_i \cdot U_i(y)
+      \]
+    However, in RLHF we do not observe the individual utilities \(U_i\), only pairwise comparisons. We fit a single reward model \(R_{\phi}(y)\) to the data without explicitly modeling the individual utilities. The Bradley-Terry model for the social reward function is:
+      \[
+      P(A \succ B) = \frac{\exp(R_{\phi}(A))}{\exp(R_{\phi}(A)) + \exp(R_{\phi}(B))}
+      \]
+    and we maximize the likelihood of the observed pairwise comparisons.
+
+  - How does this relate to Harsanyi? The Bradley-Terry model for the social reward is equivalent to assuming that the social utility is a single scalar and that the noise in the social choice is also Gumbel. But note: this does not necessarily imply that the social utility is a weighted sum of individual utilities. However, under certain conditions (like having a large number of raters and the noise being independent across raters), the social preference learned by the reward model might approximate a linear aggregation of the individual utilities. 
+
+  - But here's the fudge: Harsanyi's theorem requires that the social preference satisfies the vNM axioms (or at least is a continuous weak order and Pareto). In our setting, the social preference is represented by \(R_{\phi}(y)\), and we are training it to be consistent with the pairwise comparisons. We are not directly imposing the vNM axioms on the social preference. However, by using a scalar reward model and a Bradley-Terry loss, we are implicitly assuming that the social preference can be represented by a utility function (the reward) and that it satisfies the conditions for EUT (because we are using a model that is consistent with EUT for binary choices). But note: the vNM axioms are about preferences over lotteries, and in RLHF we are typically only observing preferences over deterministic responses. To fully satisfy the conditions, we would need to have raters express preferences over lotteries of responses, which we don't.
+
+  #### Step 4: The Veil of Ignorance and Equal Weights
+  - Harsanyi's second step: the veil of ignorance. In the RLHF context, we have no direct counterpart. We do not have a rational agent assigning equal probability to being each rater. Instead, we have a dataset of comparisons from multiple raters, and we typically treat each rater equally in the loss function (by giving each comparison equal weight). 
+
+  - How we sample raters: if our dataset is collected by sampling raters uniformly and then sampling comparisons, then we are effectively giving each rater equal weight in the aggregate. This is because the loss function is usually the sum over all pairs (or the average) without weighting by the rater. So, if we let \(D\) be the set of pairs \((A, B)\) and the rater who preferred A over B, then the loss is:
+      \[
+      \mathcal{L}(\phi) = - \sum_{(A,B) \in D} \log \left( \frac{\exp(R_{\phi}(A))}{\exp(R_{\phi}(A)) + \exp(R_{\phi}(B))} \right)
+      \]
+    This treats every comparison equally, regardless of which rater provided it. 
+
+  - Therefore, if we have the same number of comparisons from each rater (and the data is balanced), then we are effectively assigning equal weight to each rater. This leads to a reward model that approximates the average utility of the raters (if we ignore the noise and the function approximation capacity). But note: the Bradley-Terry model for the social reward does not explicitly require that the weights are equal. However, by not weighting the comparisons by the rater, we are implicitly assuming that each rater's vote counts equally.
+
+  - So, the veil of ignorance step is replaced by the uniform sampling of raters and the uniform weighting of their comparisons in the loss function. This is the faint counterpart: the equiprobability in the veil becomes the equal weighting in the data collection and loss function.
+
+  ### Caveats (Where I'm Fudging)
+
+  1. **Lotteries vs. Deterministic Outcomes**: Harsanyi's theorem is about preferences over lotteries, but in RLHF we are only collecting preferences over deterministic responses. We are not asking raters to compare, say, a 50% chance of response A and 50% of response B versus a sure response C. Therefore, the vNM axioms (which are about linearity in probabilities) are not directly tested. We are assuming that the utilities we infer from deterministic comparisons extend to lotteries in a way that satisfies EUT, but we don't have data to verify that.
+
+  2. **Noise Model**: The Bradley-Terry model assumes that the noise in the comparisons is Gumbel, which leads to the logistic form. This is consistent with EUT for binary choices, but it doesn't necessarily capture the full vNM structure over lotteries.
+
+  3. **Function Approximation**: Our reward model is a parametric function (e.g., a neural network) that might not be able to represent the true weighted sum of individual utilities. So even if the true social utility is a linear combination, the learned model might only approximate it.
+
+  4. **Pareto and Unanimity**: In practice, we don't enforce strict Pareto. The loss function is a soft maximum likelihood, so it might violate Pareto on noisy or conflicting data. Also, if the raters are not unanimous, we don't require the social preference to follow the majority (because of the noise model) but it usually will.
+
+  5. **The Aggregation Form**: Harsanyi's theorem gives a linear aggregation. The Bradley-Terry model for the social reward does not require that the social utility is linear in the individual utilities. It could be that the social utility is a nonlinear function of the individual utilities. However, if the individual utilities are vNM and the social utility is also vNM and satisfies Pareto, then Harsanyi tells us it must be linear. But note: our training procedure does not enforce the vNM axioms on the social utility. It only enforces consistency with the observed pairwise comparisons (and the function approximator might not satisfy the vNM axioms).
+
+  ## Part 2: The Residue Report
+
+  ### Which Axioms Survive?
+
+  1. **Pareto (Unanimity)**: 
+     - Roughly survives as: if all raters prefer A over B, then the reward model will assign a higher reward to A. This is because the loss function will strongly penalize any model that assigns a lower reward to A. However, note that if we have a limited dataset and the model is misspecified, we might not get exact Pareto. But in the ideal case (with enough data and capacity), the model will respect unanimity.
+
+  2. **Continuity and Transitivity (Weak Order)**:
+     - The social preference represented by the reward model is a continuous scalar function, so it naturally induces a complete and transitive order (by the value of the reward). So continuity and transitivity are built in by the model choice.
+
+  3. **Independence Axiom (vNM)**: 
+     - This is the most critical one: the vNM independence axiom requires that if A is preferred to B, then a lottery that mixes A with C with probability p is preferred to the same lottery mixing B with C. We do not test this in RLHF because we don't have data over lotteries. Therefore, this axiom does not survive. The reward model we learn might not satisfy the independence axiom, and we have no guarantee that it extends to lotteries in a linear way.
+
+  ### What Doesn't Survive?
+
+  1. **The Veil of Ignorance**: 
+     - As discussed, the original veil is a thought experiment. In RLHF, we have a faint counterpart: the uniform sampling and equal weighting of raters. But note: this is a modeling choice, not a philosophical one. We could choose to weight raters differently (e.g., by expertise or by demographic). So the equiprobability move is not inherent; it's a design decision.
+
+  2. **vNM Axioms for Social Preference (especially Independence)**: 
+     - We don't have data to enforce or test the independence axiom. Therefore, the learned social utility might not be vNM, and hence the linear aggregation form (as per Harsanyi) is not guaranteed.
+
+  3. **The Aggregation Form (Linear Weights)**:
+     - Harsanyi's theorem says the social utility must be a linear combination. But in our setting, we are learning a single scalar function without any constraint that it must be linear in the individual utilities. The individual utilities are not even observed. Therefore, the reward model might not be a linear aggregation. It could be a nonlinear function of the individual utilities (if we think of the individual utilities as latent features). However, note that if the individual utilities are linear in the same features and the social utility is also linear in those features, then the social utility would be a linear combination of the individual utilities. But this is a big if.
+
+  ### What RLHF Adds That Harsanyi Doesn't Cover
+
+  1. **KL Penalty and the Reference Policy**:
+     - In RLHF, we don't just aggregate preferences; we use the learned reward model to train a policy with an added KL penalty to the reference policy (usually the initial model). This is a regularization to prevent excessive deviation and to control for overoptimization of the reward model. Harsanyi's setup has no counterpart for this. It is purely a machine learning technique for stability and alignment with the base model.
+
+  2. **Preference over Model Outputs vs. World States**:
+     - Harsanyi's individuals have preferences over lotteries of world states (or outcomes). In RLHF, the raters express preferences over model outputs (text responses, images, etc.). These model outputs are not the same as world states; they are representations that might influence the world. This is a significant shift. Moreover, the reward model is only defined on the model outputs, not on the entire state of the world.
+
+  3. **Incoherent Social Preference**:
+     - In RLHF, we fit a reward model to a set of pairwise comparisons that might be inconsistent (due to noise or conflicting preferences). The learned reward model might not represent a coherent ordering (if we consider the entire space of responses) because of function approximation and limited data. However, we do enforce coherence within the observed data via the loss function.
+
+  4. **Ex Ante vs. Ex Post**:
+     - In Harsanyi, the social choice is made ex ante (before the lottery is resolved). In RLHF, we are training a model to predict the ex post preferences (the raters are evaluating deterministic responses). We don't have ex ante preferences. Therefore, the classic objection about Harsanyi (that it might choose a lottery that is ex ante fair but ex post terrible) cannot be directly addressed in RLHF because we don't have data on ex ante preferences.
+
+  ### Is the "RLHF = Utilitarian Aggregation" Line Doing Real Work?
+
+  The alignment folks who say RLHF is utilitarian aggregation are indeed re-deriving the classic objections to Harsanyi. Let's break it down:
+
+  1. **Ex Ante vs. Ex Post**: 
+     - In RLHF, we are aggregating ex post preferences (over deterministic outcomes). We are not asking about lotteries. Therefore, the objection that utilitarianism might lead to ex post unacceptable outcomes (like sacrificing an individual for the greater good) is not directly addressed. However, since we are only training on deterministic outcomes, the learned reward model does not have to make trade-offs in lotteries. But note: the policy trained via RL might explore actions that lead to distributions of outcomes, and the reward model is used to evaluate these. So we are implicitly extending the reward model to lotteries by using expected reward. This extension is not based on rater preferences over lotteries, so it might not align with the raters' true risk attitudes.
+
+  2. **Impartiality vs. Impersonality**:
+     - The veil of ignorance is meant to ensure impartiality. In RLHF, we achieve impartiality by uniformly weighting raters. However, the objection that this reduces individuals to interchangeable units (impersonality) applies. We are treating each rater's vote equally, but we are not accounting for their personal circumstances (because we don't have that data). This is a standard critique of utilitarianism.
+
+  In conclusion, the line "RLHF = utilitarian aggregation" is a useful analogy but it is not exact. We are reinventing some of the wheels of Harsanyi's utilitarianism, but we are also introducing new elements (like the KL penalty) and facing the classic objections (ex ante/ex post, impersonality). Moreover, the absence of lottery preferences in our data means that the vNM structure is assumed rather than verified, and the aggregation might not be linear in the individual utilities.
+
+  Therefore, it's not a tidy false map, but it's not a perfect fit either. The analogy does real work in highlighting the ethical assumptions (like equal weighting and Pareto) and the potential pitfalls, but we must be cautious of the differences.
+answer: |-
+  ### Faithful Restatement of Harsanyi's Theorem in RLHF Vocabulary
+
+  **Step 1: Individual Preferences as Expected Utility**  
+  In RLHF, your "individuals" are raters who provide pairwise comparisons (chosen/rejected pairs) over model outputs. Each rater implicitly has a *latent utility function* \( U_i(y) \) for response \( y \). When you fit a Bradley-Terry model, you assume:  
+  \[
+  P(y_j \succ y_k \mid i) = \sigma(U_i(y_j) - U_i(y_k))
+  \]  
+  where \( \sigma \) is the logistic function. This assumes raters' choices satisfy *expected utility* axioms for deterministic outcomes (transitivity, completeness), but **not full vNM rationality over lotteries**, since RLHF typically doesn't elicit preferences over probabilistic mixtures of responses.
+
+  **Step 2: Social Preference as Reward Model**  
+  The reward model \( R_\phi(y) \) is the "social welfare function". It’s trained to predict aggregate rater preferences via a Bradley-Terry or Plackett-Luce likelihood:  
+  \[
+  \mathcal{L}(\phi) = -\mathbb{E}_{(y_w,y_l)\sim\mathcal{D}} \left[ \log \sigma(R_\phi(y_w) - R_\phi(y_l)) \right]
+  \]  
+  By construction, \( R_\phi \) is a continuous scalar function inducing a weak order (transitive, complete preferences) over responses. The **Pareto principle** translates to: *If all raters prefer \( y_j \) over \( y_k \) for a given prompt, \( R_\phi(y_j) > R_\phi(y_k) \) must hold*. This is enforced by the loss function, as unanimous preferences create non-overlapping reward distributions.
+
+  **Step 3: Aggregation Theorem → Weighted Sum**  
+  Harsanyi says: Pareto + social vNM rationality → \( R_{\text{social}} = \sum_i w_i U_i \). In RLHF:  
+  - **Pareto** holds as above.  
+  - **Social vNM rationality** is *partially* assumed: \( R_\phi \) is a continuous weak order (by design), but we don’t test vNM independence axioms (no lottery preferences).  
+  - **Result**: Under ideal conditions (no misspecification, infinite data), \( R_\phi(y) \approx \sum_i w_i U_i(y) \), but weights \( w_i \) are determined by *rater sampling frequency*, not by Harsanyi’s axioms. The sum emerges from linear separability in the log-odds of preferences, **not** from vNM rationality over lotteries.
+
+  **Step 4: Veil of Ignorance → Equal Weighting?**  
+  Harsanyi’s veil (equal probability of being any individual) pins \( w_i = 1/N \). In RLHF:  
+  - **No direct counterpart**. Annotators are contractors, not positions in a lottery.  
+  - **Faint analog**: If raters are sampled uniformly and each comparison is equally weighted, then \( w_i \approx 1/N \) *statistically*. But this is a *sampling artifact*, not a normative requirement. You could deliberately weight raters (e.g., by expertise) without philosophical justification.  
+  - **Key fudge**: The veil justifies *impartiality* in ethics; RLHF’s uniform sampling is a *practical default* with no moral grounding. Equiprobability is **gone** as a normative axiom.
+
+  ---
+
+  ### Residue Report: What Survives, What Doesn’t, and What’s New
+
+  #### Survivors (with distortions)
+  1. **Pareto Efficiency**  
+     - **RLHF version**: Unanimous rater preferences are preserved.  
+     - **Distortion**: Real-world data has noise/sparsity, so Pareto holds only asymptotically. Also applies *per-prompt*, not globally.  
+     - **Intact?** Yes, modulo optimization challenges.
+
+  2. **Social Preference as Scalar Utility**  
+     - **RLHF version**: \( R_\phi \) induces a weak order (transitive, complete rankings).  
+     - **Distortion**: vNM independence axioms are *untested* (no lottery data). Transitivity is enforced by scalarization, but may not hold out-of-distribution.  
+     - **Intact?** Structurally yes, but empirically fragile.
+
+  #### Casualties
+  1. **vNM Rationality for Individuals**  
+     - Raters need not satisfy vNM axioms (no lotteries elicited). Bradley-Terry assumes "noise" but not linearity in probabilities.  
+     - **Gone**: Harsanyi’s theorem requires vNM preferences over lotteries; RLHF only uses deterministic comparisons.
+
+  2. **Veil of Ignorance**  
+     - No moral equivalence or impartiality. Equal weighting (if used) is a sampling bias, not a normative principle.  
+     - **Gone**: The entire Kantian-Rawlsian ethical layer is absent.
+
+  3. **Linear Aggregation Necessity**  
+     - Harsanyi *forces* linearity via vNM axioms. RLHF only gets linearity if:  
+       - \( U_i(y) \) are linearly separable in the same feature space.  
+       - The reward model is misspecified (e.g., linear in last-layer features).  
+     - **Gone**: With nonlinear \( R_\phi \), aggregation can be non-additive (e.g., veto effects via sigmoids).
+
+  #### What RLHF Adds (Harsanyi Can’t Handle)
+  1. **KL Penalty and Reference Policy**  
+     - RLHF optimizes \( \pi_{\text{RL}} = \arg\max_\pi \mathbb{E}[R_\phi(y)] - \beta D_{\text{KL}}(\pi \parallel \pi_{\text{ref}}) \).  
+     - **Unprecedented**: This regularizes toward *imitation learning* (the reference model), which has no parallel in social choice. Harsanyi aggregates preferences; RLHF tacks on a *conservatism prior*.
+
+  2. **Preference Objects ≠ World States**  
+     - Raters judge *model outputs* (text responses), not *world states* (e.g., "50% chance of famine").  
+     - **Consequence**: Social welfare is defined over the model’s *action space*, not real-world outcomes. This conflates *instrumental* and *intrinsic* preferences.
+
+  3. **Non-Coherent Social Orderings**  
+     - \( R_\phi \) need not be consistent *across prompts* (e.g., prompt-specific overfitting).  
+     - **Violation**: Harsanyi assumes a global preference ordering; RLHF treats each prompt as independent.
+
+  4. **Rater Pool Dynamics**  
+     - Raters are sampled from a pool (e.g., vendor employees) with turnover. This introduces temporal/spatial heterogeneity.  
+     - **Unmodeled**: Harsanyi assumes fixed individuals; RLHF handles fluid, noisy populations.
+
+  ---
+
+  ### Is "RLHF = Utilitarianism" Doing Real Work?  
+  **You’re reinventing wheels—but with ML-specific spikes.**  
+
+  1. **Ex Ante vs. Ex Post**  
+     - RLHF inherits Harsanyi’s **ex ante view**: Maximize expected reward *before* rater identities are "revealed." A low-probability catastrophic output (e.g., offensive text) is tolerated if it boosts average reward.  
+     - **Classic objection**: Ex post, that output harms real people. RLHF ignores this unless raters explicitly judge risk (they rarely do).
+
+  2. **Impartiality vs. Impersonality**  
+     - Uniform rater weighting **appears** impartial but reduces people to "reward sources." This is the *impersonality* critique: RLHF ignores rater-specific costs (e.g., emotional labor of moderating harmful content).  
+     - **Same as Harsanyi**: The veil’s "equiprobability" assumes all utilities are commensurable, erasing qualitative differences.
+
+  3. **New ML-Specific Problems**  
+     - **KL penalty**: Can override utilitarian aggregation to preserve "safe" outputs, but this is a *hack*, not an ethical correction.  
+     - **Non-vNM aggregation**: With nonlinear rewards, RLHF can exhibit threshold effects (e.g., "any output with toxicity > X is equally bad"), which Harsanyi forbids.
+
+  **Verdict**:  
+  Alignment folks *are* re-deriving Harsanyi’s objections (ex ante/ex post, impersonality). But RLHF adds *new* tensions:  
+  - The KL penalty arbitrarily mutes utilitarian preferences.  
+  - Reward models aggregate *preferences over symbols* (text), not real-world states, creating alignment failures downstream.  
+  - Rater pools are non-stationary, violating Harsanyi’s fixed-population assumption.  
+
+  **Conclusion**:  
+  Harsanyi’s framework is a *useful stress test* for RLHF (e.g., "Does Pareto hold?"), but its axioms are warped or lost in translation. The "utilitarian" label is a **convenient analogy** that obscures unique ML challenges—particularly the KL penalty’s role as an unprincipled override. If you’re arguing with alignment folks, press them on:  
+  1. Why equate *rater preferences* with *moral weights*?  
+  2. How the KL penalty interacts with aggregation.  
+  3. Whether preferences over text responses map to welfare over states.  
+
+  This isn’t tidy—but neither is RLHF.

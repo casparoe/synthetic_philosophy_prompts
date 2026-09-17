@@ -1,0 +1,404 @@
+id: prompt_110130
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_110130.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789461078-rvNNW1kdiSFZ5oei3l2v
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 334
+completion_tokens: 7638
+reasoning_tokens: 5864
+cost_usd: 0.016818
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T08:37:33+00:00'
+prompt: |-
+  In mechanistic anomaly detection, a monitor inspects the internal computation a model performs on a new input and flags the input when the output — even if acceptable — is produced by a mechanism other than the trusted reference mechanism we have already vetted, the aim being to catch cases where a model gets the right answer for the wrong reason and would diverge outside the regime we trust. The method presupposes an answer to a question I find badly underspecified: what makes two computations instances of the same mechanism? A purely functional criterion — same input-output behavior over the trusted distribution — appears to make the problem vacuous, since a flagged computation may be functionally equivalent to the reference on everything we can actually check; a purely structural criterion — same circuits, same parameterization, same numerical implementation — appears to make it trivial, since reimplementing one algorithm across two layers, permuting hidden units, or changing precision would each register as a new mechanism; and an interventional criterion, on which two systems share a mechanism just in case they respond alike to the same interventions on their parts, looks like a middle path but inherits the problem of saying which interventions and which parts. Please explain what notion of mechanism identity would let the detector do genuine work: what must be fixed for "same mechanism" to be well defined, why the obvious candidates fail, and whether such a criterion can be stated without covert appeal to the very distribution shifts the detector is meant to anticipate. Ground the discussion in a case where a model computes a given function by one algorithm in the regime we trust and by a different one elsewhere, while agreeing with the reference throughout the trusted regime.
+reasoning: |-
+  We are to define a notion of "mechanism identity" for the purpose of mechanistic anomaly detection. The goal is to detect when a model, on a new input, uses a different internal computational mechanism to produce an output (even if the output is correct) compared to a trusted reference mechanism that we have vetted.
+
+  The challenge is that:
+  - A purely functional criterion (same input-output behavior on the trusted distribution) is too weak because the model might use a different mechanism and still agree on the trusted distribution (but fail elsewhere).
+  - A purely structural criterion (exactly the same circuits, parameters, numerical implementation) is too strong because even minor changes (like reordering hidden units) would be considered a different mechanism, even if the computation is essentially the same.
+
+  We are to consider an interventional criterion: two systems share a mechanism if they respond alike to the same interventions on their parts. But this raises the question: which interventions and which parts?
+
+  We are to ground the discussion in a case where the model computes the same function by one algorithm in the trusted regime and by a different one elsewhere, and they agree on the trusted regime.
+
+  Example Case:
+  Suppose we have a model that is trained to compute the absolute difference between two numbers: |a - b|. In the trusted regime (say, non-negative numbers), the model uses a straightforward algorithm: if a >= b, then output a-b; else output b-a. However, outside the trusted regime (say, when the numbers are negative), the model might use a different algorithm: it might compute sqrt((a-b)^2) (which is also |a-b|, but via a different computation). Note that in the trusted regime (non-negative numbers) both algorithms give the same result. We want to flag the input when the model uses the second algorithm (sqrt((a-b)^2)) because we don't trust that algorithm (maybe because we know that in a distribution shift, such as when the numbers are complex, it might fail, or because it is less efficient, or because it has different failure modes).
+
+  What notion of mechanism identity can we use?
+
+  Proposal: 
+  We define the mechanism in terms of the algorithm (or the set of primitive operations and their causal structure) that is used. The reference mechanism is defined by the algorithm we trust. We consider two computations as the same mechanism if they use the same algorithm, meaning the same sequence of operations (with the same causal dependencies) and the same set of primitive operations (with the same meanings).
+
+  However, we must be able to detect the algorithm from the internal state of the model. We can do this by defining a set of "key" intermediate variables and the operations that produce them. In the example:
+
+  Trusted mechanism:
+  1. Compare a and b: compute t1 = (a >= b)
+  2. If t1 is true, then compute t2 = a - b
+  3. If t1 is false, then compute t2 = b - a
+  4. Output t2
+
+  Alternative mechanism:
+  1. Compute t1 = a - b
+  2. Compute t2 = t1 * t1   [squaring]
+  3. Compute t3 = sqrt(t2)  [square root]
+  4. Output t3
+
+  We can set up the monitor to check the intermediate steps. For a given input (a, b) in the trusted regime, the reference mechanism should have a specific pattern of intermediate values. For example, the trusted mechanism will have an intermediate variable that is a boolean (t1) and then a subtraction in one of two branches. The alternative mechanism will have an intermediate that is the difference (a-b) and then a square and then a square root.
+
+  Thus, we can define the mechanism identity by the causal graph of the intermediate computations and the types of operations. We can fix a set of probes (or monitor points) that correspond to the key intermediate steps of the reference mechanism. Then, we check if the values at these probe points are consistent with the reference mechanism.
+
+  What must be fixed?
+  1. The set of intermediate variables (probes) that we consider as part of the mechanism. These should be chosen to capture the essential steps of the reference algorithm.
+  2. The expected causal relationships between these variables and the input and output.
+
+  Why the obvious candidates fail?
+  - Functional: because it doesn't look inside, so it cannot distinguish two different algorithms that are functionally equivalent on the trusted distribution.
+  - Structural: because it is too rigid and does not allow for equivalent implementations (like reordering of neurons, or using a different but equivalent set of weights). Also, it would break under minor changes that do not alter the algorithm.
+
+  How does the interventional criterion work?
+  We can define interventions by clamping the values of intermediate variables and observing the effect on downstream variables and the output. The reference mechanism has a specific causal structure: the output depends on the intermediate variables in a particular way. We can test if the same interventions on the same intermediate variables in the model under test lead to the same changes in the downstream variables and output as in the reference.
+
+  But note: we cannot actually do arbitrary interventions in a running model (without modifying the model). However, we can use counterfactual reasoning by running the model on modified inputs that simulate the interventions. Alternatively, we can use the model's internal states to check the causal dependencies.
+
+  In practice, we might not need to do arbitrary interventions. We can define a set of canonical interventions that are designed to test the causal structure of the reference mechanism.
+
+  Example Intervention for Trusted Mechanism:
+  Suppose we have an input (a, b) = (5, 3). In the trusted mechanism, the intermediate t1 (the comparison) is true. We can then intervene by setting t1 to false and see what the output becomes. In the trusted mechanism, the output should then become 3 - 5 = -2 (but note the absolute difference should be non-negative, so this is an anomaly). However, in the alternative mechanism, there is no such boolean intermediate. We might instead have an intermediate (a-b) which is 2. If we intervene on that intermediate and set it to -2, then the alternative mechanism would compute sqrt((-2)^2)=2, which is still the absolute difference. This intervention would reveal a different causal structure.
+
+  But note: we cannot arbitrarily change an intermediate without considering the model's architecture. The alternative mechanism doesn't have a boolean intermediate. So we need to have a mapping between the intermediates of the reference and the model under test.
+
+  Therefore, we must fix the set of intermediates we are monitoring. We define the mechanism by the causal roles of a fixed set of intermediates. Then, we require that the model under test has intermediates that play the same causal roles. We can then check the response to interventions on these intermediates.
+
+  However, if the model under test does not have exactly the same intermediates, we might not be able to perform the same interventions. This suggests that we need to have a mapping from the reference intermediates to the model's intermediates. This mapping might be established by the functional role of the intermediates (e.g., the probe that corresponds to the comparison result).
+
+  But note: the model under test might implement the same algorithm but with different internal representations. For example, the comparison might be represented by a neuron that fires when a>=b and is silent otherwise. We might have to learn a correspondence between the reference intermediates and the model's activations.
+
+  This leads to the idea of "interpretability" tools: we can use feature visualization or probes to identify which neurons or activations in the model correspond to the intermediates of the reference mechanism.
+
+  Thus, the criterion for mechanism identity is:
+
+  Two computations (by two different models or the same model on two inputs) are instances of the same mechanism if there exists a mapping from the reference intermediates to the model's intermediates such that:
+  1. The mapping is consistent across the trusted distribution (i.e., for inputs in the trusted distribution, the model's intermediates correspond to the reference intermediates in a way that preserves the causal relationships).
+  2. Under interventions on the reference intermediates (as simulated by modifying the model's inputs to force the corresponding intermediates to take certain values), the model's intermediates and the output change as expected by the reference mechanism.
+
+  But note: we cannot rely on distribution shifts because the detector is meant to anticipate them. So the mapping and the causal relationships must be established solely on the trusted distribution. However, we can use counterfactual inputs that are still within the trusted distribution to test the causal relationships.
+
+  For example, to test the role of the comparison intermediate in the absolute difference model, we can take two inputs in the trusted regime: one with a>=b and one with a<b. We can then see that when we flip the condition (by swapping a and b) the model's intermediate corresponding to the comparison flips and the output remains the absolute difference. In the alternative mechanism, we don't have such an intermediate that flips in the same way.
+
+  But the alternative mechanism might not have an intermediate that directly corresponds to the comparison. So we can define the detection as: we flag the input if the model's intermediates do not match the expected pattern of the reference mechanism (for that input) as defined by the causal relationships we have established on the trusted distribution.
+
+  In practice, we can train a probe (or use a similarity measure) on the trusted distribution to predict the reference intermediates from the model's activations. Then, for a new input, we check if the model's activations yield the same intermediate values (via the probe) as the reference mechanism would. Moreover, we can check if the causal relationships hold: for example, the output should be determined by the intermediates in the same way.
+
+  But what if the model uses a different algorithm that happens to have intermediates that are linearly related to the reference intermediates? We want to avoid false negatives. Therefore, we might require that the entire causal graph is preserved.
+
+  However, note that we are only concerned with the mechanism that produces the output. We can define the mechanism by the function that maps the input to the output via the intermediates. Thus, if the model's intermediates are a linear transformation of the reference intermediates and the rest of the computation is adjusted accordingly, then it is the same mechanism. But that is the same as having the same algorithm but with a change of basis.
+
+  Therefore, we can allow for isomorphisms (like reordering of neurons, linear transformations) that preserve the causal structure. We can define:
+
+  Two implementations are the same mechanism if there exists an isomorphism (which might be a permutation and scaling of neurons, etc.) that maps the activations of one to the other and preserves the causal dependencies (i.e., the equations computing one intermediate from the others are the same up to the isomorphism).
+
+  But note: this is getting complex. In practice, we might settle for a more operational definition: we have a set of probes that are trained on the trusted distribution to predict the reference intermediates. Then, for a new input, we run the model and apply the probes to get the predicted intermediates. We then check if these intermediates, when fed into the reference output function (which is a function of the intermediates), yield the model's output. If not, then the mechanism is different.
+
+  In the absolute difference example:
+
+  Reference mechanism intermediates: 
+     t1 = (a>=b) [boolean]
+     t2 = if t1 then a-b else b-a [scalar]
+
+  The output is t2.
+
+  We train a probe on the model's activations to predict t1 and t2 on the trusted distribution. Then, for a new input, we get the model's output and also the predicted t1 and t2 from the probe. We then check if the model's output equals the value of t2 (which we get from the probe). But note: the model's output is |a-b|, and t2 is |a-b|. So they will always be equal? 
+
+  But wait: the alternative mechanism might also have an output that is |a-b|. So the output check passes. We must check the intermediates. Specifically, we expect that the intermediate t1 (the comparison) is present and that the value of t2 is computed conditionally on t1.
+
+  So we can do:
+
+  For the input (a,b), we have:
+     Let P1 = probe for t1 (the comparison) applied to the model's activations -> should be (a>=b)
+     Let P2 = probe for t2 (the subtraction) applied to the model's activations -> should be |a-b|
+
+  But note: the alternative mechanism does not have an intermediate that corresponds to the boolean comparison. So the probe for t1 might be unreliable when the model uses the alternative mechanism. In fact, when we run the alternative mechanism on an input in the trusted regime, the probe for t1 (which was trained on the reference mechanism) might still work because the output is the same? But that's the functional criterion again.
+
+  We need to design the probe so that it is sensitive to the internal computation. We can train the probe to predict t1 not only from the output but from the internal activations that are causally upstream of the output. In the reference mechanism, the comparison is a key step that determines the path. In the alternative mechanism, there is no such step. So the probe for t1 might be based on activations that are only present in the reference mechanism.
+
+  Alternatively, we can train a classifier to detect which mechanism is being used by looking at the pattern of activations. But that is a meta-classifier.
+
+  But note: we don't want to rely on the distribution shift because the detector must work on the trusted distribution (where both mechanisms give the same output). So we must find a way that the internal activations of the model on a single input reveal which algorithm is being used.
+
+  Therefore, we can define:
+
+  The mechanism is the same if the model's internal activations, when projected via the probes (trained on the trusted distribution for the reference mechanism), yield the expected intermediate values and the expected causal relationships between them.
+
+  To check the causal relationship, we can use a technique like causal mediation analysis. For example, we can ablate a part of the model that is supposed to compute t1 and see if the output changes in the way expected by the reference mechanism. But we cannot do ablation at test time without affecting the output.
+
+  Alternatively, we can use counterfactual inputs that are in the trusted distribution. For example, we can consider an input (a, b) and a counterfactual input (b, a). In the reference mechanism, the intermediate t1 should flip and the output should remain the same. In the alternative mechanism, the intermediate (a-b) becomes (b-a) which is the negative, but after squaring and square root, the output remains the same. However, the pattern of change in the intermediates is different. In the reference, one intermediate (t1) flips and the other (t2) might change sign if the subtraction is done in the opposite order, but note: t2 is always non-negative. Actually, in the reference, when we swap a and b, the output is the same and t1 flips, but t2 remains the same? Because |a-b| = |b-a|.
+
+  Wait, in the reference:
+     For (a,b): t1 = (a>=b), t2 = if t1 then a-b else b-a -> |a-b|
+     For (b,a): t1 = (b>=a) = not (a>=b) (if a != b), t2 = if t1 then b-a else a-b -> |b-a| = |a-b|
+
+  So t1 flips and t2 remains the same.
+
+  In the alternative mechanism:
+     For (a,b): intermediate t1 = a-b, then t2 = (a-b)^2, then t3 = sqrt(t2) = |a-b|
+     For (b,a): intermediate t1 = b-a, which is -(a-b), then t2 = (b-a)^2 = (a-b)^2, then t3 = same as above.
+
+  So the intermediate t1 (which is the difference) changes sign, but the other intermediates remain the same.
+
+  Therefore, we can design a test:
+
+  For a given input (a,b) and its swapped version (b,a), we run the model and collect the intermediates (via the probes) for both inputs. Then we compare:
+
+  Reference mechanism:
+     The probe for t1 should flip (from true to false or vice versa) and the probe for t2 should remain the same.
+
+  Alternative mechanism:
+     The probe for the comparison (t1) might not exist, so the value we get from the probe might not flip? Or it might flip if the probe is sensitive to the sign of a-b? But note: the alternative mechanism doesn't have a boolean intermediate. The probe for t1 might be trained to output a boolean based on the internal activations. In the alternative mechanism, the internal activations might be different for (a,b) and (b,a) but not in a way that flips a boolean. For example, the probe might output true for both if it's not well defined.
+
+  Alternatively, we can look at the pattern of change: in the reference mechanism, the change in the input (swapping a and b) causes a flip in the boolean intermediate and no change in the output. In the alternative mechanism, the change in the input causes a sign change in the first intermediate but no change in the rest.
+
+  But without knowing the intermediates of the alternative mechanism, we are limited to the probes we have (which are for the reference intermediates).
+
+  Therefore, we can define the following criterion for an input:
+
+  We flag the input if for the model's activations on that input, the probe for the reference intermediate t1 (the comparison) does not yield a value that is consistent with the input (i.e., it should be (a>=b)). And similarly for the other intermediates. But note, the alternative mechanism might still yield a correct t1 by chance? For example, if the probe for t1 is trained on the reference mechanism, it might rely on the presence of a particular neuron that is active only when a>=b. In the alternative mechanism, that neuron might not be active, so the probe might fail.
+
+  So we can train the probe on the reference mechanism and then check its accuracy on the trusted distribution for the model under test. If the model under test uses the reference mechanism, then the probe should be accurate. If it uses an alternative mechanism, then the probe might be inaccurate. But note: we only have the trusted distribution to train and test the probe. And on the trusted distribution, the alternative mechanism also produces the correct output, but we don't know if it produces the correct intermediates.
+
+  Actually, we don't have ground truth for the intermediates in the model under test. We only have the reference mechanism's intermediates. So we can only compare the model under test to the reference.
+
+  Therefore, we can use the following procedure:
+
+  1. Train the probe for each reference intermediate using the reference model (or the reference mechanism) on the trusted distribution. The probe is trained to predict the reference intermediate from the model's activations.
+
+  2. When monitoring the model under test (which might be the same physical model as the reference, but we are worried about it using a different mechanism on some inputs), we run the model on the new input and collect the activations.
+
+  3. Apply the probes to get the predicted intermediates.
+
+  4. Check if the predicted intermediates are consistent with the input and with the expected causal structure of the reference mechanism.
+
+  For the absolute difference example, for an input (a,b), we expect the probe for t1 to be (a>=b) and the probe for t2 to be |a-b|. We also can check that the output of the model is |a-b|, which we can compute independently. But if the output is |a-b| and the probe for t2 is |a-b|, that doesn't tell us about the mechanism. The key is the intermediate t1: we expect it to be (a>=b). If the probe for t1 does not yield (a>=b), then we flag the input.
+
+  But note: the model under test might use the reference mechanism and the probe might be inaccurate. So we must ensure that the probe is highly accurate on the trusted distribution. We can train it to be so.
+
+  However, if the model under test uses the reference mechanism for all inputs in the trusted distribution, then the probe will be accurate. But if it uses an alternative mechanism on some inputs in the trusted distribution, then the probe for t1 might fail on those inputs.
+
+  Therefore, we can define:
+
+  We flag an input if the probe for at least one reference intermediate does not yield the value that the reference mechanism would have for that intermediate, given the input.
+
+  But note: we don't have the reference mechanism running on the new input? We only have the reference mechanism defined for the trusted distribution. We can compute what the reference intermediate should be for any input (if we know the reference algorithm). In the absolute difference example, we know that t1 should be (a>=b) and t2 should be |a-b|. So we can compute these independently.
+
+  Therefore, we do not need to run the reference model at test time. We can compute the expected intermediates from the input.
+
+  So the monitor procedure is:
+
+  For a new input x:
+  1. Run the model under test on x and record the output and the internal activations.
+  2. For each reference intermediate, compute its expected value (from the input x) according to the reference mechanism.
+  3. Apply the probe (trained to predict the reference intermediate from the activations) to the model's activations for x.
+  4. If for any intermediate, the probe's output does not match the expected value, then flag the input.
+
+  In the absolute difference example:
+
+  Input x = (a, b)
+  Expected t1 = (a>=b)
+  Expected t2 = |a-b|
+
+  We run the model and get activations. Then:
+     Let p1 = probe_t1(activations)
+     Let p2 = probe_t2(activations)
+
+  If p1 != (a>=b) OR p2 != |a-b|, then flag.
+
+  But note: the model's output must be |a-b| (or we would flag it for wrong output). However, the monitor is also for cases where the output is correct. So we assume the output is correct. But we are worried about the mechanism.
+
+  In the alternative mechanism, the output is |a-b|, so the model passes the output check. Now, what about the intermediates?
+  - The probe for t1 (the comparison) might not be (a>=b). For example, the alternative mechanism might not represent the comparison at all. So the probe might output a value that is not the expected boolean. Therefore, we flag.
+
+  But what if the alternative mechanism, by chance, has an activation that causes the probe for t1 to output the correct boolean? This is possible but unlikely if the probe is a simple function (like a linear probe) and the alternative mechanism's activations are in a different direction. We can make the probe more robust by using a non-linear probe and by training with data augmentation that includes the alternative mechanism? But we don't have examples of the alternative mechanism in the trusted distribution.
+
+  However, note: the alternative mechanism is not used in the trusted distribution during training. So the probe is trained only on the reference mechanism. Therefore, if the model under test uses the alternative mechanism, its activations will be out-of-distribution for the probe, and the probe may fail.
+
+  Thus, we rely on the fact that the alternative mechanism produces activations that are not in the support of the training distribution for the probe. This is a form of out-of-distribution detection for the probe.
+
+  But note: the problem statement says we must not appeal to distribution shifts because the detector is meant to anticipate them. However, we are only using the trusted distribution to train the probe. We are not using any data from outside. The detector might fail if the alternative mechanism produces activations that are in-distribution for the probe. But if the alternative mechanism is sufficiently different, the activations will be different.
+
+  This leads to a practical criterion: we can train the probe to be not only accurate but also to have high confidence (or low uncertainty) on the reference mechanism. Then, when the model uses a different mechanism, the probe's confidence might drop. We can flag when the probe's confidence is below a threshold.
+
+  Alternatively, we can train an auxiliary classifier to detect when the activation pattern is not like the reference mechanism. This is similar to training an autoencoder on the activations of the reference mechanism and flagging when the reconstruction error is high.
+
+  Therefore, we can combine:
+
+  1. Checking the predicted intermediates against the expected values.
+  2. Checking the confidence or the reconstruction error of the probe.
+
+  In summary, the notion of mechanism identity is defined by the causal roles of a fixed set of intermediates (as defined by the reference mechanism). We then use a mapping (probes) to extract these intermediates from the model's activations. We flag an input if the extracted intermediates do not match the expected values (computed from the input and the reference mechanism) or if the mapping is uncertain.
+
+  This avoids the triviality of the structural criterion (by allowing different implementations as long as the causal roles are preserved and the probes can extract the intermediates) and the vacuity of the functional criterion (by looking inside). It also provides a middle ground via interventions in the form of counterfactual inputs (used during training to establish the causal roles) but not at test time.
+
+  However, note that we haven't used interventions at test time. We are only using the input and the model's activations on that input. The causal relationships are established during the design of the reference mechanism and the training of the probes.
+
+  But the problem of which interventions and which parts is now shifted to the choice of intermediates and the design of the reference mechanism.
+
+  We must fix the set of intermediates and the expected causal graph of the reference mechanism. This is done by the designer based on the trusted algorithm.
+
+  Therefore, the detector does genuine work by checking the consistency of the model's internals with the reference causal graph on a per-input basis.
+
+  Example in the case provided:
+
+  For the absolute difference model, we fix two intermediates: 
+     t1: the comparison (a>=b) [boolean]
+     t2: the absolute difference [non-negative scalar]
+
+  The reference mechanism computes t1 from (a,b) and then t2 from (a,b, t1). 
+
+  We train two probes:
+     probe_t1: maps the model's activations to {0,1} (or a probability)
+     probe_t2: maps the model's activations to a scalar
+
+  We then require that for every input (a,b) in the trusted regime, the model's activations yield:
+     probe_t1(activations) = (a>=b)   (with high confidence)
+     probe_t2(activations) = |a-b|     (with high confidence)
+
+  And at test time, we do the same.
+
+  When the model uses the alternative mechanism (even on an input in the trusted regime), the probe_t1 may fail to output (a>=b) because the model's activations do not represent the comparison in the same way. Therefore, we flag.
+
+  This approach requires:
+
+  - A specification of the reference intermediates and their expected values as a function of the input.
+  - A way to train probes to extract these intermediates from the model's activations, and to be reliable on the trusted distribution.
+
+  The limitation: if the alternative mechanism produces activations that are linearly (or otherwise) isomorphic to the reference mechanism's activations with respect to the intermediates, then the probes might still work and we wouldn't flag. But then the alternative mechanism is essentially the same as the reference mechanism? However, in our example, the alternative mechanism does not have the same causal structure (it doesn't branch on a comparison) so it is not isomorphic.
+
+  In conclusion, we define the mechanism by the causal roles of a predefined set of intermediates, and we detect anomalies by checking whether the model's activations, when interpreted by the probes, match the expected values of these intermediates.
+answer: |-
+  ### Defining Mechanism Identity for Mechanistic Anomaly Detection
+
+  The core challenge in mechanistic anomaly detection is defining **what constitutes the "same mechanism"** in a way that avoids the pitfalls of purely functional, structural, or interventional criteria. Below, I clarify the necessary fixed elements, explain why obvious candidates fail, and propose a robust criterion grounded in a concrete example. This criterion must work without relying on distribution shifts (which the detector aims to anticipate).
+
+  #### **The Problem: Ambiguity in Mechanism Identity**
+  - **Functional criterion** (same input-output behavior on the trusted distribution):  
+    Fails because two different algorithms can produce identical outputs on the trusted distribution but diverge under distribution shifts. Anomalies would be missed if the detector only checks output correctness.  
+  - **Structural criterion** (identical circuits/parameters/implementation):  
+    Fails because it is brittle to harmless changes (e.g., reordering hidden units, numerical precision). It flags trivial differences, making it impractical.  
+  - **Interventional criterion** (same response to part-level interventions):  
+    Fails due to underspecification: *which* parts and *which* interventions? Without a prior notion of "parts," interventions inherit the original ambiguity.  
+
+  A viable criterion must:
+  1. **Detect algorithm substitution** (different internal processes yielding the same output on trusted inputs).
+  2. **Ignore implementation details** (e.g., permutation invariance, numerical precision).
+  3. **Rely only on trusted-distribution data** (no covert appeal to future distribution shifts).
+
+  ---
+
+  ### **Grounding Example: Absolute Difference Computation**
+  Consider a model trained to compute the absolute difference $|a - b|$:
+  - **Trusted mechanism (reference)**:  
+    Uses a **conditional branch**:  
+    `if a ≥ b: output = a - b`  
+    `else: output = b - a`  
+    Trusted regime: Non-negative inputs (e.g., $a, b \in \mathbb{R}^+$).  
+  - **Alternative mechanism (anomalous)**:  
+    Uses an **algebraic shortcut**: $ \text{output} = \sqrt{(a - b)^2} $.  
+    This matches the reference on non-negative inputs but fails for negative numbers (e.g., if $a - b$ is imaginary).  
+
+  **Goal**: Flag inputs where the model uses the algebraic shortcut, even if $|a - b|$ is correct.
+
+  ---
+
+  ### **Proposed Criterion: Causal Graph Consistency**
+  Two computations are the "same mechanism" if they implement the **same causal graph over high-level variables** (e.g., intermediate concepts) when projected onto a **fixed abstraction layer**.  
+
+  #### **Key Fixed Elements**
+  1. **Abstraction Layer**:  
+     A predefined set of **interpretable variables** $\{V_1, V_2, \dots, V_k\}$ derived from the reference mechanism.  
+     - Example: $V = \{ \text{ComparisonResult}, \text{SubtractionResult} \}$.  
+     - For input $(a, b)$:  
+       - $\text{ComparisonResult} \triangleq \mathbb{I}(a \geq b)$ (binary).  
+       - $\text{SubtractionResult} \triangleq \begin{cases} a - b & \text{if } a \geq b \\ b - a & \text{otherwise} \end{cases}$ (scalar).  
+
+  2. **Causal Graph**:  
+     A fixed dependency structure between variables.  
+     - Example graph:  
+       $$
+       \text{Input }(a, b) \rightarrow \text{ComparisonResult} \rightarrow \text{SubtractionResult} \rightarrow \text{Output}
+       $$
+       Here, $\text{SubtractionResult}$ causally depends on $\text{ComparisonResult}$.
+
+  3. **Projection Function**:  
+     A function $\phi$ mapping the model's internal state (e.g., activations) to the abstraction layer.  
+     - $\phi$ is **trained on the trusted distribution** to predict $\{V_i\}$ from activations when the reference mechanism is active.  
+     - Example: A probe predicting $\text{ComparisonResult}$ from a hidden layer.
+
+  #### **Anomaly Detection Rule**  
+  Flag an input if:  
+  1. **Projected variables** $\phi(\text{activations})$ do not match the **expected values** of $\{V_i\}$ computed from the input, *or*  
+  2. **Causal dependencies** between projected variables violate the reference graph.  
+
+  ---
+
+  ### **Application to Example**
+  - **Trusted input**: $(a, b) = (5, 3)$  
+    - Reference mechanism:  
+      - $\text{ComparisonResult} = \text{True}$,  
+      - $\text{SubtractionResult} = 2$.  
+    - Algebraic shortcut:  
+      - Internal computations differ, but output is $2$.  
+    - **Projection**:  
+      - Apply $\phi$ to activations → should yield $\text{ComparisonResult} = \text{True}$.  
+      - If $\phi$ outputs $\text{False}$ (or an ill-defined value), flag as anomalous.  
+      - Alternatively, if $\text{SubtractionResult}$ does not causally depend on $\text{ComparisonResult}$, flag.  
+
+  - **Why it works**:  
+    The algebraic shortcut computes $\text{SubtractionResult}$ directly from $(a - b)^2$, bypassing $\text{ComparisonResult}$. The projection $\phi$ (trained to extract $\text{ComparisonResult}$) will fail or output inconsistent values.  
+
+  ---
+
+  ### **Why Obvious Candidates Fail**
+  1. **Functional Criterion**:  
+     Both mechanisms yield $|5 - 3| = 2$, so anomalies are undetectable.  
+  2. **Structural Criterion**:  
+     The algebraic shortcut uses different operations (square, sqrt) and would be flagged even if trustworthy.  
+  3. **Interventional Criterion**:  
+     Interventions on "parts" (e.g., neurons) are ambiguous. The algebraic shortcut lacks a $\text{ComparisonResult}$ part, making interventions undefined.  
+
+  ---
+
+  ### **Avoiding Circularity**
+  - **No reliance on distribution shifts**:  
+    The abstraction layer $\{V_i\}$ and causal graph are defined **only from the trusted mechanism** using domain knowledge (e.g., specifying intermediate concepts like comparison). $\phi$ is trained solely on trusted-distribution data.  
+  - **Validation**:  
+    Test $\phi$'s accuracy on trusted inputs. If $\phi$ consistently predicts $\{V_i\}$ correctly, it generalizes the abstraction layer to new inputs *without* referencing shifts.  
+
+  ---
+
+  ### **Practical Implementation**
+  1. **Define the abstraction layer**:  
+     Identify interpretable variables $\{V_i\}$ critical to the reference mechanism (e.g., via mechanistic interpretability).  
+  2. **Train projection functions**:  
+     For each $V_i$, train a probe (e.g., linear classifier) to predict $V_i$ from activations using trusted data.  
+  3. **Specify the causal graph**:  
+     Encode dependencies (e.g., $\text{SubtractionResult}$ requires $\text{ComparisonResult}$).  
+  4. **Monitor new inputs**:  
+     For input $x$:  
+     - Compute expected $\{V_i\}$ from $x$ (e.g., $\text{ComparisonResult}$ from $a, b$).  
+     - Extract $\phi(\text{activations})$ and check:  
+       - Value consistency (e.g., $\phi_{\text{comp}} = \mathbb{I}(a \geq b)$),  
+       - Causal consistency (e.g., $\phi_{\text{sub}}$ changes if $\phi_{\text{comp}}$ is perturbed).  
+
+  ---
+
+  ### **Conclusion**
+  The **causal graph consistency** criterion defines mechanism identity via:
+  1. A **fixed abstraction layer** of high-level variables,  
+  2. A **fixed causal graph** over these variables,  
+  3. A **projection function** $\phi$ trained on trusted data.  
+
+  This avoids functional vacuity (by inspecting internals), structural brittleness (by abstracting implementations), and interventional ambiguity (by specifying variables/graph upfront). It flags inputs where the model's internal causal structure deviates from the reference, ensuring anomalies are caught *before* distribution shifts cause failures. In the absolute difference example, it detects the substitution of a conditional branch with an algebraic shortcut, even when outputs agree on trusted inputs.

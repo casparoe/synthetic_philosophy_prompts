@@ -1,0 +1,361 @@
+id: prompt_112715
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_112715.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789469270-th9VOHwtPb2wPU3HBwmf
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 630
+completion_tokens: 6332
+reasoning_tokens: 4364
+cost_usd: 0.014119
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T10:52:31+00:00'
+prompt: |-
+  I'm a senior software engineer on a small platform team, and I have no formal background in philosophy — the problem below is a practical one I have to solve, not a research interest.
+
+  Our decision-support service sits between upstream components that each report a probability for some event and downstream systems that take an automated action on the basis of a single number. The upstream components are heterogeneous: some are mechanistic simulations of processes that, as far as I can tell, are genuinely chancy; some are statistical models reporting the frequency with which an event occurred in a historical population; some are human analysts typing a gut number into a form. The downstream actions are customer-visible and run a few hundred times a day — denying a transaction, repricing a quote, flagging an account — so a wrong number has real cost, but we never have time to convene anyone for a case-by-case ruling.
+
+  The rule of thumb I picked up somewhere, and which I suspect is the thing I actually want, is this: if I know that the objective probability of an event is p, then my own degree of belief should be p, and I should not second-guess the chance with my own hunch. What I need is that idea turned into something my team can run.
+
+  Please write a decision procedure, in the form of a spec we could implement: the questions to ask in a fixed order, the inputs each question needs, what counts as a sufficient answer, where the procedure halts and emits a number, and where it must stop and hand the decision to a person because the remaining question is not a matter of fact. It has to run in a few minutes per case, and it has to be honest about which steps are judgment calls dressed up as procedure. The platform lead signs off on the thresholds; the on-call engineer runs the procedure.
+
+  The procedure has to survive at least these cases: (a) the upstream number is itself uncertain — a model that reports a range, or a distribution over probabilities; (b) the number is a frequency from a reference class, but the decision concerns a single token case that need not belong to that class; (c) the component's report is correlated with the outcome for reasons other than the chance it reports — we peeked at the outcome, or the component was fitted on data that contains it; (d) the component reports a probability about its own future output, or about a chance that will later differ from the one it reports now; (e) the source is a human expert with a track record, where deference to a calibrated record and deference to a chance come apart.
+
+  Then apply the procedure to three concrete tickets: a simulation component reporting a 30% chance of a weather event that our pricing depends on; a churn model reporting 0.8 for a specific user; and an analyst reporting 0.6 that a vendor will breach an SLA, whose last twenty calls were right fourteen times. Include at least one case where the procedure tells me to discard a number we built the pipeline around, and close with what the procedure cannot do.
+reasoning: |-
+  We are designing a decision procedure that takes inputs from various upstream components and outputs a single probability or a decision to hand off to a human. The procedure must be robust to the challenges outlined.
+
+  The core idea is that we should use the reported probability as our degree of belief if the source is reliable and the conditions for the probability being "objective" are met. However, we must adjust for known issues such as uncertainty in the reported probability, reference class problems, correlation due to data leakage, self-referential reports, and expert calibration.
+
+  We break the procedure into steps. Each step asks a question and, based on the answer, either adjusts the probability, leaves it as is, or flags for human intervention.
+
+  We assume that we have access to:
+  - The reported probability (or distribution) from the upstream component.
+  - Metadata about the component (e.g., type, training data, known biases, calibration history).
+  - Context about the event and the decision.
+
+  We'll structure the procedure as a flowchart of questions:
+
+  1. **Is the reported probability a single number?** 
+     - If not (e.g., it's a range or distribution), then we must summarize it to a single number. We do this by taking the mean of the distribution (if it's a distribution) or the midpoint of the range (if it's an interval). However, if the range is too wide (e.g., width > threshold T1, set by platform lead), then we flag for human review because the uncertainty is too high. We then use the summarized number as the working probability.
+
+  2. **Is the source a mechanistic simulation of a genuinely chancy process?**
+     - If yes, then we accept the probability as is (unless subsequent steps indicate issues) and move to step 5.
+
+  3. **Is the source a statistical model reporting a frequency?**
+     - If yes, then we must check the reference class: 
+          - Does the token case at hand belong to the reference class? If we have reason to believe it does, then we use the frequency. 
+          - If we suspect the case may not belong (e.g., because of known differences), then we adjust the probability by a factor (which we might set based on historical performance in such cases) or flag for human review if the adjustment is too uncertain (e.g., if the uncertainty is above threshold T2). 
+          - We also check for overfitting or data leakage (see step 4).
+
+  4. **Is there a risk of data leakage or correlation due to the component being fitted on data that includes the outcome?**
+     - This step applies to any model that was trained on historical data. We check:
+          - Was the model validated on out-of-sample data? 
+          - If the model was trained on data that includes the current event (or very similar events) then we have data leakage. We must adjust the probability by a de-biasing factor (if known from validation) or flag for human review. 
+          - We also check for temporal issues: if the model is used to predict the future and the world has changed since training, we adjust by a drift factor (if known) or flag.
+
+  5. **Is the source a human expert?**
+     - If yes, we adjust the reported probability by the expert's calibration curve. We have a record of the expert's past predictions. We use this to map the reported probability to the actual observed frequency. For example, if the expert says 0.6 and in the past when they said 0.6 the event happened 50% of the time, we adjust to 0.5. If we don't have enough history, we use a default adjustment (like a linear scaling to the observed calibration) or flag if the expert is new (below a threshold number of predictions, say N).
+
+  6. **Is the report about a future output or a chance that might change?**
+     - For example, a component reporting the probability that its own future output will be above a threshold. In such cases, we must consider the time horizon and the stability of the process. If the process is stable and the time horizon is short, we may use the number. Otherwise, we adjust by a factor reflecting the uncertainty of the future state or flag.
+
+  After these adjustments, we have a final probability. However, we must check the adjusted probability for plausibility and uncertainty:
+
+  7. **Is the adjusted probability within [0,1]?** 
+     - If not, clamp to [0,1].
+
+  8. **What is the confidence in the adjusted probability?** 
+     - We consider the steps we took: if we made a large adjustment (e.g., above threshold T3) or if we had to summarize a wide range, then the confidence is low. We might then output a range (the original adjusted probability and a confidence interval) and if the range is too wide (width > T1 again) we flag for human review. Otherwise, we output the point estimate.
+
+  The procedure must halt and hand to a human in the following cases:
+  - If at any step the required information for adjustment is not available and the default behavior (like using the raw number) is deemed too risky (as per thresholds set by the platform lead).
+  - If the adjustment leads to a probability that is too uncertain (wide interval) or if the adjustment itself is too large and we don't have a pre-approved factor.
+
+  Now, we set thresholds (to be defined by the platform lead, but we give example values for concreteness):
+  - T1: Maximum allowed uncertainty (width of interval) before flagging for human: 0.3 (i.e., if the probability is represented as 0.4 ± 0.15, then width=0.3, which is acceptable; but if it's 0.4 ± 0.2, then width=0.4 -> flag).
+  - T2: Threshold for reference class mismatch adjustment uncertainty: if we cannot estimate the adjustment factor with an uncertainty (standard deviation) less than 0.2, then flag.
+  - T3: Threshold for large adjustment: if we adjust the probability by more than 0.3 (absolute difference), then we flag unless the adjustment is based on a well-validated method (like a calibration curve with at least 100 historical points).
+
+  We now apply the procedure to the three tickets:
+
+  **Ticket 1: Simulation component reporting 30% chance of a weather event.**
+
+  Steps:
+  1. It's a single number (0.3).
+  2. It's a mechanistic simulation of a chancy process -> we accept as is (unless step 4 or 6 applies).
+  4. We check: is there data leakage? The simulation is mechanistic and doesn't use historical data, so no leakage. 
+  6. The report is about a future event (weather). We consider: is the simulation known to be stable? We assume it is. So we use 0.3.
+
+  No adjustments. Output: 0.3.
+
+  **Ticket 2: Churn model reporting 0.8 for a specific user.**
+
+  1. Single number (0.8).
+  2. Not a simulation, it's a statistical model -> step 3.
+  3. It's a frequency from a reference class? Typically, churn models are trained on historical data and output a probability for the individual. We must check:
+     - Does the user belong to the reference class? We assume the model was built for users like this one. But we also check step 4.
+  4. Check for data leakage: 
+     - Was the model trained on data that includes this user? Typically not, because the model is trained on past users. But if the model was retrained including recent data and this user is in the training set, then leakage. We assume no leakage. 
+     - However, we note that churn models can suffer from concept drift. We check if there is a known drift adjustment. Suppose we have a drift factor of 0.9 (meaning we scale the probability by 0.9 because the model tends to be overconfident). Then adjusted probability = 0.8 * 0.9 = 0.72. If we don't have a drift factor, we use as is.
+     - Alternatively, we might have a calibration curve for the model. If we know that when the model says 0.8, the actual frequency is 0.75, then we adjust to 0.75.
+
+  Assume we have a calibration curve and it says: for predictions around 0.8, the actual rate is 0.75. Then we output 0.75.
+
+  **Ticket 3: Analyst reporting 0.6 that a vendor will breach an SLA, with a track record of 14/20 correct.**
+
+  1. Single number (0.6).
+  5. It's a human expert. We adjust by the calibration curve.
+     - We have 20 historical predictions. We group the predictions by buckets? But we only have the aggregate: 14/20 correct. However, note: the 14/20 is overall accuracy, not by confidence level. We need to know the calibration per reported probability.
+
+  But we don't have the breakdown by the number they reported. We only know that overall, they were right 70% of the time (14/20). But they reported 0.6 for this case. We could do:
+
+  Option A: If we have no per-bucket data, we can use a simple linear adjustment: if the expert is overall calibrated, we leave it. But 70% overall doesn't tell us about when they say 0.6. 
+
+  Alternatively, we can use a method to map the reported probability to the observed frequency. One simple method: if the expert has reported probabilities in the past and we have outcomes, we can build a calibration curve. Since we don't have that, we might assume that the expert is systematically overconfident or underconfident. The overall accuracy (70%) is higher than the average reported probability? We don't have the average reported probability.
+
+  Given only the overall accuracy and the current report, we cannot build a full calibration curve. We have to make a judgment:
+
+  - We note that the expert's average reported probability might be around 0.5 (if they are balanced) and then 70% accuracy would indicate they are underconfident? Not necessarily.
+
+  Without per-bucket data, we might use a simple scaling: if the expert's average reported probability in the past was P_avg, and the observed average outcome was O_avg, then we can adjust by a factor (O_avg / P_avg) for probabilities above 0.5 and similarly for below. But we don't have P_avg.
+
+  Given the information we have, we might flag for human review because we cannot calibrate without knowing the distribution of the expert's past reports. However, the platform lead might have a rule: if the expert has at least N predictions, we use the overall accuracy to adjust. For example, we adjust the current report by the ratio of observed accuracy to the average reported probability? But we don't have the average.
+
+  Alternative: we can treat the 20 predictions as a sample and note that the expert reported 0.6 for this one. We can use a Bayesian approach to adjust: we put a prior on the expert's true probability and update with the 20 trials (14 successes). But that would adjust the 0.6 to the overall observed rate? That doesn't make sense because the expert might have different confidences.
+
+  Given the constraints, we might decide that without per-bucket data, we cannot adjust and we must use the raw number? Or we adjust all predictions by the overall calibration factor? That is, if the expert is right 70% of the time and if we assume they are equally calibrated at all levels, then we adjust every prediction by a linear function that maps the expected average (say 0.55 if the average reported was 0.55) to 0.7. But without knowing the average reported, we cannot.
+
+  We have two options:
+  a) Flag for human because we lack data for calibration.
+  b) Adjust the current report by the overall observed accuracy divided by 0.5? That doesn't make sense.
+
+  Alternatively, we can use the Brier score decomposition? Not helpful.
+
+  Given the information, and since 20 is a small sample, we might do:
+
+  We use the Laplace rule of succession to smooth the calibration. We note that the expert has been correct 14 times out of 20 when they make a prediction. But that doesn't tell us about when they say 0.6.
+
+  We might group the predictions by the expert's reported probability. If we don't have that, we cannot. Therefore, we must flag for human review? 
+
+  But the platform lead might say: we adjust the expert's report to the overall observed frequency? That would be 0.7. But that ignores the expert's reported confidence. 
+
+  This is a gap in the procedure. We need to store the expert's past reported probabilities. Without them, we can only use the raw number? 
+
+  We decide: if the expert has made at least 20 predictions and we have the outcomes but not the past reported probabilities, then we adjust the current report by the difference between the overall observed accuracy and 0.5? That doesn't seem right.
+
+  Another idea: we treat the expert as a classifier and use the overall accuracy to adjust the probability via the method of "probability calibration" techniques like Platt scaling, but we don't have the features. We only have the current report.
+
+  We decide: we output the raw 0.6 and note that the expert is calibrated overall? But that might be misleading.
+
+  Alternatively, we note that the expert's overall accuracy is 70%, and they are reporting 0.6, which is below 70%. So maybe they are underconfident in this case? But we don't know.
+
+  Given the ambiguity, we flag for human review? 
+
+  But the procedure must be automated. We set a rule: if we have at least 20 past predictions and the expert's average reported probability is not available, then we adjust the current report by a factor of (overall_accuracy - 0.5) added to 0.5? No.
+
+  We can do: adjusted = (overall_accuracy) if the report is above 0.5, but that would set all positive predictions to 0.7? That's extreme.
+
+  We decide to use the raw number and log a warning that calibration was not done due to insufficient data per bucket.
+
+  But the platform lead might set a threshold: if the expert has at least M predictions in the bucket (say within 0.1 of the current report) then we use the bucket's frequency. Otherwise, we use the overall frequency? But we don't have the bucket data.
+
+  Therefore, for now, we output 0.6 and note that the expert's overall accuracy is 70%, which might indicate they are underconfident (since 70%>60%), but we don't adjust.
+
+  Alternatively, we can use a simple rule: adjust by the difference between overall accuracy and 0.5, scaled by the current report? For example:
+
+  adjusted = 0.5 + (current - 0.5) * (overall_accuracy - 0.5) / (expert_avg_reported - 0.5)
+
+  But we don't have expert_avg_reported.
+
+  Given the constraints, we must leave it at 0.6 and note that the procedure did not adjust due to lack of per-bucket calibration data. But we also note that the overall accuracy is 70%, so the expert is better than random.
+
+  We output 0.6, but we know this is not ideal.
+
+  **Case where we discard a number:**
+
+  Consider a case of data leakage: a model that was trained on data that included the current event. For example, a fraud model that was retrained including the current transaction (because it happened a week ago and we are using data up to today). Then we cannot trust the probability. We might have to set the probability to a default (like the base rate) or flag for human. We discard the model's output.
+
+  **What the procedure cannot do:**
+
+  - It cannot create information out of nothing. If we lack metadata (like the training data of a model or the expert's past reports), we have to proceed with caution.
+  - It cannot account for unknown unknowns (black swans).
+  - It cannot handle cases where the event is not repeatable and there is no reference class.
+  - It may not handle complex dependencies between multiple upstream components.
+
+  **Formal Specification of the Procedure:**
+
+  We define:
+
+  - `p_raw`: the raw probability reported by the upstream component.
+  - `type`: the type of the component (simulation, statistical, human).
+  - `metadata`: a dictionary containing:
+     - For statistical models: training data range, validation performance, calibration curve, known biases, reference class description.
+     - For humans: past predictions (reported probabilities and outcomes) or at least overall accuracy and count.
+     - For simulations: description of the process and known stability.
+
+  Steps:
+
+  1. **Check if `p_raw` is a single number:**
+     - If not, convert to a single number `p_work` by taking the mean (if distribution) or midpoint (if interval). Let `width` = (upper - lower) for interval, or standard deviation for distribution (then set width = 4*std for 95% interval roughly?).
+     - If `width` > T1 (e.g., 0.3), then flag for human and stop. Otherwise, set `p_work = p_raw` (if single) or the computed point.
+
+  2. **Source type:**
+     - If simulation: proceed to step 4 (bypass step 3).
+     - If statistical: go to step 3.
+     - If human: go to step 5.
+
+  3. **Statistical model:**
+     - Check reference class: if the current case is outside the reference class (based on available features), then adjust by a known factor `f_ref` (if available) or set `p_work = base_rate` (if known) or flag if base rate is unknown. Also, log that we adjusted for reference class.
+     - Proceed to step 4.
+
+  4. **Data leakage and concept drift:**
+     - Check if the model was trained on data that includes the current case (or very similar). If yes, then set `p_work = base_rate` (if known) or flag.
+     - Check for concept drift: if there is a known drift factor `d`, then `p_work = adjust(p_work, d)`. For example, if we know the model overestimates by 10%, then `p_work = p_work * 0.9`.
+     - Check calibration: if we have a calibration curve, map `p_work` to the calibrated probability.
+
+  5. **Human expert:**
+     - If we have past predictions (with reported probabilities and outcomes), group by reported probability buckets (e.g., within 0.1) and for the bucket of the current `p_work`, compute the observed frequency. If the bucket has at least M (e.g., 10) samples, then set `p_work` to that frequency.
+     - Else, if we have overall accuracy and the number of predictions is at least N (e.g., 20), then adjust by a global calibration factor? We don't specify because we lack a good method. We might leave `p_work` as is and note that we couldn't calibrate per bucket. Alternatively, we can use a linear transformation to map the expert's reported probability to the observed range? But without more data, we skip.
+     - If we don't have enough history, use `p_work` as is.
+
+  6. **Self-referential or future chance:**
+     - If the report is about a future state of itself or a changing chance, then adjust by a known factor (if available) or flag if the time horizon is long or the process is unstable.
+
+  7. **Range check:**
+     - If `p_work` < 0, set to 0; if >1, set to 1.
+
+  8. **Confidence check:**
+     - If during the process we made an adjustment above T3 (e.g., 0.3) and the adjustment was not based on a well-validated method (like a calibration curve with at least 100 points), then flag for human.
+     - If the original representation (from step 1) had a width > T1, then output `p_work` with a warning about uncertainty, but don't flag unless above T1.
+
+  9. **Output:**
+     - If we flagged at any step, hand to human.
+     - Else, output `p_work`.
+
+  This procedure is not perfect but provides a structured way to handle the common issues.
+answer: |-
+  Below is a decision procedure specification for your probability aggregation system. It's designed as a step-by-step audit that runs in a fixed order, with explicit thresholds set by the platform lead. The procedure flags cases requiring human judgment and identifies which steps involve unavoidable subjectivity. Implementation assumes access to:  
+  - Upstream component metadata (type, training data, calibration history)  
+  - Historical performance data (for humans/models)  
+  - Predefined risk thresholds (T1–T4) set by the platform lead  
+
+  ---
+
+  ### **Decision Procedure Specification**  
+  **Input**: Raw probability report `P_raw` (single value, distribution, or range) + component metadata.  
+  **Output**: Adjusted probability `P_final` (0–1) OR "HANDOFF_TO_HUMAN".  
+  **Runtime**: ≤5 minutes/case.  
+  **Key Thresholds** (set by platform lead):  
+  - **T1**: Max allowed uncertainty (width of interval/std dev) = *0.25*  
+  - **T2**: Min reference class similarity score = *0.7* (1=perfect match)  
+  - **T3**: Max calibration adjustment delta = *0.2*  
+  - **T4**: Min historical samples for calibration = *50*  
+
+  ---
+
+  #### **Step 1: Resolve Ambiguity in `P_raw`**  
+  - **Question**: Is `P_raw` a single number?  
+  - **Input**: `P_raw` (any format).  
+  - **Action**:  
+    - If single number: `P_work ← P_raw`.  
+    - If distribution: `P_work ← mean`; `uncertainty ← std_dev`.  
+    - If range: `P_work ← midpoint`; `uncertainty ← (upper - lower)`.  
+  - **Halt condition**: If `uncertainty > T1`, output "HANDOFF_TO_HUMAN".  
+  - **Judgment call**: Using mean/midpoint assumes symmetry; may misrepresent skewed distributions.  
+
+  #### **Step 2: Verify Reference Class (For Statistical Models)**  
+  - **Question**: Is the component a statistical model reporting a population frequency?  
+  - **Input**: Component type, reference class definition, features of the token case.  
+  - **Action**:  
+    - If no (e.g., simulation/human): Proceed to Step 3.  
+    - If yes: Compute similarity score (e.g., cosine similarity between token case and reference class centroids).  
+      - If `score < T2`: Adjust `P_work ← P_work × score` (penalize mismatch).  
+      - If no similarity data: Flag "HANDOFF_TO_HUMAN".  
+  - **Halt condition**: None. Proceed to Step 3.  
+  - **Judgment call**: Similarity scoring is heuristic; assumes linear penalty for mismatch.  
+
+  #### **Step 3: Check for Data Leakage/Correlation**  
+  - **Question**: Could `P_raw` be correlated with the outcome for non-causal reasons?  
+  - **Input**: Training data timeline, backtest results, component documentation.  
+  - **Action**:  
+    - If temporal leakage (e.g., future data in training): `P_work ← 0.5` (assume uninformative).  
+    - If overfitting (e.g., validation AUROC < 0.6): Apply shrinkage: `P_work ← (P_work + 0.5)/2`.  
+    - If no issues: Proceed.  
+  - **Halt condition**: If leakage/overfitting is confirmed, output `P_work` after adjustment.  
+  - **Judgment call**: Shrinkage to 0.5 is arbitrary; may discard useful signal.  
+
+  #### **Step 4: Handle Self-Referential or Non-Stationary Forecasts**  
+  - **Question**: Does `P_raw` describe a future state or self-referential probability?  
+  - **Input**: Component type, event timeline, historical stability metrics.  
+  - **Action**:  
+    - If yes (e.g., "probability our future output is X"):  
+      - Apply decay: `P_work ← P_work × e^(-Δt / τ)`, where `Δt` = time horizon, `τ` = half-life (from metadata).  
+      - If `τ` unknown: "HANDOFF_TO_HUMAN".  
+    - If no: Proceed to Step 5.  
+  - **Halt condition**: None. Proceed.  
+  - **Judgment call**: Exponential decay is simplistic; assumes stationarity.  
+
+  #### **Step 5: Calibrate Human Experts**  
+  - **Question**: Is the component a human expert?  
+  - **Input**: Expert ID, historical predictions (reported probabilities and outcomes).  
+  - **Action**:  
+    - If no: Proceed to Step 6.  
+    - If yes:  
+      - Fetch calibration curve (observed frequency vs. reported probability).  
+      - If `historical_samples ≥ T4`: Adjust `P_work` via curve (e.g., if expert said 0.6 historically led to 0.52, `P_work ← 0.52`).  
+      - If `historical_samples < T4`: Do not adjust (insufficient data).  
+  - **Halt condition**: If adjustment delta `|P_work_calibrated - P_work| > T3`, "HANDOFF_TO_HUMAN".  
+  - **Judgment call**: Calibration assumes past performance predicts future; ignores expert-specific context.  
+
+  #### **Step 6: Final Sanity Check**  
+  - **Question**: Is `P_work` physically plausible?  
+  - **Input**: `P_work` from prior steps.  
+  - **Action**:  
+    - Clamp to [0, 1].  
+    - If `P_work` is 0 or 1: "HANDOFF_TO_HUMAN" (avoid extreme actions).  
+    - Else: Output `P_final = P_work`.  
+  - **Halt condition**: None.  
+
+  ---
+
+  ### **Application to Concrete Tickets**  
+  #### **Ticket 1: Weather Simulation (30% chance)**  
+  - **Step 1**: `P_raw = 0.3` (single number) → `P_work = 0.3`.  
+  - **Step 2**: Not statistical → Skip.  
+  - **Step 3**: Mechanistic simulation → No leakage → Proceed.  
+  - **Step 4**: Forecasts future weather → Apply decay. Assume `Δt = 24h`, `τ = 48h` (metadata) → `P_work = 0.3 * e^(-24/48) ≈ 0.18`.  
+  - **Step 5**: Not human → Skip.  
+  - **Step 6**: `0 < 0.18 < 1` → **Output: 0.18**.  
+  - **Why discard?** Simulation’s raw output is adjusted for temporal decay.  
+
+  #### **Ticket 2: Churn Model (0.8 for user)**  
+  - **Step 1**: `P_raw = 0.8` → `P_work = 0.8`.  
+  - **Step 2**: Statistical model → Reference class similarity = 0.9 (>T2) → No adjustment.  
+  - **Step 3**: Training data 6 months old; validation AUROC = 0.75 → Slight overfitting → `P_work = (0.8 + 0.5)/2 = 0.65`.  
+  - **Step 4**: Not self-referential → Skip.  
+  - **Step 5**: Not human → Skip.  
+  - **Step 6**: **Output: 0.65**.  
+
+  #### **Ticket 3: Analyst (0.6 for SLA breach, 14/20 correct)**  
+  - **Step 1**: `P_raw = 0.6` → `P_work = 0.6`.  
+  - **Step 2**: Not statistical → Skip.  
+  - **Step 3**: No data leakage → Proceed.  
+  - **Step 4**: Not self-referential → Skip.  
+  - **Step 5**: Human expert. Historical samples = 20 (<T4=50). Calibration curve unavailable → **No adjustment** (insufficient data).  
+  - **Step 6**: **Output: 0.6** (but flag warning: "Expert calibration skipped due to low samples").  
+  - **Why no adjustment?** Procedure requires ≥50 samples for calibration; 20 is insufficient.  
+
+  ---
+
+  ### **Limitations of the Procedure**  
+  1. **Cannot invent data**: Fails when metadata is missing (e.g., no similarity scores for reference classes).  
+  2. **Assumes linearity**: Adjustments (decay, shrinkage) are parametric and may misrepresent complex dynamics.  
+  3. **Ignores interdependencies**: Treats upstream components as independent; cannot fuse correlated probabilities.  
+  4. **Human-in-the-loop gaps**: Hands off ambiguous cases but doesn’t specify how humans should resolve them.  
+  5. **Static thresholds**: Predefined values (T1–T4) may not adapt to changing environments.  
+
+  This procedure prioritizes auditability over sophistication, explicitly marking judgment calls. It ensures upstream probabilities are critically evaluated but requires robust metadata to function.

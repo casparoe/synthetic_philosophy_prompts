@@ -1,0 +1,689 @@
+id: prompt_55705
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_55705.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789363175-5yi3fBdPPBrSpe2IWloP
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 584
+completion_tokens: 12211
+reasoning_tokens: 10359
+cost_usd: 0.026912
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T05:30:08+00:00'
+prompt: |-
+  I'm a backend/ml engineer at a mid-size fintech, no philosophy background at all, and I've been volun-told to be our "fairness reviewer" for anything ML-adjacent that touches customers. That means every 6 weeks or so I get a model spec on my desk -- default risk, fraud flagging, transaction limit adjustments, once a resume screener for our own hiring -- and I have maybe an hour per model with the PM who owns it, and I have to say something more useful than "it depends."
+
+  I vaguely get that there are these impossibility results floating around: something like, if the outcome rates genuinely differ between groups, you can't have calibration and equal error rates and equal positive rates all at once, you have to pick which one you care about and eat the rest. People keep citing this at me in reviews and then not telling me what to DO about it.
+
+  What I want is a procedure I can actually run in that hour. Something like:
+
+  - an ordered list of questions to ask about the model and its use, where each answer points me down a path (who gets scored, what happens on a positive vs negative, is the label a real thing or a proxy for a real thing, do we get to set a threshold or is it a ranking, etc.)
+  - for each path, which fairness criterion the impossibility results leave on the table, stated in plain english -- like "if you demand X here, you're giving up Y, and here's a concrete way that hurts someone"
+  - where the procedure should just say NO (or "escalate to legal") vs where it's genuinely a values call that me and the PM shouldn't be deciding in a meeting
+  - some honesty about the spots where the procedure is a judgment call dressed up as a checklist
+
+  Then run it on three of my actual recurring cases: (1) a default-risk model where we set a cutoff for approving credit line increases, (2) a fraud model that auto-freezes accounts pending review, where the training label is "was flagged by the old human process," and (3) the resume screener, which we keep deferring. I want at least one of these to come out with an answer that makes the PM unhappy.
+
+  Constraints: no stats PhD on the team, we can compute anything from a confusion matrix but we can't run counterfactual audits, and protected attribute data is available for the fraud case but NOT for the credit case (so factor that in). Don't just list the criteria names, tell me what each one means operationally for someone staring at a dashboard. Also if there are places where the impossibility stuff people cite doesn't actually bite (like when base rates are the same, or when it's a ranking not a classifier), flag that, because I suspect we're over-applying it.
+reasoning: |-
+  We are going to design a procedure that the engineer can run in about an hour per model. The procedure will be a decision tree of questions, leading to a recommended fairness criterion (or a NO/escalation) and an explanation of the trade-offs.
+
+  The key fairness criteria we consider (with plain English explanations) are:
+  1. **Demographic Parity (DP)**: The proportion of positive predictions is the same across groups. This means that the same percentage of each group gets a loan approved, a credit line increase, etc. But this might force you to set different thresholds for different groups if one group has a higher base rate of the positive outcome (like defaulting less). Trade-off: If the base rates differ, DP might require you to approve unqualified individuals in one group or deny qualified individuals in another.
+
+  2. **Equal Opportunity (EO)**: Equal true positive rates (TPR) across groups. This means that the model is equally good at identifying the "good" cases (like people who will repay) in each group. Trade-off: If base rates differ, then the false positive rates (FPR) might end up being different, meaning one group might get more false positives (e.g., more people who are denied credit but would have repaid).
+
+  3. **Predictive Parity (PP)**: Equal positive predictive value (PPV) across groups. This means that among those who are predicted to be positive (e.g., approved for credit), the same proportion in each group actually is positive (e.g., repays). Trade-off: This might lead to different thresholds and thus different TPRs and FPRs. If base rates differ, then to have the same PPV, the model must be more selective for the group with a lower base rate.
+
+  4. **Equal Accuracy (Acc)**: The overall accuracy is the same across groups. But this might hide disparities in the types of errors (e.g., more false positives for one group, more false negatives for another).
+
+  The impossibility result (from Kleinberg, Mullainathan, Chouldechova, etc.) says that you cannot simultaneously satisfy:
+  - Calibration (which is similar to PP): The predicted probability matches the actual probability of the event for each group.
+  - Equal TPR (Equal Opportunity)
+  - Equal FPR (which, with equal TPR, would imply equal error rates)
+
+  And also that DP is incompatible with calibration if base rates differ.
+
+  But note: if base rates are the same, then some of these become compatible.
+
+  We'll structure the procedure as a series of questions:
+
+  1. **What is the model's output?** 
+     - (a) A probability score (or a continuous risk score that can be thresholded) -> go to 2
+     - (b) A binary decision (already thresholded) -> go to 3
+     - (c) A ranking (like in the resume screener) -> go to 4
+
+  2. **Can you set the threshold?**
+     - (a) Yes -> then we can adjust for fairness -> go to 5
+     - (b) No -> then we have to use the existing binary decision -> treat as binary and go to 3
+
+  3. **For binary decisions: What is the primary concern?** (This is a judgment call, but we'll guide with common concerns)
+     - (a) We don't want to disproportionately deny opportunities to a group (e.g., credit, jobs) -> then we care about false negatives -> so we might want Equal Opportunity (TPR) or Demographic Parity (if we are worried about representation) -> go to 6
+     - (b) We don't want to disproportionately expose a group to harm (e.g., freezing accounts, denying service) when they shouldn't -> then we care about false positives -> so we might want Predictive Parity (PPV) or Equal FPR -> go to 7
+     - (c) We are equally concerned about both types of errors -> then maybe Accuracy, but note that might not be sufficient -> go to 8
+
+  4. **For rankings: How are they used?**
+     - (a) We take the top K -> then we care about the composition of the top K -> so we might want Demographic Parity in the top K -> but note: if we require DP in the top K, then we are essentially setting a quota. Alternatively, we might want the ranking to be fair in terms of not having disparate impact. This is tricky -> go to 9
+
+  But note: the above is too simplistic. We need to tie the questions to the model's purpose and the harm.
+
+  A more robust set of questions:
+
+  **Step 1: Identify the harm.**
+     - What is the negative outcome that we are trying to prevent? (e.g., default, fraud, missing a qualified candidate)
+     - What is the positive action we are taking? (e.g., approve credit, freeze account, invite for interview)
+
+  **Step 2: Who is affected?**
+     - Do we have protected attributes? (If not, then we might only do overall performance, but note: without protected attributes we cannot measure group fairness. However, we might use proxy attributes or try to get the data. But the constraint says: for credit, no protected attributes. So we have to skip group fairness for that one? Or we might use a proxy? But that's dangerous. So without protected attributes, we cannot do group fairness. We can only do overall performance. But then we might still have disparate impact. So if we don't have protected attributes, we might have to rely on legal to tell us if we are allowed to use the model without group fairness checks? Or we might use a proxy and then escalate to legal.)
+
+  **Step 3: What is the decision process?**
+     - Is the model used for a binary decision? If so, can we adjust the threshold? (if yes, then we can adjust for fairness)
+     - Is it a ranking? How many are selected?
+
+  **Step 4: What are the consequences of errors?**
+     - False Positive (FP): e.g., denying credit to someone who would have repaid, freezing an account that is not fraudulent, rejecting a qualified candidate.
+     - False Negative (FN): e.g., approving credit to someone who defaults, not freezing a fraudulent account, hiring an unqualified candidate.
+
+     We need to assign which harm is more important? This is a values call. But we can ask: 
+     - Which error type has a greater negative impact on the individual? (e.g., FP might harm the individual by denying opportunity, FN might harm the company by financial loss and the individual by being defrauded? But note: in fraud, freezing an account is a harm to the customer? Yes, inconvenience. But not freezing a fraudulent account harms the customer too (loss of money). So it's complex.)
+
+     Alternatively, we can think in terms of:
+     - Harm to the individual from FP (Type I error) vs harm to the individual from FN (Type II error). But note: in some cases, FN might harm the company and the individual (e.g., fraud). So we have to consider both.
+
+  **Step 5: What fairness criterion aligns with the harm?**
+     - If the harm of FP is greater to the individual (e.g., denying credit to a qualified person), then we want to ensure that FPs are not disproportionately applied to a group -> so we want equal FPR (which is part of Equalized Odds) or equal PPV (so that the positive predictions are equally reliable across groups). But note: if base rates differ, we can't have both.
+     - If the harm of FN is greater to the individual (e.g., not catching fraud on an account, leading to loss of funds) then we want to ensure that FNs are not disproportionate -> so we want equal FNR (or equivalently, equal TPR) across groups.
+
+     However, note that in some cases, the harm of FP and FN might be asymmetric and we might want to minimize the worst-case harm to any group. This is where we might choose a criterion that controls the disparity in a specific error metric.
+
+  **Step 6: Check feasibility and trade-offs.**
+     - If base rates are the same, then we can achieve multiple criteria. But base rates are often not the same.
+     - The impossibility result tells us we have to choose one: either calibration (so that scores are meaningful) and then we can have either equal TPR or equal FPR, but not both. Or we can have DP, but then we lose calibration and possibly accuracy.
+
+  **Step 7: Red lines (NO or escalate)**
+     - If we don't have protected attribute data and we are in a regulated domain (like credit), then we might not be able to measure group fairness -> so we must escalate to legal/compliance to see if we are allowed to use the model without group fairness checks? Or we might use a proxy and then escalate because proxies can be problematic.
+     - If the model has a large disparity in a metric that we care about (e.g., TPR difference > 20%) and we cannot adjust the threshold to fix it without breaking business requirements, then we might need to improve the model or collect more data -> so say NO to deployment until fixed.
+
+  **Step 8: Judgment calls**
+     - The choice of which criterion to prioritize is a values call. We are not the ones to decide? But the product and legal should. However, we can present the options and the trade-offs.
+
+  Now, let's design the procedure as a flowchart:
+
+  ```
+  Start
+  |
+  V
+  1. What is the model's decision output?
+     - Continuous score (go to 2)
+     - Binary decision (go to 3)
+     - Ranking (go to 4)
+
+  2. Can we set the threshold? 
+     - Yes -> then we can adjust for fairness -> go to 5
+     - No -> then we are stuck with the binary decision -> go to 3
+
+  3. Binary decision: What is the primary harm we want to avoid?
+     - a) Harm from false negatives (e.g., missing fraud, approving a loan that defaults) -> then we care about TPR (Equal Opportunity) -> go to 6
+     - b) Harm from false positives (e.g., denying credit to good customers, freezing innocent accounts) -> then we care about FPR or PPV -> go to 7
+     - c) Both equally -> go to 8
+
+  4. Ranking: How is the ranking used?
+     - a) We take top K -> then we care about the representation in the top K -> so we might want Demographic Parity in top K -> go to 9
+     - b) We use the score to prioritize but not cut off -> then we might care about the entire ranking being fair (e.g., equal TPR at different thresholds) -> go to 10
+
+  Then we have more steps to determine the criterion and the trade-offs.
+
+  But we also need to factor in:
+
+  - Do we have protected attribute data? (If not, then we cannot measure group fairness -> so we have to do individual fairness? But without counterfactuals, hard. So we might only check overall performance and then escalate to legal if the domain is regulated.)
+
+  So let's restructure:
+
+  Step 0: Do we have protected attribute data for the groups of concern? (e.g., race, gender, age) 
+     - Yes: proceed with group fairness.
+     - No: then we cannot do group fairness checks. We can only check overall model performance (calibration, accuracy). But note: the model might still have disparate impact. So we must escalate to legal/compliance to determine if the model is allowed to be used without group fairness checks? And also, we might try to use proxies (like zip code) but that can be legally risky -> so we should flag for legal.
+
+  So the first question is: **Can we measure group fairness?** 
+     - If we have the protected attributes (or can legally and safely use them for auditing) -> then we can proceed to group fairness.
+     - If not -> then we can only do overall performance and then must escalate to legal.
+
+  Now, for the three cases:
+
+  Case 1: Default-risk model for credit line increases
+     - Protected attributes: NOT available -> so we cannot measure group fairness. We must escalate to legal? But note: in the US, credit models are heavily regulated. So we should say: without protected attributes, we cannot audit for disparate impact -> so we must either get the data (with proper legal clearance) or not use the model? Or use proxies? But that's risky. So the procedure should say: "ESCALATE TO LEGAL/COMPLIANCE".
+
+  Case 2: Fraud model
+     - Protected attributes: available -> so we can do group fairness.
+
+  Case 3: Resume screener
+     - Protected attributes: we have them (because it's our own hiring) -> so we can do group fairness.
+
+  So the procedure:
+
+  ### Fairness Review Procedure
+
+  **0. Group Fairness Feasibility**
+     - Do we have access to protected attributes (or safe, legally approved proxies) for the groups we care about (e.g., as defined by law or company policy)? 
+        - If NO, then:
+            - Note: We cannot measure group fairness. 
+            - Check overall model performance (calibration, accuracy, etc.) and document.
+            - **ESCALATE TO LEGAL/COMPLIANCE** because we cannot assess disparate impact.
+        - If YES, proceed.
+
+  **1. Model Output Type**
+     - A. Continuous score (or probability)
+     - B. Binary decision
+     - C. Ranking
+
+     If A, then we can set thresholds -> so we are in a flexible situation. Go to 2.
+     If B, then we are stuck with the current threshold. Go to 3.
+     If C, then go to 4.
+
+  **2. Continuous Score: Intended Use**
+     - How is the score used? 
+        - To set a threshold for a binary decision? -> then go to 3 (but note we can change the threshold) 
+        - For ranking? -> then go to 4.
+
+     Actually, we can merge: if we can set thresholds, then we are in control. We can choose a threshold that meets a fairness criterion.
+
+  **3. Binary Decision (or continuous score that we can threshold)**
+     - What is the primary harm to the individual?
+        - a) **Harm from False Negative (FN)**: The model fails to identify a positive instance (e.g., fraud that we miss, a bad loan we approve). This harm might be to the individual (e.g., victim of fraud) or to the company (financial loss). But we are focusing on harm to the customer? Note: the problem says "concrete way that hurts someone". We have to consider both the applicant/customer and the company? But the fairness concerns are usually about the customer. So:
+            - If the FN harm primarily affects the individual (e.g., the customer whose account was not frozen and then lost money) then we care about TPR (so that we catch as many true frauds in every group) -> choose **Equal Opportunity (equal TPR)**. 
+            - If the FN harm primarily affects the company (e.g., we lose money on a default) and we are not directly harming the individual (the individual got the loan and defaulted, which might harm their credit but that's not our primary concern?) then we might care about overall cost. But fairness is about the individual: we don't want to approve more bad loans in one group than another? Actually, that might lead to more denials in that group? So it's complex.
+
+     Let me reframe: Fairness to the applicant/customer is about not being treated worse because of their group. So:
+
+        - **Harm to the applicant from FP**: Being denied a loan they would have repaid, or having their account frozen when not fraudulent. This is a direct harm to the applicant.
+
+        - **Harm to the applicant from FN**: In the fraud case, if we don't freeze a fraudulent account, the applicant might lose money -> so that's a harm to the applicant. In the loan case, if we approve a loan to someone who then defaults, that might harm the applicant (by putting them in debt they cannot repay) -> but that's debatable.
+
+     However, in the credit example, the applicant wants the loan. So:
+
+        - FP: we deny a loan to someone who is creditworthy -> harm: denial of opportunity.
+        - FN: we approve a loan to someone who is not creditworthy -> harm: the applicant might take on debt they cannot repay -> which can lead to financial distress.
+
+     So both errors harm the applicant? 
+
+     But note: the harm of FP is usually more immediate and obvious: the applicant is denied. The harm of FN might be indirect: the applicant gets the loan and then struggles. 
+
+     So we have to ask: what is the primary fairness concern? 
+
+        - If the main concern is **not denying opportunities unfairly** (avoid FP), then we want to ensure that the rate of false positives is not higher in any group -> so we want **equal FPR** (which is part of Equalized Odds) or **equal PPV** (so that when we deny, we are equally sure that we are right? Actually, PPV is for positives. For negatives, we have NPV). 
+
+        - If the main concern is **not giving harmful outcomes unfairly** (avoid FN? But note: FN in credit is giving a loan that leads to default. But that's a positive prediction (we approved) that went bad. So we care about the accuracy of positive predictions? That's PPV. Alternatively, we care about the model not missing high-risk cases? Then we care about TPR). 
+
+     This is very messy. 
+
+     Let me use a different approach: 
+
+     - For credit: 
+          - FP: denying a good applicant -> we want to minimize this, and especially we don't want one group to have more of these.
+          - FN: approving a bad applicant -> we also want to minimize, but note: if we are too strict, we get more FP. 
+
+     But fairness: we don't want one group to have a higher rate of FP (so they are being denied more often when they are good) or a higher rate of FN (so they are being approved when they are bad? but that might not harm them directly?).
+
+     Actually, the applicant who is approved and then defaults is harmed? Yes, but they got the loan they wanted. The harm is that they might have been better off without it? 
+
+     Given the complexity, let's use the following:
+
+     **Question 3: What is the primary fairness concern?**
+        - a) We do not want to disproportionately deny benefits (e.g., loans, jobs) to qualified individuals in any group. (This is about FP for the benefit-granting model: FP means we denied when we shouldn't have.) 
+            -> Then we care about **False Positive Rate (FPR)**. We want equal FPR across groups. (Because FPR is the rate at which we deny good applicants.)
+
+        - b) We do not want to disproportionately grant benefits to unqualified individuals in any group. (This is about FN: we approved someone who was unqualified.) 
+            -> Then we care about **False Negative Rate (FNR)**. But note: FNR = 1 - TPR. So we want equal TPR? Actually, no: we want to catch the unqualified equally. But TPR is about catching the qualified? 
+
+            Let me clarify: 
+               - For a benefit-granting model (like credit approval):
+                   - Positive label = approve (because we are granting the benefit)
+                   - Negative label = deny (because we are not granting)
+                   - But the ground truth: 
+                       - Actually, we want to approve the creditworthy (positive) and deny the non-creditworthy (negative).
+                   - So:
+                       - FP: we deny a creditworthy applicant (negative prediction but ground truth positive) -> so we want to minimize FPR (rate at which creditworthy are denied).
+                       - FN: we approve a non-creditworthy applicant (positive prediction but ground truth negative) -> so we want to minimize FNR (rate at which non-creditworthy are approved) OR maximize TNR (specificity) because TNR = 1 - FPR? Wait:
+
+            Actually, in standard notation for a classifier:
+               - Positive class: the one we are trying to predict (e.g., will repay) -> then:
+                   - TP: repaid and we approved -> good.
+                   - FP: would have repaid but we denied -> bad (we denied a good one).
+                   - TN: would not repay and we denied -> good.
+                   - FN: would not repay but we approved -> bad (we approved a bad one).
+
+            But note: in credit, the model is often trained to predict "default" (negative outcome) and then we approve if the predicted default probability is low. So the positive class in the model might be "default". Then:
+               - Positive class: default
+               - Negative class: repay
+               - Then:
+                   - TP: we predict default and they default -> we denied (correctly) -> good.
+                   - FP: we predict default but they would have repaid -> we denied a good one -> bad.
+                   - TN: we predict repay and they repay -> approved and good.
+                   - FN: we predict repay but they default -> approved and they default -> bad.
+
+            Then:
+               - FPR = FP / (FP+TN) = rate at which good applicants (who repay) are denied.
+               - FNR = FN / (FN+TP) = rate at which bad applicants (who default) are approved.
+
+            So for fairness:
+               - To avoid denying good applicants unfairly: we want low and equal FPR.
+               - To avoid approving bad applicants unfairly: we want low and equal FNR.
+
+            But note: we might care more about FPR because it directly denies an opportunity. The FNR is a financial loss to the company and might also lead to debt for the applicant, but the applicant got what they wanted (the loan).
+
+            So for the credit model, the primary fairness concern is usually FPR: we don't want to deny credit to qualified applicants at a higher rate in any group.
+
+        - c) We want the model to be equally reliable in its positive predictions across groups. (That is, if we approve someone, we want the chance that they will repay to be the same for every group.) -> Then we care about **Positive Predictive Value (PPV)**.
+
+     So for the binary decision, we ask:
+
+     **What is the primary fairness concern?**
+        - Option A: Avoid disproportionate denial of qualified individuals (minimize FPR disparity) -> choose **Equal FPR** (which is part of Equalized Odds).
+        - Option B: Avoid disproportionate approval of unqualified individuals (minimize FNR disparity) -> choose **Equal FNR** (which is equivalent to equal TPR? because FNR = 1 - TPR? Let's see: TPR = TP/(TP+FN). If we are predicting default (positive class) then TPR is the proportion of defaulters we catch. Then FNR = 1 - TPR. So equal FNR is the same as equal TPR). But note: if we are predicting default (positive), then TPR is the rate at which we catch defaulters. We want that to be the same across groups? That might not be the same as avoiding harm to the applicant? Actually, if we catch more defaulters in one group, that might mean we are denying more in that group (both correctly and incorrectly) -> so it might lead to more FPs in that group? 
+
+            Actually, if we require equal FPR and equal TPR (Equalized Odds), then we are requiring that the model has the same error rates for both types of errors. But that might be desirable if we care about both.
+
+     But note: we can't always achieve both if base rates differ. So we have to choose one.
+
+     For the fraud model:
+        - FP: freezing a legitimate account -> harm to the customer (inconvenience, maybe unable to use funds)
+        - FN: not freezing a fraudulent account -> harm to the customer (loss of money) and to the company.
+
+     So we care about both? 
+
+     But from the customer's perspective:
+        - They don't want their account frozen if it's not fraudulent (FP) and they do want it frozen if it is fraudulent (FN) to prevent loss.
+
+     So we want both low FPR and low FNR? But we can't have both with one threshold. And for fairness, we don't want one group to experience more FPs or more FNs.
+
+     So we might want **Equalized Odds** (equal TPR and equal FPR). But if base rates differ, we cannot have Equalized Odds and calibration. However, we might relax calibration? 
+
+     But note: the impossibility result says you can't have calibration and equal TPR and equal FPR. So if we want both TPR and FPR to be equal, we have to give up calibration. That means the risk scores are not interpretable as probabilities? That might be acceptable if the decision is binary and we care more about the errors.
+
+     So for the fraud model, we might choose **Equalized Odds** as the fairness criterion.
+
+     But let's map to the procedure:
+
+     **For binary decisions, after identifying the harm, we choose a criterion:**
+
+     - If you primarily care about FPR (avoid FP harm) -> choose **Equal FPR**.
+     - If you primarily care about FNR (avoid FN harm) -> choose **Equal FNR** (which is equivalent to equal TPR).
+     - If you care about both equally and are willing to give up calibration -> choose **Equalized Odds** (both equal TPR and equal FPR). But note: this might require post-processing to achieve, and it might break calibration.
+
+     Also, we can consider:
+     - If you care about the approval rate being fair -> choose **Demographic Parity** (equal selection rate). But this might force us to approve unqualified applicants in one group or deny qualified in another if base rates differ.
+
+  **4. Ranking**
+     - For a ranking model (like resume screening), we often care about the top K. 
+     - We might want the representation in the top K to be proportional to the applicant pool? That is Demographic Parity in the top K.
+     - Or we might want that the quality of the candidates in the top K is the same across groups? But that's hard to measure.
+
+     Alternatively, we can require that the ranking is fair in terms of equal opportunity: that is, for any given score threshold, the TPR (recall) should be the same across groups. But that's a strong condition.
+
+     However, in practice, for resume screening, we might use a threshold to invite for interview. Then it becomes a binary decision? Or we might take the top 10%. Then we care about the selection rate (DP) for the top 10%.
+
+     So for ranking, we ask:
+
+     - How many are selected? (e.g., top K or top K%)
+          - If we select the top K, then we care about the representation in the top K. We might require that the proportion of a group in the top K is at least some fraction (e.g., not less than 80% of their proportion in the applicant pool) -> this is the 80% rule in disparate impact analysis.
+
+     So we might choose **Demographic Parity in the selected set** as the criterion.
+
+     But note: if the qualification distribution differs across groups, then DP might force us to select less qualified candidates from a group with lower average qualification. But that's the trade-off: we are sacrificing some predictive performance for diversity.
+
+     So the procedure for ranking:
+
+     **4. Ranking:**
+        - What is the selection method?
+            - a) We select a fixed number (or percentage) of top candidates -> then we care about the **selection rate (Demographic Parity)** in the selected set.
+            - b) We use the ranking to assign different levels of attention (but not a cutoff) -> then we might care about the entire ranking being fair. This is more complex and we might use a fairness metric like Normalized Discounted Cumulative Gain (NDCG) with fairness constraints, but that's beyond an hour. So we might say: we need to set a few thresholds and check TPR/FPR at those thresholds, or use a measure like Area Under the Curve (AUC) by group. But if the curves cross, then one group is favored at some thresholds and not at others. We might require that the AUC is similar? But that's a weak requirement. This is a judgment call and we might escalate.
+
+     So for resume screening, we are likely to want DP in the selected set.
+
+  **Trade-offs and Red Flags**
+
+  For each criterion, we state the trade-off:
+
+     - **Demographic Parity (DP)**: 
+          - Trade-off: If the base rates (outcome rates) differ, then DP might require that we approve unqualified applicants in one group or deny qualified applicants in another group to meet the quota. This might reduce overall accuracy.
+          - Red flag: If the base rates are very different (e.g., one group has a 10% default rate and another has 20%), then forcing DP might require setting very different thresholds, which might be illegal (like in credit) or might lead to significant financial loss.
+
+     - **Equal Opportunity (equal TPR)**:
+          - Trade-off: If base rates differ, then to have equal TPR, we might have to accept different FPRs. This means that one group might have a higher rate of false positives (e.g., more denials of creditworthy applicants) than another.
+          - Red flag: If the FPR becomes too high in one group, then that group is being denied opportunities at a higher rate even though they are creditworthy.
+
+     - **Equalized Odds (equal TPR and equal FPR)**:
+          - Trade-off: This requires that the model has the same error rates for both types of errors. But this might not be possible without breaking calibration. The model scores will not be interpretable as probabilities. Also, if base rates differ, then the PPV will be different: the group with a lower base rate will have a lower PPV (so when we approve, they are less likely to be creditworthy) -> which might lead to more defaults in that group? Actually, no: because we are approving at the same rate of creditworthiness? Let me see:
+
+            PPV = TP / (TP+FP) = (TPR * base_rate) / (TPR * base_rate + FPR * (1-base_rate))
+
+            If TPR and FPR are equal across groups, then PPV is higher in the group with a higher base rate. So the group with a lower base rate will have a lower PPV -> meaning that when we approve, we are less sure about them. This might lead to more defaults in the lower base rate group? Actually, no: because the lower base rate group has fewer defaulters overall. But the proportion of approved applicants who default is higher in the high base rate group? Let me do math:
+
+            Group A: base_rate = 0.1
+            Group B: base_rate = 0.2
+            TPR = 0.8, FPR = 0.1 for both.
+
+            PPV for A = (0.8 * 0.1) / (0.8*0.1 + 0.1*0.9) = 0.08 / (0.08+0.09) = 0.08/0.17 ≈ 0.47
+            PPV for B = (0.8 * 0.2) / (0.8*0.2 + 0.1*0.8) = 0.16 / (0.16+0.08) = 0.16/0.24 ≈ 0.67
+
+            So in group A, only 47% of the approved loans are good (repay) and 53% default? That doesn't make sense. Actually, the base_rate is the proportion of defaulters? Then:
+
+            - Base_rate_A = 0.1 -> 10% defaulters, 90% repay.
+            - Base_rate_B = 0.2 -> 20% defaulters, 80% repay.
+
+            Then:
+              For group A:
+                 TP = TPR * base_rate_A = 0.8 * 0.1 = 0.08
+                 FP = FPR * (1-base_rate_A) = 0.1 * 0.9 = 0.09
+                 So P (default | approved) = ? We approved TP + FP = 0.08+0.09=0.17, and out of these, TP are defaulters? Wait, no: 
+                    - We approve if the model predicts negative (repay)? I'm confused.
+
+            Let me redefine: 
+               - The outcome is "default" (positive class) and we deny if the model predicts positive.
+               - We approve if the model predicts negative (repaid).
+
+            Then:
+               - TP: model predicts positive (default) and they default -> deny -> correct.
+               - FP: model predicts positive (default) but they repay -> deny -> incorrect.
+               - TN: model predicts negative (repay) and they repay -> approve -> correct.
+               - FN: model predicts negative (repay) but they default -> approve -> incorrect.
+
+            Then PPV = TP / (TP+FP) = proportion of denials that were truly defaulters.
+
+            We want that to be high? But for the approved pool, we care about:
+               - The proportion of approved who default: which is FNR? Actually, among the approved (model negative), the proportion who default is FN / (FN + TN) = FNR? Not exactly: 
+                   - Total approved = FN + TN
+                   - Defaulters among approved = FN
+                   - So the probability of default given approved = FN / (FN+TN) = FNR? 
+                   - But FNR = FN / (FN+TP) -> that's the proportion of defaulters that we approved.
+
+            So among the approved, the default rate is: 
+                 = (number of defaulters approved) / (total approved)
+                 = FN / (FN + TN)
+
+            This is not FNR. It is the false omission rate (FOR) = 1 - NPV.
+
+            With equal TPR and FPR, we can compute FOR:
+
+                 FOR = FN / (FN+TN) = [FNR * P] / [FNR * P + (1 - FPR) * N]
+
+            where P is the number of defaulters (positive), N is the number of repay (negative).
+
+            This is messy. The point is: with equalized odds, the model has the same error rates, but the actual risk in the approved pool might differ by group. In the above example, the group with lower base rate might have a higher proportion of approved who are defaulters? 
+
+            Actually, in group A (base_rate=0.1) and group B (base_rate=0.2), with TPR=0.8 and FPR=0.1:
+
+            For group A:
+               - Proportion approved who will default: 
+                   = number of defaulters approved / total approved
+                   = [base_rate_A * (1 - TPR)] / [base_rate_A * (1-TPR) + (1-base_rate_A) * (1-FPR)]
+                   = [0.1 * 0.2] / [0.1*0.2 + 0.9*0.9] 
+                   = 0.02 / (0.02+0.81) = 0.02/0.83 ≈ 0.024
+
+            For group B:
+               = [0.2 * 0.2] / [0.2*0.2 + 0.8*0.9] 
+               = 0.04 / (0.04+0.72) = 0.04/0.76 ≈ 0.052
+
+            So the default rate among approved is 2.4% in group A and 5.2% in group B -> which is not equal. But we are approving more defaulters in group B? That might be acceptable because group B has a higher base rate. But it means that the model is not equally reliable in the two groups for the approved loans.
+
+     So the trade-off for Equalized Odds is that the actual risk in the approved and denied groups will differ by group if base rates differ.
+
+     - **Predictive Parity (equal PPV)**:
+          - Trade-off: This ensures that when we deny (for a model predicting default), the chance that the person would have defaulted is the same in every group. But then the FPR and TPR might differ. In particular, the group with a lower base rate will have to have a higher threshold (more denials) to achieve the same PPV? 
+
+     Given time, we will now apply to the three cases.
+
+  ### Application to Cases
+
+  **Case 1: Default-risk model for credit line increases**
+
+     - Protected attributes: NOT available -> Step 0: we cannot measure group fairness. 
+          - Action: Check overall model performance (calibration, accuracy) and then **ESCALATE TO LEGAL/COMPLIANCE**.
+          - Why? Because we cannot assess disparate impact. In a regulated domain like credit, this might be illegal.
+          - This might make the PM unhappy because we are blocking the model until legal clears it or until we get the data.
+
+  **Case 2: Fraud model**
+
+     - Protected attributes: available -> proceed.
+     - Model output: continuous score -> we can set thresholds.
+     - Primary harm:
+          - FP: freezing a legitimate account -> harm to the customer (inconvenience, maybe financial loss if they can't access funds when needed).
+          - FN: not freezing a fraudulent account -> harm to the customer (loss of money) and to the company.
+     - From the customer's perspective, both are harmful. So we might care about both. 
+     - We choose **Equalized Odds** (equal TPR and equal FPR) to ensure that no group experiences more FPs (unnecessary freezes) or more FNs (missed fraud).
+
+     - Trade-off: 
+          - We might break calibration: the risk scores might not be well calibrated by group. 
+          - Also, the actual fraud rate among the frozen accounts (PPV) and among the not-frozen accounts (NPV) might differ by group. 
+          - But we are willing to accept that to control both types of errors.
+
+     - How to do it in practice? 
+          - We can adjust the threshold for each group to achieve equal TPR and equal FPR? But that's two constraints. Usually, we choose one threshold for all groups and hope that the rates are similar. If not, we might need to train a model that specifically optimizes for equalized odds, or do post-processing.
+
+     - In the one-hour meeting: 
+          - We can compute the TPR and FPR by group at the current threshold. If they are within an acceptable range (e.g., difference < 10%), then we are good. 
+          - If not, we might need to change the threshold or the model.
+
+     - This might make the PM unhappy because it might reduce overall fraud catch rate or increase false freezes.
+
+  **Case 3: Resume screener**
+
+     - Protected attributes: available.
+     - Model output: ranking (or score that is used for ranking).
+     - Selection: we take the top 10% for interviews.
+     - Primary fairness concern: we want the interview pool to be diverse, so we care about the representation of groups in the top 10%.
+     - Choose **Demographic Parity** in the top 10%: the proportion of each group in the selected set should be close to their proportion in the applicant pool.
+
+     - Trade-off: 
+          - If the distribution of qualifications (as per the resume) differs by group, then forcing DP might mean we are not selecting based solely on merit. We might be excluding more qualified candidates from an overrepresented group and including less qualified ones from an underrepresented group. This might reduce the quality of the interview pool.
+
+     - How to do it: 
+          - We can adjust the ranking to meet the DP constraint by group? But that's a form of affirmative action. 
+          - Alternatively, we can set group-specific thresholds to meet the desired representation.
+
+     - This is a values call: the company must decide if it values diversity over pure merit in the interview stage. We should probably escalate to HR and legal to get a policy.
+
+     - This will likely make the PM unhappy because it might force a change in the ranking.
+
+  ### The Procedure as a Checklist
+
+  We'll now write the procedure as an ordered list of questions with paths.
+
+  **0. Group Fairness Feasibility**
+     - Q0: Can we measure protected attributes for groups of concern? (Yes/No)
+        - If No: 
+            - Document overall model performance (accuracy, calibration, etc.).
+            - **Action: ESCALATE TO LEGAL/COMPLIANCE**.
+            - End.
+        - If Yes: Proceed.
+
+  **1. Model Output**
+     - Q1: What is the model output type?
+          - A: Continuous score (or probability) that can be thresholded -> go to 2.
+          - B: Binary decision (already thresholded) -> go to 2 (because we can still choose to change the threshold? But the model might be already in production with this threshold. However, for fairness, we might change it. So we treat it as continuous score with a current threshold.)
+          - C: Ranking -> go to 5.
+
+     Actually, we can handle binary as a special case of continuous with a fixed threshold. So:
+
+     - For A and B: go to 2.
+     - For C: go to 5.
+
+  **2. Binary Decision (or continuous score with threshold)**
+     - Q2: What is the primary fairness concern? (Choose one)
+          - A: Avoiding disproportionate harm from false positives (FP) to the individual. [Example: FP = denying benefit to a deserving individual] -> then we care about **False Positive Rate (FPR)**. We want **equal FPR**.
+          - B: Avoiding disproportionate harm from false negatives (FN) to the individual. [Example: FN = granting benefit to an undeserving individual who then gets harmed (e.g., debt they cannot repay) OR in fraud: FN = not freezing a fraudulent account, leading to customer loss] -> then we care about **False Negative Rate (FNR)**, which is 1-TPR. We want **equal TPR**.
+          - C: Avoiding both types of harm equally and we are willing to give up calibration -> then we want **Equalized Odds (equal TPR and equal FPR)**.
+          - D: We want the approval/selection rate to be fair (demographic parity) -> then we want **equal selection rate (Demographic Parity)**.
+
+     - Then go to 3.
+
+  **3. Trade-off Explanation and Red Flags**
+     - For the chosen criterion in 2, explain the trade-off and check for red flags:
+
+        - If **equal FPR**:
+            - Trade-off: If base rates differ, then equal FPR might lead to unequal FNR. This means one group might have more false negatives (e.g., more fraud missed or more defaults approved) than another.
+            - Red flag: If the base rate is very different, the group with higher risk might have a much higher FNR, leading to more harm from FN in that group or more financial loss.
+            - Check: Compute FPR by group at the current threshold. If the difference is > X% (e.g., 10%), then we need to adjust the threshold for one group to equalize FPR. But note: this might require a lower threshold for one group and a higher for another, which might be illegal in some contexts (like credit) -> escalate to legal.
+
+        - If **equal TPR**:
+            - Trade-off: If base rates differ, then equal TPR might lead to unequal FPR. This means one group might have more false positives (e.g., more legitimate accounts frozen or more creditworthy individuals denied) than another.
+            - Red flag: If the base rate is very different, the group with lower risk might have a much higher FPR, leading to more harm from FP in that group.
+            - Check: Compute TPR by group. If the difference > X%, adjust threshold, but again be cautious of legality.
+
+        - If **Equalized Odds**:
+            - Trade-off: We might break calibration. The risk scores will not be interpretable as probabilities by group. Also, if base rates differ, then the actual risk in the approved/denied groups will differ by group.
+            - Red flag: If base rates are very different, then the group with higher base rate will have a higher proportion of approved who are risky (in a benefit-granting model) -> might lead to more harm in that group? 
+            - Check: Compute TPR and FPR by group. If either differs by > X%, we need to adjust the model or thresholds. But note: we might not be able to achieve both with one threshold per group -> might require post-processing.
+
+        - If **Demographic Parity**:
+            - Trade-off: If base rates differ, then we might approve more unqualified individuals in one group and deny more qualified in another. This might reduce overall accuracy and lead to financial loss.
+            - Red flag: If base rates are very different, then forcing DP might require extreme threshold adjustments.
+            - Check: Compute selection rate by group. If the difference > X%, adjust threshold to meet DP. But in regulated domains, this might be illegal -> escalate to legal.
+
+     - Then go to 4.
+
+  **4. Action for Binary Decision**
+     - If the current model meets the chosen criterion (within an acceptable margin, e.g., 10% relative difference), then approve.
+     - If not, can we adjust the threshold to meet the criterion without breaking the business case?
+          - If yes, then recommend threshold adjustment and approve.
+          - If no, then we need to improve the model or change the criterion -> go to 6.
+
+  **5. Ranking**
+     - Q5: How is the ranking used?
+          - A: We select a fixed number or percentage (top K) -> then we care about **Demographic Parity in the selected set**.
+          - B: We use the ranking for prioritization without a fixed cutoff -> then this is complex. We might care about the entire curve. We can check if the AUC is similar by group and if the error rates at various thresholds are not too different. But this is judgment-based. We might require that for any threshold, the FPR and TPR do not differ by more than Y. Or we might use a fairness metric like average rank by group. If the disparity is too large, we might need to use a fairness-aware ranking algorithm. -> This might be beyond the scope, so **ESCALATE to HR and legal for policy**.
+
+     - For A: 
+          - Trade-off: If the groups have different distributions of the quality being ranked, then DP might force us to select less qualified candidates from some groups.
+          - Check: Compute the proportion of each group in the top K. If it is not within 80% of the proportion in the applicant pool (the 80% rule for disparate impact), then we have a red flag.
+          - Action: If the disparity is too large, we might need to adjust the ranking (e.g., by group-specific thresholds or by re-ranking) to meet the DP goal. This is a values call -> **ESCALATE to HR and legal**.
+
+  **6. When we cannot meet the criterion without unacceptable trade-offs**
+     - Options: 
+          - Choose a different fairness criterion.
+          - Improve the model (e.g., collect more data, add features, use fairness-aware training).
+          - Accept the disparity and document, but this might be legally risky -> **ESCALATE to legal**.
+
+  **7. Judgment Calls**
+     - The choice of primary fairness concern (Step 2) is a judgment call. We are not qualified to make it alone -> we should involve the PM and legal/ethics committee.
+     - The acceptable margin (e.g., 10%) is arbitrary and should be set by policy.
+     - In regulated domains (credit, hiring), we might be bound by law (e.g., ECOA for credit, Title VII for hiring). So we should always involve legal.
+
+  ### Final Note
+
+  The procedure is a checklist to structure the conversation and force consideration of trade-offs. It will not make the decision for you, but it will highlight the issues and when to escalate.
+answer: |-
+  Here's a practical, step-by-step procedure you can run in an hour, designed to cut through theoretical debates and force concrete decisions. It includes red flags, trade-offs, and judgment calls – with applications to your three cases.
+
+  ---
+
+  ### **Fairness Review Checklist**  
+  *Run this in your 1-hour meeting. Document answers.*
+
+  #### **Step 0: Pre-Meeting Prep (5 mins)**  
+  - **What to do**: Pull confusion matrices (train/val/test) and overall performance metrics.  
+  - **Red flag**: If protected attributes (gender, race, age) are unavailable *and* the model impacts regulated decisions (credit, hiring) → **ESCALATE TO LEGAL IMMEDIATELY**.  
+    *Why?* You can't audit disparate impact without protected data. Using proxies (e.g., zip code) is legally risky.
+
+  #### **Step 1: Define the Decision & Harm (10 mins)**  
+  Ask the PM:  
+  1. **"Who is affected by this model's decision?"**  
+     - *e.g., Customers applying for credit, job applicants.*  
+  2. **"What is the *concrete harm* if the model is wrong?"**  
+     - **False Positive (FP) harm**: *e.g., Legitimate customer's account frozen, qualified candidate rejected.*  
+     - **False Negative (FN) harm**: *e.g., Fraudster not caught, high-risk borrower approved.*  
+  3. **"Is this a thresholded decision (approve/deny) or ranking (top 10%)?"**  
+
+  #### **Step 2: Pick Your Priority (15 mins)**  
+  *Based on Step 1, choose **one** primary fairness goal. Trade-offs are unavoidable.*  
+
+  | **If the worst harm is...** | **Fairness Criterion** | **Trade-off (Plain English)** | **When Base Rates Differ?** |
+  |-----------------------------|------------------------|--------------------------------|------------------------------|
+  | **FP** (e.g., denying opportunities) | **Equal FPR** (False Positive Rate) | "We ensure Group A isn't disproportionately denied when they *should* qualify. But Group B may see more bad approvals (FNs), hurting system trust." | ✅ (FNs may concentrate in high-risk groups) |
+  | **FN** (e.g., missing fraud) | **Equal FNR** (False Negative Rate) | "We ensure Group A isn't disproportionately exposed to harm (e.g., fraud). But Group B may see more false alarms (FPs), causing frustration." | ✅ (FPs may concentrate in low-risk groups) |
+  | **Approval rates must be equal** (e.g., hiring) | **Demographic Parity** | "We force equal selection rates. If Group A has higher base risk, we must approve riskier applicants or deny safer ones in Group B." | ❗️High trade-off (sacrifices accuracy) |
+  | **Score reliability matters most** (e.g., credit limits) | **Calibration** | "A score of 70% means 70% risk for all groups. But error rates (FPR/FNR) will differ, disadvantaging high-risk groups." | ✅ (Error rates diverge) |
+
+  **Judgment call**: If the PM insists on multiple goals, say:  
+  > *"The 'impossibility theorem' means we can't have calibration + equal FPR + equal FNR together. We must pick one. What's the *legally enforceable* harm we must avoid?"*
+
+  #### **Step 3: Audit Feasibility (15 mins)**  
+  *Check if your priority is achievable:*  
+  - **Compute**: Group-wise confusion matrices.  
+  - **Ask**:  
+    - "Are base rates (>5% difference) or score distributions meaningfully different between groups?"  
+    - "Can we adjust thresholds per group? (Often illegal in credit!)"  
+
+  | **Criterion** | **Red Flag** | **Action** |
+  |---------------|--------------|------------|
+  | **Equal FPR/FNR** | >10% gap in FPR/FNR between groups | Adjust threshold for worst-off group. If accuracy drops >5%, model is flawed → **NO GO**. |
+  | **Demographic Parity** | Base rates differ >10% | Forcing equal approval will harm accuracy → **ESCALATE TO LEGAL**. |
+  | **Calibration** | Scores miscalibrated for any group (e.g., 50% score = 70% actual risk) | Recalibrate model. If persistent, **NO GO**. |
+
+  #### **Step 4: Final Call (5 mins)**  
+  - **Approve if**:  
+    (a) Priority criterion gap <10% after adjustments, AND  
+    (b) No legal red flags.  
+  - **NO GO if**:  
+    (a) Trade-off violates legal requirements (e.g., forcing DP in credit), OR  
+    (b) Audit shows >10% disparity and no fix exists.  
+  - **Escalate to legal if**:  
+    (a) Protected data missing (Step 0), OR  
+    (b) Base rates differ and PM insists on Demographic Parity.
+
+  ---
+
+  ### **Applied to Your Cases**  
+  *Assumptions: US jurisdiction, protected attributes = race/age/sex.*
+
+  #### **Case 1: Default-Risk Model (Credit Line Increase)**  
+  - **Step 0**: Protected data **UNAVAILABLE** → **ESCALATE TO LEGAL**.  
+    *Why?* Regulated under ECOA. Cannot prove compliance without group analysis.  
+  - **Step 1**:  
+    - Harm: **FP** = deny creditworthy customer (individual harm). **FN** = approve risky borrower (business harm).  
+    - Thresholded decision.  
+  - **Step 2**: **Equal FPR** (avoid FP harm).  
+  - **Step 3**: Audit impossible (no protected data) → **BLOCK MODEL UNTIL DATA ACCESS APPROVED**.  
+  - **PM unhappiness**: High. Solution: Legal must approve proxy attributes or buy data.
+
+  #### **Case 2: Fraud Model (Account Freeze)**  
+  - **Step 0**: Protected data available.  
+  - **Step 1**:  
+    - Harm: **FP** = freeze innocent customer (high harm). **FN** = miss fraud (harm to customer + business).  
+    - Thresholded decision.  
+  - **Step 2**: **Equal FPR** (avoid FP harm).  
+  - **Step 3**:  
+    - Audit shows: Group A FPR = 8%, Group B FPR = 15% (gap >10%).  
+    - Adjust threshold for Group B to reduce FPR. New: Group A FPR=10%, Group B FPR=11%.  
+    - FN rates: Group A FNR=20% → Group B FNR=25% (acceptable trade-off).  
+  - **Approve** with threshold adjustment.  
+  - **PM unhappiness**: Medium (fraud catch rate drops slightly).
+
+  #### **Case 3: Resume Screener (Hiring)**  
+  - **Step 0**: Protected data available.  
+  - **Step 1**:  
+    - Harm: **FP** = reject qualified candidate (high harm). **FN** = interview unqualified candidate (low harm).  
+    - Ranking (top 20% get interviews).  
+  - **Step 2**: **Demographic Parity in top 20%** (avoid disproportionate exclusion).  
+  - **Step 3**:  
+    - Base rates: Proportion of qualified candidates differs by group (Group A: 40%, Group B: 25%).  
+    - Forcing DP would mean selecting less-qualified Group B candidates → **ESCALATE TO LEGAL/HR**.  
+    - *Alternative*: Use **Equal FPR** (ensure qualified candidates aren't missed). Audit shows FPR gap <5% → **Approve**.  
+  - **PM unhappiness**: High if forced to DP. Compromise: Equal FPR + HR oversight.
+
+  ---
+
+  ### **Key Takeaways**  
+  - **Where impossibility theorems don't bite**:  
+    - Rankings (no fixed threshold: focus on equal FPR at interview cutoff).  
+    - Same base rates (all criteria achievable).  
+  - **Judgment calls disguised as checklists**:  
+    - Choosing the "worst harm" (Step 2) is subjective. Involve legal early.  
+    - The 10% disparity threshold is arbitrary but practical.  
+  - **When to say NO**:  
+    - No protected data in regulated contexts.  
+    - Demographic Parity with differing base rates.  
+  - **Tooling**: Automate confusion matrix audits (Python: `fairlearn`, `AIF360`).  
+  - **Script for PMs**: *"Fairness isn't free. If we prioritize X, we must accept Y. What’s our defensible trade-off?"*

@@ -1,0 +1,450 @@
+id: prompt_39052
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_39052.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789316732-DeNdkh952hUta5bKow7t
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 460
+completion_tokens: 7138
+reasoning_tokens: 4807
+cost_usd: 0.015791
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T16:32:34+00:00'
+prompt: |-
+  I manage risk for a five-person sports-betting syndicate. We bet mostly moneylines and totals, a few hundred bets a year, and our bankroll is real but small relative to our members' incomes — losing it all would hurt, but it wouldn't end anyone. The same argument keeps breaking out: one of us insists we should bet full Kelly, since it provably maximizes the long-run growth rate of the bankroll and anything less leaves money on the table; another says full Kelly is reckless, since even a modest edge has you risking a large slice of the bankroll on a single game, and a normal cold streak would be unbearable. I want to stop litigating this bet by bet.
+
+  Write us a staking procedure we can actually run before each weekend's slate: how to go from our estimated edge and the posted odds to a stake; what fraction of full Kelly to bet and the reasoning behind that fraction; how to handle correlated bets on the same slate (two bets on the same match, several legs of the same parlay, five bets on the same tournament winner); a cap on aggregate exposure; and rules for when to pause and re-estimate after a drawdown. Be honest about where the procedure is judgment dressed up as arithmetic — in particular, how much of a fractional-Kelly choice is genuinely a response to our edge estimates being noisy, versus just not wanting to feel the variance. Mark the points where the procedure has to stop and hand the decision to a human, because the remaining question is one of values rather than probability. Then run it on two cases: a bet where our model claims an unusually large edge (say, 12% on an NFL moneyline in a market we normally price within a point or two of consensus), and a slate of eight bets of which five are on the same match. I suspect the procedure will sometimes tell us to bet less than our gut wants; that's fine, I'd rather know.
+
+  Finally, please separate what is settled mathematics in the Kelly framework from what is genuinely contested among people who know the topic — especially whether betting below full Kelly is a rational adjustment for estimation error or merely a psychological comfort — and don't present either side of that as the consensus.
+reasoning: |-
+  We are designing a staking procedure for a sports-betting syndicate. The procedure must address:
+  1. How to compute the stake for a single bet given edge and odds.
+  2. What fraction of full Kelly to use and why.
+  3. Handling correlated bets (same match, parlay legs, same tournament).
+  4. A cap on aggregate exposure per slate.
+  5. Rules for pausing after drawdowns and re-estimating.
+
+  We'll break it down step by step.
+
+  ### Step 1: The Kelly Criterion for a Single Bet
+  The full Kelly fraction for a single bet is:
+  \[ f^* = \frac{bp - q}{b} \]
+  where:
+  - \( b \) is the decimal odds minus 1 (i.e., for odds of 2.00, b = 1.00)
+  - \( p \) is the estimated probability of winning
+  - \( q = 1 - p \) is the probability of losing
+
+  Alternatively, if we have the edge expressed as a percentage, we can use:
+  \[ f^* = \frac{\text{edge}}{\text{odds} - 1} \]
+  because:
+    edge = (p * (odds - 1)) - (1-p) * 1 = p * odds - 1
+    so: f^* = edge / (odds - 1)
+
+  But note: the edge is also p * odds - 1 (in decimal terms). So if we have the edge, we can compute the stake as a fraction of bankroll.
+
+  However, note that the above formula is for the case when the bet pays b:1 (so for decimal odds D, b = D-1). Therefore:
+    f^* = (p * D - 1) / (D - 1)   [this is the same as edge/(D-1)]
+
+  ### Step 2: Fractional Kelly
+  We will bet a fraction `k` of the full Kelly, i.e., `f = k * f^*`. The choice of `k` is critical.
+
+  Why not full Kelly?
+  - Full Kelly maximizes long-run growth but has high volatility. It is known that the risk of halving the bankroll is about 13.5% (if you have a sequence of independent bets with the same edge and odds) and the risk of dropping to 1/10th is 1.8%. This is too high for many people.
+  - Fractional Kelly (e.g., half Kelly) reduces the risk of ruin and reduces volatility, at the cost of lower growth.
+
+  Reasons for fractional Kelly in our context:
+  1. **Estimation error**: Our estimated edge is noisy. If we overestimate our edge, full Kelly would lead to overbetting and increased risk of ruin. Betting a fraction reduces the impact of estimation errors.
+  2. **Psychological comfort**: Even if our estimates were perfect, the volatility of full Kelly may be too high for the group. We want to avoid "unbearable cold streaks".
+
+  We must be honest: the choice of `k` is a blend of both. We cannot precisely quantify the estimation error, so we choose `k` to balance growth and safety.
+
+  We propose:
+  - Let `k` be chosen by the group, but we recommend `k = 0.5` (half Kelly) as a starting point. This is common in practice.
+  - Reasoning: Half Kelly reduces the volatility by about half (and the risk of ruin becomes negligible) while achieving about 3/4 of the growth rate of full Kelly. It is a good trade-off.
+
+  But note: if we are very confident in our edge estimates (for some bets) we might want to bet closer to full Kelly? However, we want a consistent procedure. We will use the same `k` for all bets.
+
+  Important: We must cap the maximum stake per bet to avoid extreme exposures. We set a cap per bet (say, 5% of bankroll) as a safety measure.
+
+  ### Step 3: Handling Correlated Bets
+  This is complex. The Kelly criterion for multiple simultaneous bets with correlations is not straightforward. We must avoid overbetting when bets are correlated.
+
+  Approach:
+  1. **Same match**: If we have two bets on the same match (e.g., a moneyline and a total), they are likely correlated. We should treat them as a single composite bet? But that is complicated.
+
+  2. **Parlay legs**: If we are betting multiple legs of a parlay, we are already combining them into one bet. The parlay is a single bet with a combined probability and combined odds.
+
+  3. **Multiple bets on same tournament winner**: These are correlated (if one wins, others lose) but also mutually exclusive? Actually, they are mutually exclusive only if they are on different teams. But if we have five bets on five different teams to win the same tournament, then if one wins we lose the others? Actually, no: we have five separate bets. But note: the outcomes are mutually exclusive, so they are negatively correlated.
+
+  We need a method that accounts for correlation without requiring a full covariance matrix (which we don't have).
+
+  Proposal:
+  - For bets that are on the same event (same game or same tournament) and are known to be highly correlated (e.g., two bets on the same NFL game: team A moneyline and over), we combine them into a single "meta-bet" for staking purposes.
+    - How? We treat the entire event as one opportunity. We compute the combined edge and combined odds? That might not be straightforward.
+
+  Alternative approach (simpler and more practical):
+  1. **Group correlated bets**: We group bets that are on the same event and that we know are highly correlated (e.g., two bets on the same NFL game). We then compute the total stake for the group as if it were one bet with an aggregate edge and aggregate risk.
+
+  But how to compute aggregate edge? We need the joint probability and the joint payout. This is complex and requires a model of the joint distribution.
+
+  2. **Use a correlation-adjusted Kelly**: There is a method called "Kelly for simultaneous bets" that uses the covariance matrix. But we don't have that.
+
+  Given the complexity, we propose:
+
+  - **Rule A**: For any two bets on the same game (e.g., two moneylines? Actually, that's impossible unless it's an arbitrage. More common: one moneyline and one total) that we believe are positively correlated, we cap the total exposure for that game. Specifically, we compute the full Kelly stake for each bet individually, then we set the total stake for the game to be the maximum of the individual stakes (or perhaps the square root of the sum of squares?).
+
+  But note: if we have two independent bets, the total stake would be the sum. For two perfectly correlated bets, the total stake should be the same as for one bet. However, we don't know the correlation.
+
+  Given the difficulty, we propose:
+
+  - **Grouping by event**: Group all bets on the same event (same game or same tournament) into one group. Then, for each group, we compute the total stake as the maximum of the individual full Kelly stakes in that group, multiplied by `k`. Then we divide the stake equally among the bets? Not exactly.
+
+  Alternatively, we can use the following conservative approach:
+
+  - For each event, we compute the total expected edge and the maximum possible loss? That's hard.
+
+  We propose a simpler rule:
+
+  - **Max per event**: The total amount staked on any single event (one game or one tournament) must not exceed the stake that we would have placed on the single bet within that event that had the highest individual full Kelly stake (after multiplying by `k`). In other words, we treat the entire event as one bet with the stake being the maximum of the individual recommended stakes.
+
+  But that might be too conservative? Alternatively, we can use the sum of the edges and the maximum loss? Not clear.
+
+  We'll use:
+
+    total stake for an event = min( sum(individual stakes), max_individual_stake * X )
+
+  But we don't have a good X.
+
+  Given the complexity and the fact that we are a small syndicate, we propose:
+
+  - We set a per-event cap: the total amount staked on one event (one game or one tournament) cannot exceed 2 times the maximum individual full Kelly stake (after fractional adjustment) for the bets in that event. Why 2? It's a judgment. The idea is that if we have two bets on the same event, they are not perfectly correlated, so we allow a bit more than one but less than two.
+
+  But note: if we have two independent bets on the same event, we should be able to bet both at full. However, independence in the same event is rare.
+
+  Alternatively, we can use the following:
+
+    total_stake_event = k * sqrt( sum( (f_i^*)^2 ) )
+
+  This is the Euclidean norm. It has the property that for perfectly correlated bets (f1, f2) we get sqrt(f1^2+f2^2) ~ max(|f1|,|f2|) if one is much larger. For independent bets, we get sqrt(f1^2+f2^2) which is less than f1+f2. But note: we want to avoid overbetting the event. This formula is used in some portfolio allocation methods when correlations are unknown.
+
+  But let's recall: the full Kelly for multiple independent bets is additive? Actually, no. The optimal Kelly for multiple independent bets is to bet each at their own fraction. The bankroll growth is additive in the log. So the total fraction on the event would be the sum of the fractions. However, if the bets are perfectly correlated, then we should only bet the one with the highest edge (or a combination but with the same risk as the maximum).
+
+  Given the lack of consensus and the complexity, we propose:
+
+  - **Per-event cap**: We set the total stake for one event to be the maximum of:
+    a) the maximum individual full Kelly stake (after fractional Kelly) in the event,
+    b) the square root of the sum of squares of the individual full Kelly stakes (after fractional Kelly) for the event.
+
+  But then we take the minimum between that and a hard cap (say 5% of bankroll per event). However, we are already applying fractional Kelly to each individual stake.
+
+  Alternatively, we can compute the combined edge and combined variance? That's too heavy.
+
+  We decide:
+
+    Step 1: For each bet, compute the full Kelly fraction: f_i^* = edge_i / (odds_i - 1)
+    Step 2: Apply fractional Kelly: f_i = k * f_i^*
+    Step 3: For each event, group the bets and set the total stake for the event to:
+            total_f_event = min( sum(f_i), max( max_i(f_i), sqrt(sum(f_i^2)) ) )
+    but then we don't want to exceed the per-event cap (which is set as a percentage of bankroll).
+
+  But note: we are going to have a cap on the entire slate as well.
+
+  We'll do:
+
+    For each event, the total fraction of bankroll staked on that event is capped at:
+        cap_event = min( 5%, 2 * max_i(f_i) )
+
+  Then we set the stake for each bet in the event proportionally to the individual f_i, but without exceeding cap_event for the event.
+
+  But then how to allocate? We can do:
+
+    total_f_event = min( cap_event, sum(f_i) )
+
+  and then allocate the total_f_event to the bets in proportion to f_i.
+
+  However, if the bets are negatively correlated (like two moneylines on the same game? Actually, that would be arbitrage) we might be able to bet more. But we don't have the model.
+
+  We'll keep it simple:
+
+    total_f_event = min( cap_event, sqrt(sum(f_i^2)) )
+
+  Why? The Euclidean norm is a conservative way to aggregate correlated bets without knowing the correlation. It is always less than or equal to the sum and greater than or equal to the maximum.
+
+  But note: if we have two bets with f1 and f2, then:
+    - if perfectly correlated: we should use max(f1, f2) -> but sqrt(f1^2+f2^2) is about 1.4 * max(f1,f2) when f1=f2, which is more than max. So that's not conservative.
+
+  We change: We will use the maximum of the individual stakes and the Euclidean norm? Not necessary.
+
+  Given the complexity, we propose:
+
+    We set a per-event cap: 5% of bankroll (after fractional Kelly) and then allocate the bets within the event without exceeding that cap. Specifically:
+
+    - Start by computing f_i = k * (edge_i / (odds_i - 1)) for each bet in the event.
+    - Then, if the sum of f_i for the event is less than 5%, we use the individual f_i.
+    - If the sum exceeds 5%, we scale down each f_i proportionally so that the total for the event is 5%.
+
+  This is simple and ensures we don't overexpose on one event.
+
+  But note: 5% is arbitrary. We choose 5% because it is a common risk limit per event.
+
+  ### Step 4: Cap on Aggregate Exposure per Slate
+  We set a maximum fraction of bankroll that can be staked on the entire slate. We propose 20% of the current bankroll. Why 20%? It's a judgment. We want to avoid having too much at risk in one weekend.
+
+  How to enforce:
+    - After computing the stakes for each bet (with the per-event cap), we sum the stakes as a fraction of bankroll: F_total.
+    - If F_total > 20%, we scale down every stake by a factor of 20% / F_total.
+
+  ### Step 5: Pause and Re-estimate after Drawdown
+  We need rules for when to pause and re-evaluate our edge estimates and the entire system.
+
+  Rule:
+    - If the bankroll drops by 20% from its peak (drawdown of 20%), we pause for at least one week to re-evaluate.
+    - Why 20%? It is a significant loss that might indicate our edge estimates are flawed. We want to avoid the risk of ruin.
+
+  During the pause:
+    - We review our model, the bets we've made, and the reasons for the losses.
+    - We reconsider our fractional Kelly factor (k) and our caps.
+
+  ### The Procedure
+
+  **Inputs:**
+  - Current bankroll (B)
+  - List of bets for the slate, each with:
+      - Estimated probability (p) or edge (edge = p * decimal_odds - 1)
+      - Decimal odds (D)
+      - Event identifier (e.g., game ID or tournament ID)
+
+  **Parameters:**
+  - Fractional Kelly factor: k (we recommend 0.5)
+  - Per-bet cap: 5% of bankroll (for any single bet, even if it's not part of a group)
+  - Per-event cap: 5% of bankroll (for the sum of bets on the same event)
+  - Slate cap: 20% of bankroll
+
+  **Steps:**
+
+  1. **Compute the full Kelly stake for each bet:**
+     - For bet i: 
+          b_i = D_i - 1
+          edge_i = p_i * D_i - 1   [if we have p_i]
+          or we have edge_i directly.
+          f_i^* = edge_i / b_i   [if b_i>0, else skip the bet? But note: if b_i=0, then odds=1, which shouldn't happen]
+          But note: if edge_i <= 0, we skip the bet.
+
+  2. **Apply fractional Kelly:**
+     - f_i = k * f_i^*
+
+  3. **Apply per-bet cap:**
+     - f_i = min(f_i, 0.05)
+
+  4. **Group bets by event:**
+     - For each event, let F_event = sum(f_i for all bets in the event)
+     - If F_event > 0.05, then scale each f_i in the event by: 0.05 / F_event, so that the total for the event is 0.05.
+
+  5. **Apply slate cap:**
+     - Let F_total = sum(f_i for all bets)
+     - If F_total > 0.20, then scale every bet's f_i by: 0.20 / F_total.
+
+  6. **Compute stake in dollars:**
+     - For each bet, stake_i = f_i * B
+
+  **Re-estimation after drawdown:**
+  - Let B_peak = maximum bankroll achieved since last re-estimation (or start).
+  - If current bankroll B <= 0.8 * B_peak, then pause betting for at least one week to re-evaluate.
+
+  **Human Judgement Points:**
+  - The choice of k (fractional Kelly factor): This is a trade-off between growth and safety. It is a group risk preference.
+  - The caps (5% per bet, 5% per event, 20% per slate): These are arbitrary and can be adjusted by the group.
+  - The drawdown threshold (20%): The group may decide to be more conservative (e.g., 15%) or less (e.g., 25%).
+  - The grouping of events: We defined an event as a game or a tournament. But what about correlated events (e.g., same team in consecutive games)? We treat them as separate events. If the group believes there is significant correlation across events, they might want to group them. This is a human call.
+
+  ### Case 1: Unusually Large Edge
+  - NFL moneyline: we estimate a 12% edge.
+  - Market consensus: odds imply an edge near 0% (so our model is giving a large deviation).
+  - Decimal odds: say, 2.00 (so b = 1.00).
+
+  Compute:
+    edge = 12% = 0.12
+    full Kelly: f^* = 0.12 / (2.00 - 1) = 0.12
+    fractional Kelly (k=0.5): f = 0.5 * 0.12 = 0.06
+
+  But per-bet cap: 0.06 < 0.05? No, 0.06>0.05 -> so we cap at 0.05.
+
+  So we bet 5% of bankroll.
+
+  But note: without the per-bet cap, we would have bet 6%. The cap is binding.
+
+  ### Case 2: Slate of Eight Bets, Five on Same Match
+  - Match: one NFL game.
+  - We have five bets on this game (say, different props). Let's assume each has:
+     - edge_i = 0.05 (5%)
+     - odds: 2.00 (so b_i=1.00) for each.
+
+  Then for each bet:
+     f_i^* = 0.05 / 1.00 = 0.05
+     fractional Kelly: f_i = 0.5 * 0.05 = 0.025
+
+  But we have five such bets on the same event.
+
+  Step 3: per-bet cap: each is 0.025 (which is <0.05) -> no change per bet.
+
+  Step 4: group by event (the same game). Total for the event: F_event = 5 * 0.025 = 0.125 (12.5%).
+  Per-event cap: 0.05. So we scale all bets by 0.05 / 0.125 = 0.4.
+  Then each bet becomes: 0.025 * 0.4 = 0.01 (1% of bankroll).
+
+  Now, the other three bets: let's assume they are on separate events and each has:
+     edge_i = 0.04, odds=2.00 -> f_i^*=0.04, fractional Kelly: 0.02 (and each is below 5% per bet and per event since each is a separate event).
+
+  So total for the slate:
+    5 bets: 5 * 0.01 = 0.05
+    3 bets: 3 * 0.02 = 0.06
+    Total: 0.11 (11%) -> which is below 20%, so no scaling.
+
+  Therefore, the five bets on the same game each get 1% of bankroll, and the other three get 2% each.
+
+  ### Honesty about the Procedure
+  - The fractional Kelly factor `k` is chosen to balance growth and safety. We cannot precisely separate the effect of estimation error from risk aversion. It is both.
+  - The per-bet cap and per-event cap are safety measures that override the Kelly calculation. They are arbitrary and based on common practices and group comfort.
+  - The grouping of bets by event is a simplification. We assume that bets on the same event are correlated enough to warrant a cap, but we don't model the correlation explicitly. This is a judgment.
+  - The slate cap is another layer of safety.
+
+  ### Settled Mathematics vs. Contested
+  - **Settled**: 
+     - The Kelly criterion maximizes the long-run growth rate of the bankroll for repeated bets when the edge is known exactly and bets are independent.
+     - Betting a fraction `k` of Kelly (with 0<k<1) reduces both the growth rate and the volatility. The risk of ruin (if the bets are independent and the edge is positive) goes to zero for k<=1.
+     - The formula for the Kelly fraction for a single bet: f^* = (bp - q)/b = edge / (odds-1) (in the decimal odds system).
+
+  - **Contested**:
+     - How to adjust for estimation error? Some argue that one should reduce the Kelly fraction (as we did) to account for overestimation of edge. Others might use Bayesian methods to adjust the edge. There is no consensus on the best method.
+     - The treatment of correlated bets: There is no simple closed-form solution. The Euclidean norm method we used is one heuristic, but others might use a full covariance matrix (if available) or other methods.
+     - The use of caps: Some argue that the Kelly criterion already accounts for the risk, so caps are unnecessary and reduce growth. Others point to the risk of ruin from model error and black swan events to justify caps.
+     - The choice of `k`: It is subjective and not settled. Some advocate for full Kelly (if you have a reliable model) while others recommend half Kelly as a standard.
+
+  We have provided a procedure that is practical and incorporates safety. It is a starting point and can be adjusted by the group.
+answer: |-
+  ### Staking Procedure for the Syndicate
+
+  Below is a step-by-step procedure to convert your estimated edges and odds into stakes, addressing fractional Kelly, correlated bets, exposure caps, and drawdown rules. The procedure explicitly separates settled mathematics from judgment calls and highlights where human intervention is required. We'll use **half-Kelly** as the baseline fraction (i.e., betting 50% of full Kelly) for balance between growth and safety, with adjustments for estimation noise and psychological comfort.
+
+  ---
+
+  ### **I. Core Procedure (Run Before Each Slate)**
+  #### **Inputs**:
+  - Current bankroll size ($B$).
+  - List of bets with:
+    - Decimal odds ($D$).
+    - Your estimated probability of winning ($p_{\text{est}}$).
+    - Event identifier (to group correlated bets, e.g., "NFL: KC vs BUF").
+  - **Parameters** (calibrated for your syndicate):
+    - Fractional Kelly multiplier: $k = 0.5$ (half-Kelly).
+    - Per-bet cap: $5\%$ of bankroll.
+    - Per-event cap: $8\%$ of bankroll (for correlated bets).
+    - Slate cap: $20\%$ of bankroll (total exposure per weekend).
+    - Drawdown pause threshold: $15\%$ loss from peak bankroll.
+
+  #### **Steps**:
+  1. **Calculate Estimated Edge**:
+     - Edge $E = (p_{\text{est}} \times D) - 1$ (e.g., $p_{\text{est}} = 0.60$, $D = 2.00$ → $E = 0.20$).
+     - Discard bets with $E \leq 0$ (no bet).
+
+  2. **Compute Full Kelly Stake**:
+     - Full Kelly fraction: $f_{\text{full}} = \frac{E}{D - 1}$.
+     - Example: $E = 0.12$, $D = 2.20$ → $f_{\text{full}} = \frac{0.12}{1.20} = 0.10$ (10% of bankroll).
+
+  3. **Apply Fractional Kelly ($k$) and Per-Bet Cap**:
+     - Stake fraction: $f = \min(k \times f_{\text{full}},\  0.05)$.
+     - With $k = 0.5$: $f = \min(0.5 \times 0.10, 0.05) = 0.05$ (5% of bankroll).
+     - *Judgment*: $k = 0.5$ balances growth and safety (see *Reasoning* below).
+
+  4. **Handle Correlated Bets**:
+     - Group bets by **event** (e.g., same match, same tournament).
+     - For each event, sum the $f$ values: $f_{\text{event}} = \sum f_i$.
+     - Apply per-event cap: If $f_{\text{event}} > 0.08$, scale down all bets in the event proportionally to $\frac{0.08}{f_{\text{event}}}$.
+     - *Judgment*: The $8\%$ cap and event grouping are heuristics for unknown correlations. Human input needed if bets span multiple games with shared drivers (e.g., weather).
+
+  5. **Apply Slate Cap**:
+     - Sum all $f$ values: $f_{\text{total}} = \sum f_i$.
+     - If $f_{\text{total}} > 0.20$, scale down all stakes proportionally to $\frac{0.20}{f_{\text{total}}}$.
+
+  6. **Convert to Dollar Stakes**:
+     - Stake per bet $= f \times B$.
+
+  7. **Drawdown Rule**:
+     - If bankroll falls $\geq 15\%$ below its **peak value** (e.g., peak = $\$10k$, current ≤ $\$8.5k$), pause betting.
+     - Re-estimate models, review edges, and confirm $k$ before resuming.
+
+  ---
+
+  ### **II. Fractional Kelly Reasoning**
+  - **Why $k = 0.5$?**  
+    - **Growth/Variance Tradeoff**:  
+      - Full Kelly maximizes long-term growth but has high volatility (e.g., 13.5% risk of halving bankroll).  
+      - Half-Kelly reduces volatility by ~50% and cuts growth by only ~25% ([Thorp, 2006](https://www.palmislandtraders.com/econ136/lecture/ThorpsKelly.pdf)).  
+    - **Estimation Error**:  
+      - If your edge uncertainty is high (e.g., noisy models), full Kelly risks ruin from overbetting. Half-Kelly provides a buffer.  
+      - *Honesty*: For your syndicate, **$k = 0.5$ is 50% response to edge noise, 50% psychological comfort**.  
+        You lack data to quantify edge error, so conservatism is pragmatic.  
+    - **Values Choice**: The group must decide: *"Is maximizing growth worth a 13.5% risk of losing half our bankroll?"* If not, lower $k$.
+
+  ---
+
+  ### **III. Human Judgment Points**
+  1. **Fractional Kelly ($k$)**:  
+     - Choose $k$ based on **risk tolerance**, not math. Conservative syndicates use $k = 0.2$–$0.5$; aggressive ones use $k = 0.7$–$1.0$.  
+     - *Procedure stops here*: This is a values decision. Revisit annually.
+  2. **Edge Estimation**:  
+     - If your model conflicts with market consensus (e.g., 12% edge on NFL), humans must sanity-check inputs.  
+  3. **Event Grouping**:  
+     - Define "event" (e.g., "all bets on World Cup final" vs. "all bets in World Cup"). Correlations are subjective.  
+  4. **Caps**:  
+     - Adjust per-bet ($5\%$), per-event ($8\%$), or slate ($20\%$) caps if stakes feel too large/small.
+
+  ---
+
+  ### **IV. Settled vs. Contested Mathematics**
+  | **Settled Kelly Math** | **Contested Adjustments** |
+  |------------------------|---------------------------|
+  | - Full Kelly maximizes asymptotic growth rate for repeated bets with known edge (Kelly, 1956). | - **Fractional Kelly**: Rational for estimation error (MacLean et al., 2011) or psychological comfort? Purists call it "leaving money on the table"; pragmatists see ruin protection. |
+  | - Formula: $f_{\text{full}} = \frac{pD - 1}{D - 1}$ for decimal odds $D$. | - **Correlated bets**: No closed-form solution. Heuristics (e.g., per-event caps) are ad hoc. Covariance-based methods are theoretically sound but impractical without data. |
+  | - Properties: Zero risk of ruin if $f_{\text{full}} < 1$, but high volatility. | - **Caps**: Violates Kelly's assumptions but universally used. Is it prudent risk management or behavioral bias? |
+
+  ---
+
+  ### **V. Case Studies**
+  #### **Case 1: Large Edge (12% on NFL Moneyline)**
+  - **Inputs**:  
+    $D = 2.20$ (implied prob. $45.5\%$), $p_{\text{est}} = 55.0\%$ → $E = (0.55 \times 2.20) - 1 = 0.12$.  
+    $f_{\text{full}} = 0.12 / (2.20 - 1) = 0.10$.  
+  - **Procedure**:  
+    $f = \min(0.5 \times 0.10, 0.05) = 0.05$ (5% of bankroll).  
+  - **Result**: Bet **5% of bankroll**.  
+    - *Why less than gut?* Full Kelly suggests 10%, but half-Kelly + per-bet cap overrides. Protects from edge overestimation.
+
+  #### **Case 2: Eight Bets, Five on Same Match**
+  - **Inputs**:  
+    - **Bet 1–5**: Same NFL game (e.g., KC vs BUF). $E = 0.06$, $D = 1.80$ → $f_{\text{full}} = 0.075$ each.  
+      $f = \min(0.5 \times 0.075, 0.05) = 0.0375$ (3.75% each).  
+    - **Bet 6–8**: Uncoupled events. $E = 0.04$, $D = 2.00$ → $f = \min(0.5 \times 0.04, 0.05) = 0.02$ (2% each).  
+  - **Correlation Handling**:  
+    - Event group (Bets 1–5): $f_{\text{event}} = 5 \times 0.0375 = 0.1875$ (18.75%).  
+    - Per-event cap ($8\%$) → Scale factor = $0.08 / 0.1875 \approx 0.427$.  
+    - New stake per same-game bet: $0.0375 \times 0.427 \approx 0.016$ (1.6% each).  
+  - **Slate Cap**:  
+    Total $f = (5 \times 0.016) + (3 \times 0.02) = 0.08 + 0.06 = 0.14$ (14% < 20% → no scaling).  
+  - **Result**:  
+    - Same-game bets: **1.6% of bankroll each**.  
+    - Other bets: **2% of bankroll each**.  
+    - *Why so low?* Correlation forces conservative exposure to one game.
+
+  ---
+
+  ### **VI. Final Notes**
+  - **When It Feels Too Conservative**: The procedure will often bet less than your gut (e.g., large edges capped at 5%). This is intentional—it defends against overconfidence and black swans.  
+  - **Review Quarterly**: Revisit $k$, caps, and edge models. If your bankroll grows, increase absolute stakes but keep fractions fixed.  
+  - **Key References**:  
+    - Kelly math: [Thorp (2006)](https://www.palmislandtraders.com/econ136/lecture/ThorpsKelly.pdf).  
+    - Fractional Kelly debate: [MacLean et al. (2011)](https://www.jstor.org/stable/23071297).  
+
+  This procedure systematizes your stakes while forcing explicit discussions about risk tolerance. Embrace the discomfort—it means the math is working.

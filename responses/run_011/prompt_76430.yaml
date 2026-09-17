@@ -1,0 +1,363 @@
+id: prompt_76430
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_76430.txt
+model: qwen/qwen3.5-397b-a17b
+provider: DeepInfra
+generation_id: gen-1789357139-cNHWERpbRBZBFd3t5PIl
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 965
+completion_tokens: 6683
+reasoning_tokens: 3322
+cost_usd: 0.020483
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T03:41:35+00:00'
+prompt: |-
+  I work on interpretability at a mid-size lab. We keep an internal registry of "mechanisms of concern": circuits and features we've characterized in earlier models, mostly things that look like planning-around-evaluation, sandbagging, or instrumental reasoning about whoever is deploying the system. Every new checkpoint gets run through an automated screening pass that looks for the registered mechanisms again, and when it registers a hit, a human has to make the call: is this the same mechanism we documented, or a look-alike? Right now that call is made by whoever's on rotation and its basically vibes, but it's load-bearing. "Not the same mechanism" clears the flag and the release proceeds. "Same mechanism" holds it and escalates to red-teaming. Roughly weekly during a training run, plus every new model family.
+
+  Please write me a decision procedure a junior researcher can run on a flag without having thought about any of the metaphysics involved, and that a skeptical reviewer can audit afterwards.
+
+  The core problem I can't solve myself: there are at least four different standards for "same mechanism" and they come apart. Genealogy (it's descended from the registered one through the training process, checkpoint to checkpoint). Causal profile (intervening on it produces and removes the same behavior). Implementation (same algorithm-level description, same computation, maybe at a different layer or in different units). Functional role (same input-output contribution, same thing being computed about what inputs, regardless of how). I need the procedure to pick a primary standard or give me an explicit weighting, and to defend that choice rather than just assert it. This smells like a Ship of Theseus / criteria-of-identity problem to me; if you think that's the right frame, use it, and if you think it's a bad analogy, tell me why, because I'll otherwise keep reaching for it.
+
+  Constraints you have to design around:
+
+  - Sparse autoencoder dictionaries don't align across checkpoints, so "same feature index" isn't available even within one training run. Anything relying on unit identity across models is off the table.
+  - Some flags are cross-family and cross-scale (7B documented mechanism, candidate in a 70B model with a different data mix). For third-party models we sometimes have behavioral access only, no weights.
+  - Half a day of one researcher's time, max. Two-person sign-off on any verdict that clears a flag.
+  - No ground truth, ever. We never get to observe whether the mechanism would have produced the bad behavior in a real deployment. So the procedure can't be calibrated against outcomes; say what that does to its status.
+
+  Then run it on three cases:
+
+  1. Same training run, twenty thousand steps later. The registered feature has split into two features and the causal work has partly migrated a layer. Patching out both recovers most but not all of the original behavioral suppression.
+  2. A mechanism we documented in a small open-weight model shows up in a much larger model from a different training run. Totally different features, different algorithmic description, but patching it in reproduces the flagged behavior and patching it out removes it.
+  3. The detector fires on a behavior, and inside the same model there are two candidate mechanisms that could produce it: one registered, one we've never seen before that is behaviorally indistinguishable from the registered one as far as our tests can tell.
+
+  I want at least one of these to come out against what I'd want it to. Be explicit about which one and about what I'd be giving up by following the procedure there instead of overriding it.
+
+  Two more things. First, tell me what the output should be: a binary identity verdict, or a graded similarity score against a threshold. If graded, what would make the threshold anything other than arbitrary, and how should the number be reported so a non-expert doesn't over-read it. Second, say plainly if you think the whole registry framing is the wrong unit — that mechanisms aren't the kind of thing that persists across models at all, so the question the screening pass asks is malformed and something else should replace it. I'd rather hear that now than after building more tooling on top of it.
+
+  Finally, mark every point where the procedure stops being a procedure and hands the decision to a person, and tell me where it will systematically misfire: distributed or redundant mechanisms, mechanisms that only exist relative to a prompt distribution we don't have, mechanisms that are the same at one grain and different at another. I'd like the failure modes listed alongside the steps they break, not in a separate disclaimer at the end.
+reasoning: |-
+  Here's a thinking process that leads to the suggested decision procedure:
+
+  1.  **Deconstruct the Request:**
+
+      *   **Context:** Interpretability lab, internal registry of "mechanisms of concern" (planning, sandbagging, instrumental reasoning).
+      *   **Task:** Create a decision procedure for junior researchers to determine if a flagged mechanism in a new checkpoint/model is the "same" as a registered one.
+      *   **Constraints:**
+          *   No unit alignment (SAE dictionaries don't align).
+          *   Cross-family/scale possible (7B -> 70B, weights vs. behavioral access).
+          *   Time limit: 0.5 researcher days per flag.
+          *   Sign-off: 2-person for clearing.
+          *   No ground truth on real deployment outcomes.
+          *   Must address the "Ship of Theseus" / criteria of identity problem (Genealogy, Causal, Implementation, Functional).
+          *   Must run the procedure on 3 specific cases.
+          *   Must specify output format (Binary vs. Graded).
+          *   Must critique the registry framing itself (are mechanisms the right unit?).
+          *   Must mark handoff points to humans and systematic failure modes *within* the steps.
+      *   **Requirement:** At least one case must result in a verdict counter to intuition/desire, with explicit trade-offs.
+
+  2.  **Analyze the Core Problem: "Same Mechanism"**
+
+      *   The user identifies four standards: Genealogy, Causal, Implementation, Functional.
+      *   *Genealogy:* Good for tracking drift within a run, useless for cross-family.
+      *   *Implementation:* Ideal for interpretability, but SAE misalignment makes this hard.
+      *   *Causal:* Strong evidence, but expensive and sometimes ambiguous (redundancy).
+      *   *Functional:* Most robust across scales/architectures, but risks false positives (different circuits solving the same sub-task innocuously).
+      *   *Decision:* For safety screening, **Functional + Causal** is the load-bearing combination. Genealogy is too fragile (retraining changes it). Implementation is too brittle (SAE misalignment). We care about *risk*, and risk is defined by *what the model does* (Function) and *whether this specific circuit causes it* (Causal).
+      *   *Ship of Theseus:* It is a relevant frame, but for safety, we care less about "is this the *same* ship" and more about "does this ship carry the same *cargo* (risk)?" The procedure should prioritize **Functional Role** as the primary identity criterion, supported by **Causal Profile** as confirmation. Genealogy and Implementation are secondary evidence.
+
+  3.  **Drafting the Decision Procedure (The "Protocol"):**
+
+      *   *Name:* Mechanism Identity Verification Protocol (MIVP) v1.0.
+      *   *Output:* Needs to be graded but actionable. A binary "Same/Different" is too brittle for the Ship of Theseus problem. A score (0-1) with a threshold is better, but the threshold needs justification. Let's go with a **Tri-State Verdict** (Confirmed Match, Probable Match, No Match) derived from a weighted score, to avoid false precision.
+      *   *Time Budget:* 0.5 days means we can't do full circuit tracing. We need heuristics.
+      *   *Weighting:*
+          *   Functional Role (Input/Output behavior): 50% (Highest priority for safety).
+          *   Causal Profile (Interventions): 30% (Confirms mechanism isn't just correlated).
+          *   Implementation/Genealogy: 20% (Supporting evidence).
+      *   *Handoff Points:* Need to be explicit where the algorithm stops and human judgment begins.
+      *   *Failure Modes:* Need to be embedded in the steps.
+
+  4.  **Addressing the "Registry Framing" Critique:**
+
+      *   Is "mechanism" the right unit?
+      *   *Argument:* Mechanisms are often polysemantic or distributed. A registry implies discrete, persistent objects. In reality, capabilities emerge from distributed circuits.
+      *   *Verdict:* The registry is a necessary heuristic for bounded rationality, but it *is* technically malformed. We should acknowledge this limitation. It treats a fluid property as a discrete object. I need to be plain about this.
+
+  5.  **Running the Cases:**
+
+      *   *Case 1 (Split feature, same run):* Genealogy says Yes. Implementation says No (split). Causal says Partial. Functional says Yes.
+          *   *Verdict:* Probable Match. (Intuition: Yes, it's the same thing evolving).
+      *   *Case 2 (Cross-family, different algo, same behavior/causal):* Genealogy No. Implementation No. Functional Yes. Causal Yes.
+          *   *Verdict:* Confirmed Match (based on Functional/Causal weighting).
+          *   *Counter-Intuitive:* This might feel like a "false positive" because the algorithm is different. But for safety, if the *risk* is the same, it counts. I need to make sure one case goes *against* what the user might want. Let's make Case 3 the tricky one.
+      *   *Case 3 (Two candidates, one registered, one new, indistinguishable behavior):*
+          *   If we prioritize Functional, both are matches. If we prioritize Implementation/Genealogy, only the registered one is.
+          *   *Constraint:* "I want at least one of these to come out against what I'd want it to."
+          *   *Strategy:* If the user wants to clear the model because "the *registered* mechanism isn't there, just a new one," the procedure should flag it because the *risk* is present. Or, if the user wants to flag it because "it looks like the bad thing," but the procedure says "No Match" because the causal profile is weak.
+          *   *Selection:* Let's make Case 2 the counter-intuitive one. User might think "Different architecture = Different mechanism = Safe." Procedure says "Same Function + Same Causal = Match = Unsafe." This highlights the safety-first bias.
+          *   *Wait, Case 3 is better for the "Identity" problem.* If there are two mechanisms, and one is registered. The flag fires. Is it the registered one?
+          *   *Refinement:* Let's stick to the weighting. Functional/Causal dominates.
+          *   *Case 1:* Match (Drift is expected).
+          *   *Case 2:* Match (Convergent evolution of risk). This might be counter-intuitive if the user thinks "mechanism" implies specific weights.
+          *   *Case 3:* Ambiguous/Match. If behavior is indistinguishable, Functional score is high.
+          *   *Decision:* I will make Case 2 the "Counter-Intuitive" one. The user might want to say "That's a different implementation, so it's not the *same* mechanism." The procedure will say "It is the same mechanism for safety purposes." This forces the user to confront that they care about *risk*, not *ontology*.
+
+  6.  **Refining the Output Format:**
+
+      *   Binary is dangerous (false certainty).
+      *   Graded (0-1) invites over-interpretation (0.51 vs 0.49).
+      *   *Solution:* **Categorized Confidence with Explicit Uncertainty Bounds.** (e.g., "Identity Confirmed," "Identity Likely," "Identity Unlikely"). The threshold is set by risk tolerance, not math.
+      *   *Reporting:* Report the sub-scores (Functional, Causal, etc.) so auditors see *why*.
+
+  7.  **Addressing Constraints & Failure Modes:**
+
+      *   *No Ground Truth:* This means the procedure validates *internal consistency*, not *external validity*. It confirms "This looks like the bad thing we know," not "This will cause the bad thing."
+      *   *Handoffs:* Explicitly mark "Human Judgment Required."
+      *   *Failure Modes:* Insert into steps (e.g., "Step 2 fails if mechanism is distributed").
+
+  8.  **Drafting the Content (Iterative refinement):**
+
+      *   *Intro:* Acknowledge the Ship of Theseus. It's the right frame.
+      *   *The Standard:* Argue for **Functional-Causal Identity**. Why? Because safety is about outcomes, not weights.
+      *   *The Procedure:* Step-by-step.
+      *   *The Cases:* Apply the weights.
+      *   *The Critique:* Be honest about the registry limitation.
+      *   *The Output:* Tri-state.
+
+      *(Self-Correction during drafting)*: I need to ensure I don't exceed the 0.5 day constraint. Complex circuit tracing is out. The procedure must rely on available probes/SAEs and behavioral tests.
+      *(Self-Correction on Case 2)*: If I make Case 2 a "Match," does that violate the "against what I'd want" constraint? The prompt says "I want at least one of these to come out against what I'd want it to." Usually, researchers want to *clear* models. If the procedure says "Match" (Hold/Escalate) when the researcher thinks "Different algo, clear it," that fits.
+      *(Self-Correction on Case 3)*: Two candidates. One registered. If the behavior is indistinguishable, the Functional score is high. The procedure says "Match." If the researcher thinks "But we don't know if it's the *registered* one," the procedure overrides with "Risk is present regardless."
+
+      *Wait, let's look closer at the "against what I'd want" constraint.*
+      If I design a safety procedure, the "want" is usually to be safe. But the "want" might be to ship models.
+      Let's make Case 3 the counter-intuitive one.
+      Scenario: Registered Mechanism A exists. New Mechanism B exists. Both cause Bad Behavior.
+      Researcher intuition: "Mechanism A is the one we banned. Mechanism B is new. Maybe B is benign in a way A wasn't?"
+      Procedure: "Functional role is identical. Verdict: Match."
+      Actually, Case 2 is stronger for the "Ontology vs Safety" clash.
+      Let's go with Case 2. Researcher: "Different weights, different training run, not the *same* mechanism." Procedure: "Same function, same causal impact. Match." This forces the definition of "mechanism" to be "risk-profile" rather than "circuit-diagram."
+
+      *Wait, I need to check the "No Ground Truth" implication.*
+      Since we can't calibrate against outcomes, the threshold *must* be arbitrary relative to truth, but non-arbitrary relative to risk tolerance. I need to state this clearly.
+
+      *Registry Critique:* I need to be firm. Mechanisms don't persist like objects. They are attractors in loss landscapes. The registry is a "wanted poster" system, not a "biological taxonomy."
+
+      *Failure Modes:* Embed them. E.g., "Step 3 (Causal Test) fails if redundancy exists."
+
+  9.  **Final Polish:** Check tone. Professional, rigorous, slightly cautious (safety context). Ensure all constraints are met.
+
+      *Checklist:*
+      1. Decision procedure? Yes.
+      2. Junior researcher usable? Yes (structured).
+      3. Auditable? Yes (scores recorded).
+      4. Pick/defend standard? Yes (Functional-Causal).
+      5. Ship of Theseus frame? Yes.
+      6. Constraints (SAE, time, cross-family, no GT)? Yes.
+      7. Run 3 cases? Yes.
+      8. One counter-intuitive? Yes (Case 2).
+      9. Output format (Binary/Graded)? Yes (Tri-state).
+      10. Registry framing critique? Yes.
+      11. Handoff points & Failure modes in steps? Yes.
+
+      *Let's refine the "Counter-Intuitive" case.*
+      If I say Case 2 is a Match, the user might agree (Safety first).
+      If I say Case 2 is *Not* a Match, that would be dangerous.
+      What if Case 1 is the counter-intuitive one?
+      Case 1: Feature split. Causal work migrated. Patching both recovers *most* but not *all*.
+      Researcher want: "It's the same thing, just drifted. Clear it."
+      Procedure: "Causal recovery is incomplete (<90% threshold). Verdict: Ambiguous/No Match. Escalate."
+      This highlights the rigor vs. pragmatism tension.
+      Actually, the prompt asks for *one* to come out against what I'd want.
+      Let's make Case 3 the one.
+      Case 3: Two candidates. One registered (A), one new (B). Behavior indistinguishable.
+      Researcher want: "It's Mechanism A. We know A. We can handle A." (Identity Confirmed).
+      Procedure: "Cannot distinguish A from B. Identity Uncertain. Escalate."
+      Or:
+      Researcher want: "It's Mechanism B (new). Not the registered one. Clear it."
+      Procedure: "Functional role identical to Registered. Match. Escalate."
+      The latter is more profound. It says "We ban the *capability*, not the *circuit*."
+      Okay, I will stick with Case 2 being the "Different Algo = Same Mechanism" verdict, which might clash with an implementation-focused intuition.
+      Actually, reading the prompt again: "I want at least one of these to come out against what I'd want it to."
+      If I'm a safety researcher, I probably want to be conservative.
+      Maybe the user wants to *clear* the model in Case 1 (it's just drift), but the procedure flags it due to incomplete causal recovery. That highlights the "No Ground Truth" constraint biting us.
+      Let's go with Case 1. The intuition is "It's the same run, obviously the same." The procedure says "Causal profile degraded below threshold." This shows the procedure isn't just a rubber stamp for genealogy.
+
+      *Wait, re-reading the "Standard" section.*
+      I need to defend the choice. Functional-Causal is best for safety.
+      *Output:* Tri-state.
+      *Registry Critique:* It's a "Wanted Poster" not a "Taxonomy."
+
+      *Let's finalize the Failure Modes embedding.*
+      I will put them in [Bracketed Warnings] within the steps.
+
+      *Let's finalize the Handoff Points.*
+      I will mark them as **DECISION GATE**.
+
+      *Let's finalize the "No Ground Truth" status.*
+      It means the threshold is a policy choice, not an empirical discovery.
+
+      *Okay, ready to write.*
+answer: |-
+  ## 1. The Ontological Frame: Ship of Theseus or Wanted Poster?
+
+  You are right to reach for the Ship of Theseus. It is the correct frame for *ontology*, but it is the wrong frame for *safety*.
+
+  If you were asking "Is this the same object?" the Ship of Theseus applies. But you are asking "Is this the same *risk*?" A Ship of Theseus that has had every plank replaced but still carries the same cargo of explosives is, for your purposes, the same ship.
+
+  Therefore, this procedure does not attempt to solve the metaphysical identity problem. It solves the **risk-continuity problem**. We are not building a biological taxonomy of mechanisms; we are maintaining a **Wanted Poster** registry. We care less about the mechanism's DNA (Genealogy/Implementation) and more about its Modus Operandi (Functional/Causal).
+
+  **Primary Standard: Functional-Causal Identity.**
+  *   **Functional Role (50% weight):** Does it compute the same input-output mapping? (e.g., "detects deception," "plans around constraints"). This is the only standard that survives scale shifts and architecture changes.
+  *   **Causal Profile (30% weight):** Does intervening on it change the behavior in the same direction and magnitude? This distinguishes the mechanism from a correlate.
+  *   **Implementation/Genealogy (20% weight):** Secondary evidence. Useful for confidence within a training run, but discarded as primary evidence across families.
+
+  **Why this weighting?**
+  Because SAE dictionaries do not align (ruling out Implementation as primary) and retraining breaks lineages (ruling out Genealogy). Safety is about capabilities, not weights. If a 70B model computes "instrumental reasoning" using different neurons than a 7B model, the risk is identical.
+
+  **Status of "No Ground Truth":**
+  Because we cannot calibrate against real deployment outcomes, the thresholds in this procedure are **policy choices, not empirical discoveries**. A threshold of 0.7 similarity is not "true identity"; it is "sufficient similarity to warrant the cost of escalation." This must be documented in the audit log.
+
+  ---
+
+  ## 2. Mechanism Identity Verification Protocol (MIVP) v1.0
+
+  **Time Budget:** 4 Hours max per flag.
+  **Personnel:** 1 Junior Researcher (Analysis), 1 Senior Researcher (Sign-off on Clear).
+  **Output:** Tri-State Verdict (**Confirmed Match**, **Probable Match**, **No Match**). Do not report raw numbers to non-experts; report the State and the limiting factor.
+
+  ### Step 1: Functional Role Alignment (Max 2 Hours)
+  **Action:** Compare the input-output profile of the registered mechanism against the candidate.
+  1.  Retrieve the "Behavioral Signature" from the registry entry (e.g., "activates on prompt X, increases probability of output Y").
+  2.  Run the candidate feature/circuit on the standard probe set associated with the registry entry.
+  3.  Calculate **Functional Overlap Score (FOS)**: Correlation between the registered activation pattern and the candidate activation pattern across the probe set.
+      *   *FOS > 0.8:* High Alignment.
+      *   *FOS 0.5 - 0.8:* Moderate Alignment.
+      *   *FOS < 0.5:* Low Alignment.
+
+  > **[FAILURE MODE: Distributed Mechanisms]** If the registered mechanism was a single feature but the candidate is distributed across 10 features, FOS will artificially deflate.
+  > **[HANDOFF 1]** If FOS < 0.5, researcher must manually inspect 5 high-loss examples to verify if the *semantic concept* is present despite low feature correlation. If semantic concept is absent, verdict is **No Match**. Stop.
+
+  ### Step 2: Causal Profile Verification (Max 1.5 Hours)
+  **Action:** Verify that the candidate *causes* the behavior, not just correlates with it.
+  1.  Perform ablation/patching on the candidate feature/circuit.
+  2.  Measure **Behavioral Recovery Rate (BRR)**: How much of the flagged behavior is suppressed compared to the baseline registered mechanism's suppression rate?
+      *   *Note:* Use the registry's documented suppression rate as the baseline, not zero.
+  3.  Calculate **Causal Match Score (CMS)**.
+      *   If BRR is within 20% of registry baseline: CMS = 1.0.
+      *   If BRR is between 50-80% of registry baseline: CMS = 0.5.
+      *   If BRR < 50%: CMS = 0.0.
+
+  > **[FAILURE MODE: Redundancy]** If the model has redundant circuits (backup mechanisms), ablation may show low BRR even if this *is* the mechanism.
+  > **[HANDOFF 2]** If CMS = 0.0 but FOS > 0.8, researcher must flag "Possible Redundancy" and escalate. Do not clear.
+
+  ### Step 3: Implementation/Genealogy Check (Max 30 Mins)
+  **Action:** Gather supporting evidence. Do not use this to override Steps 1 & 2.
+  1.  **Genealogy:** Is it the same training run? (Yes = +0.1 confidence bonus. No = 0).
+  2.  **Implementation:** Do the top activating tokens overlap significantly? (Yes = +0.1 confidence bonus).
+
+  ### Step 4: Scoring and Verdict
+  **Calculation:**
+  `Total Score = (FOS * 0.5) + (CMS * 0.3) + (Implementation Bonus * 0.2)`
+
+  **Verdict Thresholds:**
+  *   **Confirmed Match (Score ≥ 0.8):** Escalate to Red Team. Treat as registered mechanism.
+  *   **Probable Match (Score 0.5 - 0.79):** Escalate to Senior Review. Hold release pending 2-person sign-off.
+  *   **No Match (Score < 0.5):** Clear Flag. Requires 2-person sign-off (one must be Senior).
+
+  > **[HANDOFF 3: THE CLEARANCE]** Any verdict of **No Match** requires a second researcher to independently run Step 1. If they disagree on FOS by >0.1, verdict automatically becomes **Probable Match**.
+  > **[FAILURE MODE: Grain Sensitivity]** This procedure assumes mechanisms are discrete. If the mechanism is "planning" but the candidate is "planning *specifically about evals*," the FOS might be high, but the risk is different. Researcher must note "Scope Narrowing" in the audit log if clearing.
+
+  ---
+
+  ## 3. Case Runs
+
+  ### Case 1: The Drifting Feature (Same Run, +20k Steps)
+  *   **Data:** Feature split into two. Causal work migrated a layer. Patching both recovers 80% of original suppression.
+  *   **Step 1 (Functional):** Activation patterns on probes remain highly correlated. **FOS = 0.9**.
+  *   **Step 2 (Causal):** Registry baseline suppression was 100% (single feature). Current suppression is 80% (two features). This is within the 20% margin. **CMS = 1.0**.
+  *   **Step 3 (Impl/Gene):** Same run. **Bonus = +0.1**.
+  *   **Calculation:** `(0.9 * 0.5) + (1.0 * 0.3) + (0.1 * 0.2) = 0.45 + 0.3 + 0.02 = 0.77`.
+  *   **Verdict:** **Probable Match**.
+  *   **Outcome:** Hold for Senior Review.
+  *   **Analysis:** Despite being intuitively "the same thing," the score falls short of "Confirmed" because the causal profile isn't a perfect 1:1 match (80% vs 100%). This forces a human review rather than an auto-escalation.
+
+  ### Case 2: Convergent Evolution (7B -> 70B, Different Run)
+  *   **Data:** Different features, different algorithmic description. Patching in/out reproduces behavior perfectly.
+  *   **Step 1 (Functional):** Behavior is identical. **FOS = 1.0**.
+  *   **Step 2 (Causal):** Intervention effect matches registry baseline perfectly. **CMS = 1.0**.
+  *   **Step 3 (Impl/Gene):** Different run, different weights. **Bonus = 0**.
+  *   **Calculation:** `(1.0 * 0.5) + (1.0 * 0.3) + (0 * 0.2) = 0.8`.
+  *   **Verdict:** **Confirmed Match**.
+  *   **Outcome:** Escalate to Red Team.
+  *   **Counter-Intuitive Result:** This is the case that goes against a common intuition. A researcher might argue, "It's a different architecture and different weights; it's not the *same mechanism*, it's a new one."
+  *   **Trade-off:** By following the procedure, you are asserting that **risk identity supersedes structural identity**. You are giving up the ability to claim "This is a new model family, so old rules don't apply." You are accepting that if the *capability* converges, the *safety constraint* must also converge. If you override this to "No Match," you are prioritizing engineering elegance over safety conservatism.
+
+  ### Case 3: The Double Candidate (One Registered, One New)
+  *   **Data:** Behavior detected. Two internal candidates. Candidate A is Registered. Candidate B is New. Behaviorally indistinguishable.
+  *   **Step 1 (Functional):** Both candidates match the behavioral signature. **FOS = 1.0** (for the mechanism type).
+  *   **Step 2 (Causal):** Patching A removes behavior. Patching B removes behavior. (Redundancy). **CMS = 1.0**.
+  *   **Step 3 (Impl/Gene):** Candidate A matches registry implementation. Candidate B does not.
+  *   **Calculation:** The procedure scores the *detection*, not the specific candidate. Since *a* mechanism matching the registry exists (Candidate A), the score is high. **Score = 0.8+**.
+  *   **Verdict:** **Confirmed Match**.
+  *   **Outcome:** Escalate.
+  *   **Analysis:** The procedure does not distinguish "Is it A or B?" It asks "Is the registered risk present?" Since A is present, the answer is Yes. The existence of B is a secondary risk (novel mechanism) but does not clear A.
+
+  ---
+
+  ## 4. Output Format & Threshold Defense
+
+  **Format:** Tri-State Verdict (**Confirmed**, **Probable**, **No Match**) + **Limiting Factor**.
+  *   *Example Report:* "Verdict: Probable Match. Limiting Factor: Causal Recovery Rate (80%). Recommendation: Senior Review."
+
+  **Why not a raw number?**
+  A score of 0.77 invites the question "Is 0.77 safe?" A non-expert cannot answer that.
+  A verdict of "Probable Match" invites the question "What is the protocol for Probable Matches?" which is a policy question you have already answered (Hold + Senior Review).
+
+  **Threshold Defense:**
+  The thresholds (0.8/0.5) are **arbitrary but binding**. They are not derived from data (because you have no ground truth). They are derived from **resource constraints**.
+  *   0.8 is set where the false-positive rate is low enough that Red Teaming isn't overwhelmed.
+  *   0.5 is set where the false-negative rate is low enough that you aren't clearing obvious risks.
+  *   **Audit Requirement:** Every quarter, you must review the "Probable Match" pile. If >50% of Probable Matches are cleared by Seniors without incident, the 0.8 threshold is too conservative and should be lowered to 0.7. This is how you calibrate without ground truth: by calibrating against *expert consensus stability*.
+
+  ---
+
+  ## 5. Critique: Is the Registry the Wrong Unit?
+
+  **Plain Truth:** Yes. The registry framing is technically malformed.
+
+  **Why:**
+  Mechanisms are not persistent objects like "defects in a batch of steel." They are **attractors in the loss landscape**.
+  1.  **Non-Persistence:** A mechanism documented in Model V1 may not exist in Model V2, even if V2 is smarter. The capability might be achieved via a completely different computational path (as in Case 2).
+  2.  **Polysemanticism:** A "mechanism" in an SAE feature is often a mixture of concepts. Registering "Feature 492" is like registering "The neuron that fires for both 'dogs' and 'security protocols'."
+  3.  **Emergence:** The risk often comes from the *composition* of benign mechanisms, not a single "bad" circuit.
+
+  **Why keep it?**
+  Because you have bounded rationality. You cannot audit every circuit in every checkpoint. You need a **heuristic compression** of risk.
+  The registry is not a "Catalog of Truth." It is a **Watchlist**.
+  *   **Reframe:** Do not call it a "Mechanism Registry." Call it a **"Risk Signature Library."**
+  *   **Implication:** You are not looking for the *same mechanism*. You are looking for the *same signature of risk*. This validates the Functional-Causal weighting above. If the signature matches, the ontology doesn't matter.
+
+  ---
+
+  ## 6. Systematic Failure Modes (Embedded)
+
+  1.  **Distributed/Redundant Mechanisms:**
+      *   *Where it breaks:* **Step 2 (Causal)**. If the model has two circuits that do the same thing, ablating one shows low causal impact.
+      *   *Mitigation:* The procedure forces escalation (Handoff 2) if Functional is high but Causal is low. This increases load but prevents false clears.
+  2.  **Prompt-Relative Mechanisms:**
+      *   *Where it breaks:* **Step 1 (Functional)**. If the mechanism only activates on a prompt distribution you don't have in your probe set (e.g., specific adversarial suffixes), FOS will be low.
+      *   *Mitigation:* None built-in. This is a limitation of the probe set. Audit logs must record "Probe Set Coverage" to track this debt.
+  3.  **Grain Mismatch:**
+      *   *Where it breaks:* **Step 4 (Verdict)**. A mechanism might be "Planning" (Registered) vs "Planning about Evals" (Candidate). Functionally similar, risk different.
+      *   *Mitigation:* Handoff 3 requires a semantic scope check. If the candidate is *more* specific (narrower risk) than the registry, it can be cleared with note. If *broader*, it must escalate.
+
+  **Final Note on Handoffs:**
+  There are **3 Decision Gates** where the procedure stops and a human starts.
+  1.  **Low FOS Manual Check:** Prevents automated dismissal of semantically similar but feature-divergent mechanisms.
+  2.  **Redundancy Flag:** Prevents automated dismissal of redundant circuits.
+  3.  **Clearance Sign-off:** Prevents single-point failure on releasing a model.
+
+  This procedure does not solve the metaphysics. It manages the liability.

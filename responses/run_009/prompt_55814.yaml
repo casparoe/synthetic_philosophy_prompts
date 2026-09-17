@@ -1,0 +1,340 @@
+id: prompt_55814
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_55814.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789363533-bTQfIPluthxfaHiTQlJ5
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 824
+completion_tokens: 5375
+reasoning_tokens: 3708
+cost_usd: 0.012129
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T05:30:43+00:00'
+prompt: |-
+  I'm the one-person analytics shop at a regional health insurance plan (about 400k members, 14 clinics in network). Every quarter I put out a "clinic scorecard" comparing our in-network clinics on a bunch of outcome metrics -- 30-day readmission rates, follow-up after abnormal screening results, medication adherence -- and these numbers actually matter: our steering committee uses them in contract renewal talks, and a clinic got cut from the network two years ago partly off my scorecard.
+
+  Here's my problem. The clinics serve very different patient mixes. One clinic downtown skews young and healthy, one out by the retirement communities is basically all Medicare. Last quarter I had a metric where clinic A beat clinic B in the pooled data, and then a friend of mine who works in biostats looked at it and pointed out that within every age band, B actually beat A -- the pooled number was just an artifact of A happening to see the easy cases. Nobody caught it, including me. I'd like to say this was a one-off but honestly I now have no systematic way to tell when pooling is lying to me and when it's fine.
+
+  So what I want is a decision procedure I can actually run each quarter, per metric, before anything goes in the scorecard. Something like: what do I check first, what counts as a red flag, when do I stratify and re-run, and -- the hard part -- when the stratified answer differs from the pooled answer, which one goes in the report, and why. I understand from reading around that you can't settle that last question from the contingency table alone, that it depends on whether the thing you stratify on is upstream or downstream of the clinic's own choices, and I'd want the procedure to be honest about that point rather than pretending it has a mechanical answer.
+
+  Please build the procedure with these constraints in mind: I have about half a day per metric, I can run regressions but I'm not a statistician, and the audience for the scorecard is a committee that wants ONE number per clinic, not a lecture.
+
+  Then run it on three hypotheticals so I can see how it behaves:
+
+  1. The one from last quarter: pooled comparison favors clinic A, but within each of four age bands clinic B does better, and I know from claims data that younger patients (who do better on this metric regardless of care) disproportionately go to A for reasons unrelated to quality -- there's a new clinic smell / online booking thing that younger people use.
+
+  2. The reverse situation: pooled numbers favor clinic C, but a staffer at clinic C stratifies by whether the patient completed the care-management program C itself runs, and within completers vs non-completers C looks worse than clinic D. Clinic C is furious and says the stratified comparison punishes them for the very program that helps, so the pooled number is the fair one. My instinct is that C is gaming it, and I suspect the procedure will tell me my instinct is wrong -- I'd like it to be honest about that.
+
+  3. A small-clinic case: a rural clinic with 90 patients, where one subgroup has like 11 people in it, and the direction flips when that subgroup is included but the counts are tiny. What should the procedure do there -- and where does it just throw up its hands and say this is a judgment call or a "collect more data" call?
+
+  Also tell me where the procedure will misfire or get gamed, especially if the clinics figure out it exists and start choosing their own favorable stratifications to lobby me with. Keep in mind I never took causal inference, just two applied stats courses, so translate whatever theory you need but don't dumb it down to uselessness. Answer in American english please. And if there are places where the statistics genuinely underdetermines the answer and I'd be dressing up a value judgment as procedure, flag those explicitly rather than hiding them in a step -- I'd rather know which parts of my scorecard are opinions.
+reasoning: |-
+  We are building a decision procedure for comparing clinics on outcome metrics while accounting for confounding factors. The goal is to provide one number per clinic per metric for the steering committee, but ensure that the number is as fair as possible given patient mix and other factors.
+
+  The key challenges:
+  1. Confounding: Patient characteristics (like age, health status) may affect outcomes and be unevenly distributed across clinics.
+  2. Simpson's Paradox: The pooled (unadjusted) comparison can be reversed when stratifying by a confounder.
+  3. Causality: Adjusting for a factor that is downstream of the clinic's actions (like completing a program the clinic runs) may introduce bias.
+  4. Small sample sizes: Especially for small clinics or subgroups, estimates can be unstable.
+
+  The procedure must:
+  - Be executable in about half a day per metric by a non-statistician.
+  - Output one number per clinic per metric.
+  - Be robust to common pitfalls and gaming.
+
+  Decision Procedure Outline:
+
+  Step 1: Initial Pooled Analysis
+     - Calculate the unadjusted (pooled) metric for each clinic.
+
+  Step 2: Identify Potential Confounders
+     - Based on domain knowledge and prior evidence, list factors that:
+          a) Are known to affect the outcome (e.g., age, comorbidities, insurance type).
+          b) Are likely to be distributed differently across clinics (e.g., due to location, patient preferences).
+     - For each metric, we'll pre-specify a set of confounders to consider. This should be done at the beginning of the project and updated periodically (e.g., annually) based on new evidence, but not changed per quarter to avoid cherry-picking.
+
+  Step 3: Check for Imbalance in Confounders
+     - For each confounder, check if its distribution differs across clinics (e.g., using chi-square for categorical, ANOVA for continuous). If a confounder is imbalanced, it's a candidate for adjustment.
+
+  Step 4: Check for Simpson's Paradox and Effect Modification
+     - Stratify by each confounder (or by a coarsened version, e.g., age bands) and compute the metric within strata for each clinic.
+     - Check if the direction of the clinic comparison flips in any stratum or in the aggregate of strata compared to the pooled. Also, check for consistency of the effect across strata (no interaction) vs. effect modification (interaction).
+
+  Step 5: Decide on Adjustment Method
+     - If there is no substantial confounding (i.e., the pooled and stratified comparisons tell the same story and confounders are balanced) then use the pooled estimate.
+     - If there is confounding (i.e., the pooled comparison is misleading due to imbalanced confounders) and the confounders are pre-specified and not downstream of clinic actions, then use an adjusted estimate.
+
+     Adjustment methods:
+     - Direct standardization: Use a standard population (e.g., the overall population of all clinics) to compute expected outcomes for each clinic if they had the same case-mix. This gives an adjusted rate.
+     - Regression adjustment: Fit a regression model (e.g., logistic for binary outcomes) with the outcome as the dependent variable and clinic and confounders as independent variables. Then predict the outcome for each clinic while setting the confounders to the standard population. This is similar to direct standardization but can handle multiple confounders.
+
+     Important: Do not adjust for factors that are:
+          - Downstream of the clinic (e.g., treatment received, intermediate outcomes).
+          - Affected by the clinic (e.g., whether a patient completed a program run by the clinic) because that would remove part of the clinic's effect.
+
+     If the confounder is downstream (as in hypothetical 2), then adjustment is inappropriate and the pooled estimate (or an estimate adjusted only for pre-treatment confounders) is preferred.
+
+  Step 6: Small Sample Handling
+     - For clinics or strata with small samples, we must balance stability vs. bias.
+     - Set a minimum sample size for a stratum to be included (e.g., at least 30 patients per clinic per stratum). If a stratum is too small, consider:
+          - Combining adjacent strata (if ordinal) or using a model-based approach (like regression with shrinkage).
+          - If the overall clinic sample size is too small (e.g., < 100), then the adjusted estimate may be too unstable. In that case, we might:
+               a) Report the pooled estimate with a warning about small sample size and potential confounding.
+               b) Use hierarchical modeling (if you have the expertise) to borrow strength across clinics, but this may be beyond the half-day constraint.
+
+     Rule of thumb: If the smallest stratum for a clinic has fewer than 10 events (or non-events, whichever is rarer) for a binary outcome, then we cannot rely on the stratified estimate for that stratum.
+
+  Step 7: Reporting
+     - For each clinic-metric, report one number: either the pooled or the adjusted. The choice must be documented.
+     - In the scorecard, include a footnote for each metric that says:
+          "Adjusted for [confounders]" if adjusted, or "Unadjusted" if not.
+     - Additionally, for small clinics, we might add an asterisk: "Caution: Small sample size (n<100)".
+
+  Step 8: Documentation and Audit Trail
+     - Keep a record for each metric: the confounders considered, the imbalance check, the stratified analysis, and the decision to adjust or not with reasoning.
+
+  Step 9: Guarding Against Gaming
+     - Pre-specify the confounders for each metric (annually) and get sign-off from the steering committee. Do not change the set of confounders per quarter.
+     - Do not accept clinic-suggested stratifications that are not pre-specified. If a clinic suggests a new confounder, evaluate it for inclusion in the next annual review.
+     - For the adjustment method, use the same standard population for all clinics (e.g., the overall patient population) and the same method (e.g., direct standardization) for all.
+
+  Now, let's run the three hypotheticals:
+
+  Hypothetical 1: Pooled favors clinic A, but within each age band clinic B is better. Age is a confounder and is imbalanced (younger patients at A, who naturally do better). Moreover, the reason for imbalance (online booking) is not related to the clinic's quality but to patient preference.
+
+     - Step 1: Pooled shows A > B.
+     - Step 2: Age is a pre-specified confounder (affects outcome and is imbalanced).
+     - Step 3: Age is imbalanced (confirmed).
+     - Step 4: Stratifying by age bands, we see within each band B > A -> Simpson's paradox.
+     - Step 5: Age is not downstream (it's a pre-existing patient characteristic). We adjust for age using direct standardization or regression. The adjusted rate will show that B is better than A. So we report the adjusted number.
+
+  Hypothetical 2: Pooled favors clinic C, but when stratified by completion of clinic C's program, within both completers and non-completers, clinic D looks better. Clinic C argues that the program is part of their intervention and should not be adjusted for.
+
+     - Step 1: Pooled shows C > D.
+     - Step 2: The staffer at clinic C stratifies by program completion. But program completion is NOT a pre-specified confounder. Moreover, it is downstream of the clinic's actions (the clinic runs the program). 
+     - Step 3: We do not consider this confounder because:
+          a) It is not pre-specified.
+          b) It is a consequence of the clinic's intervention. Adjusting for it would remove the effect of the program (which is part of the clinic's quality) and leave only the direct effect of the clinic not mediated by the program. We are interested in the total effect of the clinic (including the program).
+     - Step 4: We ignore this stratification unless it was pre-specified and not downstream. Since it is downstream, we do not adjust for it.
+     - Step 5: We report the pooled number. However, we note that the imbalance in program completion might be a result of the clinic's effectiveness (so it's part of the story). But we do not adjust for it.
+
+     Important: If we suspect that clinic C is gaming by selecting easy patients into the program, then we have a different problem (selection bias). But the staffer's stratification is by program completion, which is post-treatment. We cannot adjust for it without biasing the estimate of the total effect.
+
+     However, note: The staffer's analysis might be revealing a problem: that clinic C's program is only effective because they have more completers? But the within-stratum comparisons (completers and non-completers) show D better than C. This suggests that even if you complete the program at C, you do worse than at D. But note: the program at C might be offered to a different type of patient than at D. Without adjusting for patient characteristics, we cannot interpret the within-program-completion strata.
+
+     Since the program completion is clinic-specific, we cannot compare across clinics by program completion without causing bias. Therefore, the procedure will not adjust for program completion and will report the pooled number.
+
+     But note: This pooled number might be confounded by patient mix. We should check for pre-specified confounders (like age, comorbidities) and adjust for those if needed. The staffer's analysis might be a red flag that there is confounding by patient mix. So we should double-check that we have adjusted for the pre-specified confounders.
+
+     Revised for hypothetical 2: 
+          - We first adjust for pre-specified confounders (like age, comorbidities). If after that adjustment clinic C still looks better, then we report that adjusted number. If the staffer's analysis did not adjust for patient mix, then it might be confounded.
+
+  Hypothetical 3: Rural clinic with 90 patients; when stratified, one subgroup has 11 patients and the comparison flips.
+
+     - Step 1: Pooled estimate.
+     - Step 2: We consider the pre-specified confounders.
+     - Step 3: Check imbalance for the confounders. Suppose one confounder (e.g., a comorbidity) is present in 11 patients and is imbalanced.
+     - Step 4: When we stratify, we see that in the small subgroup (n=11) the outcome rate is very different and causes the flip.
+     - Step 5: Because the subgroup has only 11 patients, the estimate is unstable. We apply the small sample rule: if the expected events in that stratum are too low (e.g., if the outcome is binary and we expect fewer than 5 events or 5 non-events in that stratum for the clinic) then we cannot trust that stratum.
+
+     Options:
+          a) Combine the small stratum with a neighboring one (if the confounder is ordinal, e.g., age).
+          b) Use regression with the confounder as a covariate and get the adjusted estimate. Regression might help with small samples by borrowing strength, but with only 90 patients and a rare subgroup, it might still be unstable.
+          c) If the overall clinic size is small (90 patients) and we cannot get stable adjusted estimates, we might have to report the pooled estimate with a warning.
+
+     However, note: The flip in direction might be due to random noise. We should also check the confidence intervals. If the confidence intervals for the adjusted estimate are very wide (and include both the pooled and the flipped direction), then we cannot be sure.
+
+     Decision:
+          - If the confounder is important and imbalanced, and we cannot get a stable adjusted estimate, we might report:
+               "Adjusted for X: [estimate with confidence interval] but caution: small sample size in one or more strata. The unadjusted rate is [pooled]."
+
+          But the committee wants one number.
+
+          So we can:
+          - Use the adjusted estimate (with a footnote about small sample) if the adjustment model converges and the standard error is acceptable (e.g., the confidence interval width is less than a pre-specified threshold, like 0.1 for a proportion).
+          - Otherwise, use the pooled and note: "Unadjusted due to small sample size in key subgroups."
+
+          This is a judgment call. The procedure must flag that the sample size is small and that the result should be interpreted with caution.
+
+          In the scorecard, we might report the adjusted number (if we have one) but with an asterisk and a note that the estimate is unstable due to small sample size.
+
+  Where the procedure might misfire or get gamed:
+     - If the pre-specified confounders are incomplete (e.g., missing an important confounder) then we might still have residual confounding. This is why the annual review of confounders is critical.
+     - Clinics might lobby to include or exclude certain confounders. We mitigate by pre-specifying and having the committee approve the list.
+     - Small clinics: The procedure might be less fair to them because we often have to use unadjusted numbers for them, which might be confounded. We might consider multi-year aggregation for small clinics, but that would be a separate decision.
+
+     Also, note that the adjustment method assumes that the relationship between confounders and outcome is the same across clinics (no interaction). If there is effect modification (e.g., older patients benefit more from clinic A's style of care) then the adjusted estimate might be misleading. We can check for interactions in the regression model, but that increases complexity. Given time constraints, we might ignore interactions unless there is strong prior evidence.
+
+     The procedure flags that in the presence of effect modification, the adjusted estimate (using the same standard population) might not reflect the clinic's performance for their own patient mix. In that case, we might want to report both the unadjusted (which reflects their actual patient mix) and the adjusted (which standardizes to a common population). But the committee wants one number. So we have to decide: the goal of the scorecard is to compare clinics as if they had the same patient mix? Then adjusted. Or to reflect the actual outcomes they achieved? Then unadjusted. This is a policy decision.
+
+     We must be explicit: The procedure for each metric must state the goal. For outcome metrics, the committee likely wants to see the quality of care independent of patient mix, so adjusted is preferred. But for cost metrics, they might want the actual cost incurred (which depends on patient mix). So the goal (standardized vs. actual) should be pre-specified per metric.
+
+     In summary, the procedure:
+
+     Pre-work (annually):
+        - For each metric, specify:
+            a) The goal: standardized (adjusted) or actual (unadjusted) performance?
+            b) The list of confounders to adjust for (if standardized).
+        - Get committee approval.
+
+     Each quarter, per metric:
+        1. Compute pooled metric for each clinic.
+        2. If the metric is designated as "standardized", then:
+            a) Check imbalance in the pre-specified confounders (using a predefined threshold, e.g., p<0.05 for imbalance test, but also effect size).
+            b) If no significant imbalance, then use pooled? Or still adjust? It's safer to always adjust if you've pre-specified the confounders because imbalance might be present but not statistically significant due to sample size. So we adjust regardless of the test if we are doing standardized reporting.
+            c) Compute adjusted metric (using direct standardization or regression) with the overall population as standard.
+            d) Check for small samples: if any clinic has less than 100 patients OR if any stratum for a clinic has less than 10 events (or non-events), then mark the estimate as unstable. Report the adjusted estimate but with an asterisk and note.
+            e) If the sample size is too small to adjust (e.g., a clinic has no patients in a stratum that is common in the standard population), then we cannot adjust. We then report the pooled with a note: "Insufficient data for adjustment: unadjusted rate reported."
+        3. If the metric is designated as "actual", then report the pooled and do not adjust.
+
+     For the three hypotheticals under this procedure:
+
+     Hypothetical 1: 
+          - Assume the metric is designated as standardized (we want to adjust for patient mix). 
+          - We adjust for age. We get an adjusted rate that shows B is better than A. We report that.
+
+     Hypothetical 2:
+          - The metric is standardized. We adjust for pre-specified confounders (like age, comorbidities). We do not adjust for program completion because it is not pre-specified and is downstream. We report the adjusted rate (which might still favor C, unless the staffer's observation was due to confounding by patient mix that we now adjust for).
+
+     Hypothetical 3:
+          - The metric is standardized. We attempt to adjust for the confounder. But due to small sample size in a stratum, we mark the adjusted estimate as unstable. We report the adjusted estimate with an asterisk: "This clinic's adjusted estimate is based on a small sample and may be unstable." 
+          - Alternatively, if we cannot compute the adjusted estimate (because of empty strata) we report the pooled with a note.
+
+     This procedure provides one number per clinic per metric, with transparency about adjustments and sample size issues.
+
+     Final note: The procedure relies on pre-specification and domain knowledge. It does not remove all bias, but it reduces it and makes the process transparent.
+answer: |-
+  ### Decision Procedure for Clinic Scorecard Metrics
+
+  Here's a step-by-step procedure you can run each quarter per metric, designed for your constraints. It prioritizes causal fairness over mathematical elegance and flags where judgment calls are needed. The core philosophy: **Adjust only for pre-treatment confounders, never for mediators or downstream effects.**
+
+  ---
+
+  #### **Step 0: Pre-Specify Confounders (Annual Setup)**
+  - **Before any analysis**, define a list of adjustment variables for each metric (e.g., age, comorbidities, baseline HbA1c for diabetes metrics).  
+  - **Criteria for inclusion:**  
+    - Variable must be a *pre-treatment* factor (measured before care delivery, e.g., demographics, chronic conditions).  
+    - It must affect outcomes *and* be unevenly distributed across clinics.  
+  - **Get committee approval** on this list to prevent gaming.  
+  - *Example:* For "medication adherence," include age, polypharmacy status, but NOT "follow-up visits" (that's downstream).
+
+  ---
+
+  #### **Quarterly Per-Metric Procedure**
+
+  1. **Run Pooled Analysis**  
+     - Calculate the unadjusted metric for all clinics (e.g., 30-day readmission rate).  
+     - Flag clinics with small patient volumes (<100 patients for the metric).  
+
+  2. **Check for Imbalance in Pre-Specified Confounders**  
+     - For each confounder, test if distribution differs across clinics (e.g., chi-square for age bands).  
+     - **Red Flag:** Significant imbalance (p<0.05) OR >10% absolute difference in key groups (e.g., % Medicare patients).  
+
+  3. **Stratify by Confounder & Check Consistency**  
+     - Stratify only by pre-specified confounders (e.g., age bands).  
+     - For each stratum, compute clinic performance.  
+     - **Red Flags:**  
+       - Simpson's Paradox: Pooled leader loses in every stratum.  
+       - Effect Modification: Clinic rankings flip across strata (e.g., Clinic A wins in young patients, Clinic B wins in elderly).  
+
+  4. **Decide: Pooled vs. Adjusted**  
+     - **Use POOLED if:**  
+       - No imbalance in confounders.  
+       - No Simpson's Paradox/effect modification.  
+       - Small clinic size (n<100) making adjustments unstable.  
+     - **Use ADJUSTED (Standardized Rate) if:**  
+       - Imbalance + Simpson's Paradox/effect modification exists.  
+       - Confounder is pre-treatment (e.g., age, location).  
+       - Clinic size is adequate (n≥100).  
+     - **Never adjust for downstream factors** (e.g., program completion, lab results)—these are part of the clinic's performance.  
+
+  5. **Calculate Adjusted Metric**  
+     - **Method:** Direct standardization using your overall population as the reference.  
+     - *Example:* "What would Clinic A's readmission rate be if its age distribution matched our entire membership?"  
+     - **Tools:** Use `stdize` in Stata or `survey` package in R. Regression optional but not required.  
+
+  6. **Small Clinic Protocol (n<100)**  
+     - Report pooled rate with a footnote: "Small sample size; interpret cautiously."  
+     - **Do not adjust** if any stratum has:  
+       - n<20 patients OR  
+       - <5 outcome events (e.g., <5 readmissions in a stratum).  
+     - If adjustment flips rankings due to tiny subgroups, default to pooled.  
+
+  7. **Reporting**  
+     - One number per clinic: **Pooled Rate** or **Standardized Rate**.  
+     - Footnotes:  
+       - "Adjusted for [age, comorbidities]" if standardized.  
+       - "Small sample size (n<100)" if applicable.  
+       - "Unadjusted" if no confounding detected.  
+
+  ---
+
+  ### Handling Your Hypotheticals
+
+  #### **1. Young Patients Skewing Results (Clinic A vs. B)**  
+  - **Procedure:**  
+    - Age is pre-specified and imbalanced (young patients → Clinic A).  
+    - Simpson's Paradox observed: B wins in every age band.  
+    - Age is pre-treatment (not influenced by clinics).  
+  - **Decision:** Report **age-standardized rates**. Clinic B wins.  
+  - **Why:** Pooled rate is biased by patient mix. Adjustment isolates clinic quality.  
+
+  #### **2. Clinic C's Care-Management Program**  
+  - **Procedure:**  
+    - Program completion is **downstream** (a result of Clinic C's actions).  
+    - *Not* a pre-specified confounder → **excluded** from adjustment.  
+    - Staffer's analysis is invalid for causal inference (adjusting for mediators removes Clinic C's program effect).  
+  - **Decision:** Report **pooled rates**. Clinic C wins.  
+  - **Why:** Pooled rate captures the total effect of Clinic C's program. Your instinct was wrong—C is right.  
+
+  #### **3. Rural Clinic with Small Subgroups**  
+  - **Procedure:**  
+    - Clinic size = 90 patients. One subgroup has n=11.  
+    - Adjustment flips rankings, but subgroup is too small (n<20).  
+  - **Decision:**  
+    - Do not adjust (violates small-sample protocol).  
+    - Report **pooled rate** with footnote: "Small sample size; unadjusted."  
+    - **Recommendation to committee:** "Combine data with next quarter or prior year for stability."  
+
+  ---
+
+  ### Where Misfires Can Happen
+  1. **Gaming by Clinics:**  
+     - Clinics lobby to add favorable stratifiers (e.g., "adjust for our patient loyalty!").  
+     - **Mitigation:** Only use pre-approved confounders. Reject new variables mid-cycle.  
+
+  2. **Unmeasured Confounding:**  
+     - If income/education data are missing and drive outcomes, adjustments fail.  
+     - **Mitigation:** Flag this limitation in reports: "Adjustment limited to age/comorbidities; socioeconomic factors not included."  
+
+  3. **Small Clinics:**  
+     - Unadjusted rates may penalize clinics serving sicker populations.  
+     - **Mitigation:** For clinics <100 patients, append a disclaimer: "Not risk-adjusted due to sample size."  
+
+  4. **Over-Adjustment:**  
+     - Adjusting for mediators (e.g., medication adherence in a readmission model) removes clinic effects.  
+     - **Mitigation:** Strict pre-specification of pre-treatment variables only.  
+
+  ---
+
+  ### When Statistics Underdetermine the Answer
+  - **The "Upstream vs. Downstream" Judgment:**  
+    - *Statistics can't decide* if a variable is pre-treatment or downstream.  
+    - **Example:** Is "distance to clinic" pre-treatment (geography) or downstream (clinic chose location)? Your committee must rule on these *before* analysis.  
+  - **Small Samples:**  
+    - No statistical fix for n=11 subgroups. The call to use pooled rates is a practical compromise, not statistical truth.  
+  - **Unmeasured Confounding:**  
+    - If key confounders (e.g., social determinants) are missing, the adjusted number is still biased—own this in footnotes.  
+
+  ---
+
+  ### Why This Works for Your Context
+  - **Half-Day Workflow:** Steps 1–7 are automatable (e.g., R/Python scripts). Only Steps 4 and 6 require judgment.  
+  - **Non-Statistician Friendly:** Standardization is intuitive ("what-if" rates). No regression needed unless you choose to.  
+  - **Committee-Friendly:** One number + footnotes. No lectures, but caveats are documented.  
+  - **Causally Honest:** Explicitly rejects mediator adjustment and flags value judgments.  
+
+  **Final Tip:** Publish your confounder list and adjustment rules annually. Transparency disarms lobbying.

@@ -154,6 +154,15 @@ Runs so far:
 | run_003 | DeepSeek R1 0528 (MIT) | `open_1k` | 1,000 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; one of the two R1 checkpoints whose reasoning traces trained Olmo 3 Think |
 | run_004_imported | Qwen3.5-397B-A17B-FP8 (Apache 2.0) | `batches_000-021` | 44,734 (2 per prompt) | temperature 0.6, top-p 0.95; 16,384-token budget | **imported**, not generated here: the sister repo's teacher collections of 2026-08-22 and 2026-08-28, self-hosted vLLM on Modal with the official fp8 weights |
 | run_005_imported | DeepSeek R1 0528 (MIT) | `batches_000-021` | 44,734 (2 per prompt) | temperature 0.6, top-p 0.95; 16,384-token budget | **imported**: the sister repo's collection of 2026-08-29, self-hosted vLLM on Modal, fp8 weights |
+| run_006 | DeepSeek R1 0528 (MIT) | `batch_033` | 9,930 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow |
+| run_007 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_033` | 9,930 | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, Parasail, GMICloud; 5 responses truncated at the budget |
+| run_008 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_035` | 19,998 | temperature 0.6, top-p 0.95, top-k 20 | same endpoints; 10 truncated |
+| run_009 | DeepSeek R1 0528 (MIT) | `batch_035` | 19,998 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow |
+| run_010 | DeepSeek R1 0528 (MIT) | `batch_038` | 19,997 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow |
+| run_011 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_038` | 19,997 | temperature 0.6, top-p 0.95, top-k 20 | same endpoints; 13 truncated |
+| run_012 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_041` | 39,944 | temperature 0.6, top-p 0.95, top-k 20 | same endpoints; 22 truncated |
+| run_013 | DeepSeek R1 0528 (MIT) | `batch_041` | 39,944 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; 1 truncated |
+| run_014 | DeepSeek R1 0528 (MIT) | `r1_gap` | 14,298 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -162,6 +171,15 @@ a seed-0 sample of 100 of those. The two Qwen runs follow each model card's own
 recommended thinking-mode settings, which differ between the two models. Run 003
 answers the same set with DeepSeek R1 0528 so that distillation into Olmo 3 can be
 compared against one of that model's original reasoning teachers.
+
+Runs 006 through 013 answer the four large open-weight batches (sets `batch_033`,
+`batch_035`, `batch_038`, and `batch_041`, one line per prompt of the batch, minus a
+prompt deleted during curation) once each with both models, so that every prompt of
+those batches has one DeepSeek R1 0528 response and one Qwen3.5-397B-A17B response.
+Set `r1_gap` lists the 7,149 prompts of batches 022–040 that had no R1 response after
+that (`tools/make_prompt_set.py --without-response`); run 014 answered them twice with
+R1, so that, as for batches 000–021, two independent R1 samples exist for them. Every
+prompt of batches 000–041 now has at least one R1 response.
 
 **Imported runs.** The two runs whose directory names end in `_imported` were not
 produced by `generate_responses.py`. They are the teacher-data collections of the

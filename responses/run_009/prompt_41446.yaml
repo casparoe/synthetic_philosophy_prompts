@@ -1,0 +1,622 @@
+id: prompt_41446
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_41446.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789324163-0eAxKkFPzDv8e86qbIWf
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 624
+completion_tokens: 10406
+reasoning_tokens: 8491
+cost_usd: 0.022997
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T18:36:38+00:00'
+prompt: |-
+  I do the modelling for a small forecasting outfit -- think sports and gaming risk mostly, but analysts also advise clients on stuff like when to hedge. The recurring headache: our people basically never get clean evidence. What they get is "satellite imagery suggests the shipment left port, we'd put that at about 65%" or "the source is right more often than wrong but he's had a rough week." Ordinary Bayesian conditioning assumes you learn an event with certainty, and my analysts are not learning events with certainty, ever. Before I let anyone hardcode an update rule into our tooling, I want the actual spec the rule has to meet.
+
+  So write me the desiderata for an update rule that handles uncertain evidence -- what it has to do to count as adequate. Things I half-know belong on the list: it should reduce to plain conditioning when the evidence happens to be certain (and do nothing when it's uninformative), it needs some answer to the communativity problem people raise against Jeffrey conditioning -- successive updates on different partitions giving different results depending on the order -- it shouldn't be hostage to arbitrary choices about how you slice the evidence into a partition, and ideally there's a principled justification (Dutch book? accuracy? value-of-learning style argument that free evidence is never harmful?) rather than "it's a natural-looking generalization." For each requirement say why it's a requirement, tell me which ones are genuinely load-bearing and which are negotiable, and flag any pair you suspect can't be jointly satisfied -- I have a feeling the commutativity one clashes with something.
+
+  Don't assume Jeffrey's rule is the answer. It's the incumbent; treat it as one candidate among others. Also consider the naive "condition on your best guess as if it were certain" approach, the fixes people proposed for the commutativity problem (I remember a guy named Field had one), and whatever else a well-read person would put on the shortlist for updating on less-than-certain evidence.
+
+  Prose part reasonably tight, then the scorecard as a JSON object with this schema:
+
+  {
+    "desiderata": [ { "id": "D1", "name": "...", "statement": "...", "load_bearing": true, "why": "..." } ],
+    "candidates": [ { "name": "...", "scores": { "D1": "satisfied|violated|contested|depends", "D2": "..." }, "notes": "..." } ],
+    "joint_satisfiability": "does the full list admit any rule at all, and if not, which requirement would you drop and why",
+    "recommendation": "what I should actually implement, given that analysts update fast and evidence usually arrives as degrees of confidence on some natural language hypothesis, not as a clean partition"
+  }
+
+  For the score values use only satisfied, violated, contested, or depends. The JSON is what I'll circulate to the team, so make the notes fields carry the interesting caveats rather than just "yes/no."
+reasoning: |-
+  We are to design desiderata (requirements) for an update rule that handles uncertain evidence. The rule should be applicable when evidence is not certain (e.g., "the shipment left port with 65% confidence"). We then evaluate several candidate update rules against these desiderata.
+
+  Key desiderata (with explanations and load-bearing status):
+
+  1. **Reduction to Conditioning (D1)**:
+     - **Statement**: When the evidence is certain (i.e., we learn an event with probability 1), the update rule must reduce to ordinary Bayesian conditioning. When the evidence is uninformative (i.e., does not change the probabilities of the events in question), the update rule should leave the probabilities unchanged.
+     - **Why**: This ensures compatibility with standard Bayesian updating in the special case of certain evidence and avoids unnecessary changes when no new information is present.
+     - **Load-bearing**: Yes. Without this, the rule would not generalize standard Bayesian updating.
+
+  2. **Commutativity (D2)**:
+     - **Statement**: The order in which pieces of uncertain evidence are applied should not affect the final probability distribution (i.e., the update rule should be commutative when evidence is independent of the order of application).
+     - **Why**: In real-world scenarios, evidence may arrive in any order, and the final belief state should be consistent regardless of the order. This avoids the "communativity problem" (as in Jeffrey conditioning).
+     - **Load-bearing**: Highly desirable, but note that it might be difficult to achieve without additional constraints. Some argue that order-dependence can be rational in some contexts, but for a tool, we want consistency.
+
+  3. **Partition Invariance (D3)**:
+     - **Statement**: The update rule should not depend on how the evidence is partitioned. That is, the same evidence (with the same probabilistic content) should lead to the same update regardless of how it is broken down into events for updating.
+     - **Why**: Analysts may describe the same evidence in different ways (e.g., "shipment left port" vs. "shipment did not leave port"). The update should not be sensitive to arbitrary choices in framing.
+     - **Load-bearing**: Yes. Without this, the rule would be arbitrary and subject to manipulation.
+
+  4. **Principled Justification (D4)**:
+     - **Statement**: The rule should have a foundational justification (e.g., Dutch book coherence, scoring rules, value of learning) rather than being an ad hoc generalization.
+     - **Why**: We want the rule to be theoretically sound and not introduce irrationalities (e.g., being susceptible to Dutch books, or leading to avoidable inaccuracy).
+     - **Load-bearing**: Yes. This ensures the rule is robust and rational.
+
+  5. **Non-dogmatism (D5)**:
+     - **Statement**: The rule should allow for the possibility of updating to any probability for the evidence event (i.e., it should not require that the evidence event be assigned probability 1 at any step, unless the evidence is certain).
+     - **Why**: We are dealing with uncertain evidence, so the rule must accommodate any probability for the evidence event (e.g., 65%).
+     - **Load-bearing**: Yes. This is the core problem we are addressing.
+
+  6. **Value of Learning (D6)**:
+     - **Statement**: The update should never be harmful in expectation (i.e., free evidence should not lead to a worse expected loss).
+     - **Why**: This ensures that analysts are always better off (or at least not worse off) by incorporating new evidence, which is a fundamental property of rational updating.
+     - **Load-bearing**: Highly desirable, but note that this might be covered by a Dutch book argument.
+
+  Note: There is a known tension between commutativity (D2) and partition invariance (D3) in the literature. Jeffrey conditioning satisfies D1 and D5 but fails D2 (order-dependence) and D3 (partition dependence). Field conditioning (a fix) achieves commutativity but may violate other desiderata.
+
+  Candidates to consider:
+
+  1. **Naive Conditioning**:
+     - Approach: Condition on the evidence event as if it were certain (i.e., set the probability of the evidence event to 1 and update by conditioning).
+     - Critique: This ignores the uncertainty in the evidence and can lead to overconfidence.
+
+  2. **Jeffrey Conditioning** (the incumbent):
+     - Approach: Update by redistributing probabilities proportionally within each part of a partition defined by the evidence.
+     - Example: If the evidence assigns a new probability q to event A (and 1-q to not-A), then for any event B, the updated probability is P_new(B) = q * P(B|A) + (1-q) * P(B|not-A).
+     - Note: Requires that the evidence specifies a partition and new probabilities for each cell.
+
+  3. **Field Conditioning** (proposed by Field to fix commutativity):
+     - Approach: Adjust the odds ratios by a factor that depends on the evidence. Specifically, for a partition {A_i}, the update multiplies the odds of each A_i by a factor and then normalizes.
+     - Formula: P_new(A_i) proportional to P_old(A_i) * (Q(A_i)/P_old(A_i))^c, where c is a parameter. But Field's original idea was to use a parameter that makes the update commutative.
+
+  4. **Probability Kinematics** (a generalization of Jeffrey's rule):
+     - Similar to Jeffrey but for more general partitions. However, it still suffers from order-dependence.
+
+  5. **Dempster-Shafer** (or other belief function approaches):
+     - These handle uncertain evidence by assigning probability masses to sets of possibilities. However, they are more complex and may not reduce to Bayesian updating.
+
+  6. **Generalized Bayesian Conditioning** (via virtual evidence/likelihood ratios):
+     - Approach: Treat uncertain evidence as a likelihood ratio. For an event A, if we are told "A is true with probability q", we can interpret this as a likelihood ratio for A versus not-A of [q/(1-q)] / [P_old(A)/(1-P_old(A))]. Then update by Bayes rule with this likelihood ratio.
+     - This is equivalent to: P_new(H) proportional to P_old(H) * [q * P_old(A|H) + (1-q) * P_old(not-A|H)]? Actually, we can represent uncertain evidence as a virtual observation that has a likelihood that depends on A. Specifically, we introduce a binary virtual observation E such that P(E|A)=c*q and P(E|not-A)=c*(1-q) for some c? Actually, the standard way is to set the likelihood ratio for the evidence as: 
+          LR = [P(E|A) / P(E|not-A)] = [q/(1-q)] * [(1-P_old(A))/P_old(A)]
+     - Then we update by: P_new(A) = [P_old(A) * LR] / [P_old(A)*(LR-1)+1] ... but note that this is just Bayes applied to the virtual evidence. This method is used in Bayesian networks (as virtual evidence) and in some AI systems.
+
+  We note that the virtual evidence method (also known as the likelihood ratio method or the Pearl method) is a candidate that has gained attention.
+
+  Evaluation of candidates against desiderata:
+
+  - **Naive Conditioning**:
+     - D1: Satisfied when evidence is certain, but when evidence is uncertain, it does not reduce to conditioning because it forces the evidence event to 1. Also, for uninformative evidence (q = P_old(A)), it would set P_new(A)=1, which is not the same as doing nothing. Hence, violated for uninformative case.
+     - D2: Not applicable because it only handles one update? But if we do multiple, it will be order-dependent? Actually, multiple naive updates would be order-dependent, but it's not designed for uncertain evidence.
+     - D3: Not applicable? The naive method doesn't specify a partition. It conditions on a single event. But if we have multiple pieces of evidence, it will depend on the order and the partition? Violated because the update is on a specific event and if the same evidence is framed differently (e.g., A vs. not-A) then conditioning on A is not the same as conditioning on not-A.
+     - D4: Violated. It is not justified for uncertain evidence and leads to overconfidence.
+     - D5: Violated because it forces the evidence event to 1, so it cannot update to a probability between 0 and 1 arbitrarily.
+     - D6: Violated because it can lead to overconfidence and worse decisions.
+
+  - **Jeffrey Conditioning**:
+     - D1: Satisfied. When q=1, it reduces to conditioning on A. When q = P_old(A), then P_new(B) = P_old(B) for all B? Let's check: P_new(B) = q * P_old(B|A) + (1-q) * P_old(B|not-A) = P_old(A)*P_old(B|A) + P_old(not-A)*P_old(B|not-A) = P_old(B). So yes.
+     - D2: Violated. Jeffrey conditioning is not commutative for updates on different partitions. There are known examples where order matters.
+     - D3: Violated. The rule requires specifying a partition. The same evidence (with the same q) for a coarser or finer partition would lead to different updates.
+     - D4: Contested. It has a justification via probability kinematics (minimal change in a relative entropy sense) but only for the given partition. However, it is susceptible to Dutch books if the evidence is not independent of the partition? Some argue it is justified for a specific type of learning experience (radical probabilism).
+     - D5: Satisfied. It allows updating to any q for the evidence event.
+     - D6: Contested. It may not guarantee that free evidence is always beneficial. Some studies show that Jeffrey conditioning can lead to a loss of accuracy.
+
+  - **Field Conditioning**:
+     - Field proposed a rule that uses a parameter c (which he called the "robustness parameter") to achieve commutativity. The update rule is: 
+          P_new(A_i) = P_old(A_i) * (Q(A_i) / P_old(A_i))^c / (normalization)
+       where c is chosen to be the same for all updates to achieve commutativity? Actually, Field's rule is defined for a partition and a set of new probabilities and uses a parameter. But note: Field's rule is designed to be commutative in the sense that the same c is used for every update? However, the justification for c is not clear.
+
+     - We consider the version where c is set to 1 (which is Jeffrey) or to other values? Actually, Field's original rule uses c=1 for the first update? But then it doesn't solve the problem. There are multiple variants. We consider the one that is commutative.
+
+     - A more standard presentation: Field conditioning is defined by:
+          P_new(H) = P_old(H) * \prod_{i} (q_i / P_old(A_i))^{I(H \in A_i)}
+       but then normalized? Actually, that is not commutative. The idea is to use a single parameter c that is the same for all updates? Actually, the commutative version is achieved by using the same exponent for all updates? 
+
+     - Alternatively, we can represent the update as:
+          P_new(H) = P_old(H) * \exp(c \cdot \sum_i I(H \in A_i) \log(q_i / P_old(A_i)))
+       and normalize. But then c must be chosen appropriately? 
+
+     - However, note that Field conditioning is not as widely used and might not satisfy the other desiderata.
+
+     - Evaluation:
+       - D1: Satisfied? When q_i=1 for one cell and 0 for others, then for the cell with 1 we have P_new(H) proportional to P_old(H) * (1/P_old(A_i)) for H in A_i, and 0 for others -> so P_new(H) = P_old(H)/P_old(A_i) = P_old(H|A_i). So yes. When q_i = P_old(A_i) then the factor is 1 -> no change.
+       - D2: Satisfied. Field conditioning is designed to be commutative (if the same exponent is used? but note: the exponent is chosen per update? Actually, Field's rule as originally proposed for a single update is the same as Jeffrey with c=1. To achieve commutativity, one must use a fixed exponent for all updates? There is a variant that uses the same exponent (c=1) and then it is not commutative? I think there is a version that is commutative. We'll mark it as satisfied? But note: the rule requires a fixed parameter c that must be chosen across updates. If we fix c=1, then it reduces to Jeffrey and fails. If we choose a different c for each update, then we break commutativity. So contested.
+       - D3: Violated. The update depends on the partition.
+       - D4: Contested. The justification for the exponent is not as strong as standard Bayesian updating.
+       - D5: Satisfied.
+       - D6: Contested. It is not clear.
+
+     Due to the ambiguity, we mark D2 and D4 as contested.
+
+  - **Virtual Evidence (Likelihood Ratio) Method**:
+     - Approach: Represent uncertain evidence as a likelihood ratio. For example, if we have an event A and we are told that the probability of A is q, we can interpret this as a virtual observation E that has a likelihood ratio for A versus not-A of:
+          LR = (q / (1-q)) / (P_old(A) / P_old(not-A))
+       Then update by:
+          P_new(A) = [ P_old(A) * LR ] / [ P_old(A)*(LR-1) + 1 ]
+
+       But note: we can also write the update for any event H as:
+          P_new(H) proportional to P_old(H) * [ if H implies A, then q / P_old(A); if H implies not-A, then (1-q) / P_old(not-A) ]
+
+       Actually, we can define a virtual observation E such that:
+          P(E|A) = k * q,   P(E|not-A) = k * (1-q)
+       for any k (the same k cancels out). Then by Bayes:
+          P_new(H) = P_old(H) * P(E|H) / P_old(E)
+       but note: P(E|H) = P(E|A) if H implies A, etc.
+
+       So:
+          P_new(H) = [ P_old(H) * (q / P_old(A)) ]    if H ⊆ A
+          P_new(H) = [ P_old(H) * ((1-q) / P_old(not-A)) ]  if H ⊆ not-A
+
+       Then for any event B, we can write:
+          P_new(B) = P_old(B|A) * q + P_old(B|not-A) * (1-q)   ??? 
+
+       Actually, that is exactly the same as Jeffrey conditioning! 
+
+       Therefore, the virtual evidence method for a single event A is equivalent to Jeffrey conditioning on the partition {A, not-A}. 
+
+       But wait: what if we have a more complex partition? The virtual evidence method can be extended to arbitrary partitions. For a partition {A_i}, if we are given new probabilities q_i for A_i, then we can set:
+          P(E | A_i) = k * q_i
+       Then update by:
+          P_new(H) proportional to P_old(H) * P(E|H) = P_old(H) * (q_i if H ⊆ A_i)   [but note we must normalize]
+
+       And then:
+          P_new(A_i) = [ P_old(A_i) * P(E|A_i) ] / sum_j P_old(A_j)*P(E|A_j) 
+                     = [ P_old(A_i) * q_i ] / sum_j P_old(A_j)*q_j 
+                     = q_i   because the denominator is sum_j P_old(A_j)*q_j, but note: we set P(E|A_i)=k*q_i, so the denominator is k * sum_j P_old(A_j)*q_j, and then P_new(A_i) = [P_old(A_i)*k*q_i] / [k * sum_j P_old(A_j)*q_j] = [P_old(A_i)*q_i] / [sum_j P_old(A_j)*q_j] 
+       which is not necessarily q_i. 
+
+       We see that this update sets:
+          P_new(A_i) = [ P_old(A_i) * q_i ] / [ sum_j P_old(A_j)*q_j ]
+
+       But we wanted P_new(A_i) = q_i. So this does not achieve the desired update! 
+
+       Correction: The virtual evidence method as described does not directly set the posterior probability of A_i to q_i. Instead, it uses the likelihood ratio to update. To achieve P_new(A_i)=q_i, we must set the likelihood ratios appropriately.
+
+       Actually, we require:
+          P_new(A_i) = q_i = [ P_old(A_i) * L_i ] / [ sum_j P_old(A_j)*L_j ]
+       where L_i is the likelihood ratio factor for A_i (i.e., P(E|A_i)).
+
+       Therefore, we have:
+          q_i = [ P_old(A_i) * L_i ] / [ sum_j P_old(A_j)*L_j ]
+
+       Then we can solve for L_i: 
+          L_i = (q_i / P_old(A_i)) * [ sum_j P_old(A_j)*L_j ]
+
+       The term in the brackets is a constant (call it C). So we can set L_i = C * (q_i / P_old(A_i)). Since the constant C will cancel in the normalization, we can set L_i = q_i / P_old(A_i). 
+
+       Therefore, we define:
+          P(E|A_i) = k * (q_i / P_old(A_i))
+       for any positive k. Then:
+          P_new(A_i) = [ P_old(A_i) * (q_i / P_old(A_i)) ] / [ sum_j P_old(A_j) * (q_j / P_old(A_j)) ] 
+                     = q_i / [ sum_j q_j ] 
+                     = q_i   (since the q_i are a distribution)
+
+       So it works. 
+
+       Then the update for a general event H is:
+          P_new(H) = [ sum_i P_old(H ∩ A_i) * (q_i / P_old(A_i)) ] / [ sum_j q_j ] 
+                   = sum_i [ P_old(H ∩ A_i) * (q_i / P_old(A_i)) ]   [since denominator is 1]
+
+       But note: P_old(H ∩ A_i) / P_old(A_i) = P_old(H|A_i). So:
+          P_new(H) = sum_i q_i * P_old(H|A_i)
+
+       That is exactly Jeffrey conditioning.
+
+       Therefore, the virtual evidence method is equivalent to Jeffrey conditioning when the evidence is given for a partition.
+
+       But what if the evidence is not given as a partition? The problem states that evidence usually arrives as degrees of confidence on some natural language hypothesis, which might not form a partition. For example, we might get two pieces of evidence: one about A and one about B, where A and B are overlapping.
+
+       The virtual evidence method can handle that by treating each piece of evidence as an independent virtual observation. For the first evidence about A, we define a virtual observation E1 with the appropriate likelihoods. Then for the second about B, we define E2. Then update by multiplying the likelihoods.
+
+       However, note that the two virtual observations are treated as independent. This is an assumption.
+
+       But the problem: we are given new probabilities for A and for B? How do we set the likelihoods? We can do:
+
+          For the first evidence: set L1 for A as above (to achieve the desired posterior for A, ignoring B for the moment). Then update with E1. Then for the second evidence, we set L2 for B? But then we cannot achieve both the desired posterior for A and for B simultaneously? 
+
+       Therefore, the virtual evidence method as described for a single partition is Jeffrey conditioning. For multiple pieces of evidence on overlapping events, it is not defined how to set the likelihoods to achieve the desired posteriors for each event.
+
+       So we must consider the virtual evidence method only for the case of a single partition. Then it is the same as Jeffrey.
+
+       However, if we have multiple pieces of evidence that are independent, then we can update sequentially. But then we face order-dependence? 
+
+       So the virtual evidence method as a general rule for updating on uncertain evidence is not defined beyond the partition case? 
+
+       Therefore, we will not consider it as a separate candidate for general uncertain evidence beyond the partition case. It is equivalent to Jeffrey conditioning when the evidence is given as a partition.
+
+  - **Dempster-Shafer**:
+     - This is a generalization but is more complex and does not reduce to Bayesian updating in all cases. We skip a detailed evaluation.
+
+  Given the above, we need a candidate that can handle uncertain evidence without requiring a partition and that is commutative. 
+
+  A candidate that has been proposed in the literature is **Adams conditioning** (for conditionals) or more recently, the **Kullback-Leibler divergence minimization** under constraints. But note: Jeffrey conditioning minimizes KL divergence under the constraint that the posterior probabilities of the partition are fixed. If we have multiple constraints (like fixing the probabilities of non-partition events), it might not be possible to satisfy all and have commutativity.
+
+  Alternatively, we can consider updating by minimizing a scoring rule subject to the constraint that the posterior probability of the evidence event is the given value. This is called the **Principle of Minimum Information** or **Minimum Relative Entropy**. For a single constraint, it gives Jeffrey conditioning. For multiple constraints, the update is defined as the distribution that minimizes KL divergence subject to the constraints. However, the order of application of constraints does not matter because the update is done simultaneously. But if we do sequential updates, it would be order-dependent? 
+
+  But note: if we have multiple pieces of evidence, we can update simultaneously by imposing all constraints at once. Then the update is unique (if the constraints are consistent) and order does not matter. However, in practice, evidence arrives sequentially. 
+
+  So for sequential updating, we would:
+
+     - Collect all evidence until we are ready to update, then update once with all constraints.
+
+  But this is not always feasible because analysts update fast and evidence arrives continuously.
+
+  Alternatively, we can use a rule that sequentially updates using the minimum relative entropy for each new piece of evidence, but using the current distribution as the prior. This is called **iterative proportional fitting** and is order-dependent.
+
+  Therefore, we are in a bind.
+
+  Joint Satisfiability:
+
+     - It is known that no updating rule can satisfy all of the following: 
+          1. Commutativity (order-independence)
+          2. Partition invariance
+          3. Reduction to conditioning
+          4. Principled justification (like minimizing KL divergence)
+       because Jeffrey conditioning satisfies 1,3,4 only for a fixed partition and fails 2 and 5? Actually, we need to check.
+
+     - In fact, there is an impossibility result: order-independence and path-independence (which is related to partition invariance) cannot be achieved simultaneously with reduction to conditioning and a few other axioms. 
+
+     - Therefore, we must drop either commutativity (D2) or partition invariance (D3). 
+
+     - Since partition invariance (D3) is critical (to avoid arbitrary framing effects), we might drop commutativity (D2) and instead recommend updating in batches (to avoid order-dependence) or use a simultaneous update.
+
+     - However, the problem states that evidence arrives sequentially and analysts update fast.
+
+  Recommendation:
+
+     Given the constraints, we propose:
+
+     - For the common case where the evidence is about a single event (like A) and the analyst provides a new probability q for A, we use Jeffrey conditioning on the partition {A, not-A}. This is simple and well-understood.
+
+     - For evidence about multiple events that might overlap, we avoid sequential Jeffrey conditioning because of the order-dependence and partition dependence. Instead, we require that the evidence be structured as a partition. If it is not, we ask the analyst to provide the evidence in terms of a mutually exclusive and exhaustive set of events. If they cannot, we use the virtual evidence method for each piece of evidence independently (with the understanding that order matters and we will update in a fixed order, say by time of arrival). 
+
+     However, note: the evidence in the problem is usually about a single natural language hypothesis (e.g., "shipment left port") which naturally forms a binary partition. Therefore, we can assume that the evidence is given for a binary event. Then Jeffrey conditioning is applicable.
+
+     But what if we get multiple pieces of evidence? For example, first we get "shipment left port at 65%" and then we get "the ship was seen at location X with 80%". These are not necessarily the same partition. We have two options:
+
+        Option 1: Update sequentially with Jeffrey conditioning on the partition defined by each piece of evidence. But then order matters.
+
+        Option 2: Collect the evidence until we can define a joint partition. For two binary events A and B, the partition would be {A∩B, A∩not-B, not-A∩B, not-A∩not-B}. Then we need new probabilities for each of these four events? But the analyst only provides probabilities for A and for B separately. We don't have the joint distribution.
+
+     How to set the joint probabilities? We can use the minimum relative entropy update to find a distribution that matches the constraints P(A)=0.65 and P(B)=0.80 and is closest to the prior. This is a simultaneous update. But it requires solving an optimization problem.
+
+     Given the requirement for speed, we might not be able to do that.
+
+     Therefore, we recommend:
+
+     - For each piece of evidence as it arrives, update using Jeffrey conditioning on the partition defined by that evidence. But acknowledge the order-dependence. To mitigate, we can:
+
+          a. Use a fixed order (e.g., always update the most recent evidence last) and document the order.
+
+          b. When the evidence events are independent (or conditionally independent) under the current distribution, the order-dependence is reduced.
+
+     - Alternatively, if the evidence events are not independent, we can update on the coarsest partition that includes both. For two events, we can form the partition of four sets. But without joint probabilities, we cannot use Jeffrey conditioning. We could use the virtual evidence method for each event as a separate virtual observation? 
+
+     But note: the virtual evidence method for multiple events is equivalent to updating sequentially with Jeffrey conditioning? Not exactly. In the virtual evidence method, we would represent each piece of evidence as a virtual observation that is independent given the state. Then we can update by multiplying the likelihoods. This is order-independent? 
+
+     Example:
+
+          We have two events A and B. We receive two pieces of evidence: one gives P(A)=q1, the other gives P(B)=q2.
+
+          We define two virtual observations E1 and E2:
+
+            P(E1|A) = k1 * (q1 / P_old(A))
+            P(E1|not-A) = k1 * ((1-q1) / P_old(not-A))
+
+            P(E2|B) = k2 * (q2 / P_old(B))
+            P(E2|not-B) = k2 * ((1-q2) / P_old(not-B))
+
+          Then the likelihood for the state H is:
+            L(H) = P(E1|H) * P(E2|H)
+
+          But note: H is a state that may determine A and B. If H is a full state, then A and B are determined. Then we can write:
+
+            If H implies A and B, then L(H) = [k1 * q1 / P_old(A)] * [k2 * q2 / P_old(B)]
+
+            Similarly for other combinations.
+
+          Then we update by:
+            P_new(H) = P_old(H) * L(H) / Z
+
+          This is order-independent because multiplication is commutative.
+
+          But does it achieve P_new(A)=q1 and P_new(B)=q2? 
+
+          Not necessarily. It achieves:
+
+            P_new(A) = sum_{H in A} P_old(H) * L(H) / Z
+
+          and similarly for B. We set the likelihoods to be proportional to the factors that would achieve the update if applied alone, but together they interact.
+
+          This method does not guarantee that the posterior probabilities of A and B will be q1 and q2. It only ensures that the likelihood ratio for A is set to (q1/(1-q1))/(p_old(A)/(1-p_old(A))) and similarly for B (if they were applied alone). When applied together, the posteriors may not be q1 and q2.
+
+          In fact, the posterior for A will be:
+
+            P_new(A) = [ P_old(A) * (q1/P_old(A)) * ( ... ) ] / Z
+
+          which is not necessarily q1.
+
+          Therefore, this method does not meet the requirement of setting the probability of A to q1.
+
+     Given the complexity, our recommendation is to use Jeffrey conditioning for the partition defined by each piece of evidence sequentially, and to note the order-dependence. In practice, if the events are not too correlated, the order-dependence may be small. We also recommend that analysts provide evidence on a pre-defined partition whenever possible.
+
+     For the scorecard, we consider:
+
+     Candidates:
+
+       1. Naive Conditioning
+       2. Jeffrey Conditioning
+       3. Virtual Evidence (for a partition) -> same as Jeffrey
+       4. Field Conditioning (with c=1, which is Jeffrey) -> we skip
+       5. Batch Minimum Relative Entropy (simultaneous) -> not sequential, so we don't evaluate for sequential updates.
+
+     We add a candidate: **Sequential Minimum Relative Entropy** (one constraint at a time) -> this is Jeffrey conditioning for a single constraint.
+
+     Therefore, we focus on Jeffrey conditioning as the representative.
+
+     We also consider a candidate: **Fixed-Order Virtual Evidence for Multiple Events** (not requiring a partition). But as shown, it doesn't meet the requirement of setting the probabilities to the specified values.
+
+     Given the above, we create the JSON.
+
+     Desiderata:
+
+        D1: Reduction to Conditioning
+        D2: Commutativity
+        D3: Partition Invariance
+        D4: Principled Justification
+        D5: Non-dogmatism
+        D6: Value of Learning
+
+     Candidates:
+
+       - "Naive Conditioning"
+       - "Jeffrey Conditioning"
+       - "Field Conditioning" (we assume the commutative version, but note it is not clear)
+
+     For Field Conditioning, we assume a variant that achieves commutativity by using the same exponent for all updates? There is a method called "Field's commutativity fix" but it is not widely implemented. We use:
+
+       Field conditioning: 
+          P_new(H) = P_old(H) * exp( c * sum_{i} I(H in A_i) * log(q_i / P_old(A_i)) )
+          normalized.
+
+       But to achieve the desired q_i, we must set c appropriately? Actually, if we set c=1, we get Jeffrey. If we set c to the same value for all updates, then it is commutative? 
+
+       However, we note that the desired q_i is achieved only if we set c=1? No, if we set c=1, then P_new(A_i) = [ P_old(A_i) * (q_i / P_old(A_i)) ] / [ ... ] = q_i. So for a single update, we must set c=1 to get the desired probability. But then for multiple updates, we would use c=1 for each, and then it is the same as Jeffrey and not commutative.
+
+       There is a different approach: for multiple updates, Field conditioning (as per the commutative version) uses a fixed c for all updates, but then the posterior probability of the evidence events is not set to the given q_i. So it doesn't satisfy D5.
+
+       Therefore, we drop Field conditioning.
+
+     Final candidates for the scorecard:
+
+       - "Naive Conditioning"
+       - "Jeffrey Conditioning"
+
+     And we add:
+
+       - "Simultaneous Minimum Relative Entropy" (for batch updates)
+
+     But note: the problem states that analysts update fast and evidence arrives sequentially. So batch updates may not be feasible.
+
+     We create the JSON accordingly.
+
+     Joint Satisfiability:
+
+          The full list of desiderata cannot be jointly satisfied. We drop D2 (Commutativity) because it clashes with D3 (Partition Invariance) and because in practice, we can mitigate order-dependence by batching or by the nature of the evidence (if the evidence is on independent events, order matters less).
+
+     Recommendation:
+
+          We recommend Jeffrey Conditioning for sequential updates because it is simple, well-studied, and meets the core requirements (D1, D5) and has a justification (D4) for the partition it is applied to. We note that it fails D2 and D3, so we advise:
+
+            - Use only for predefined partitions (e.g., binary events).
+            - When multiple pieces of evidence arrive, update sequentially in a fixed order (e.g., the order of arrival) and document the order.
+            - If possible, batch evidence and update simultaneously using Minimum Relative Entropy for multiple constraints. But this is more complex and may be slower.
+
+          Given that evidence is usually about a single hypothesis (binary event), Jeffrey conditioning is appropriate.
+
+     Now the JSON:
+
+     Desiderata array:
+
+       [
+          { "id": "D1", "name": "Reduction to Conditioning", "statement": "When evidence is certain, update reduces to Bayesian conditioning; when uninformative, leaves probabilities unchanged.", "load_bearing": true, "why": "Ensures compatibility with standard Bayesian updating." },
+          { "id": "D2", "name": "Commutativity", "statement": "Order of updates does not affect final distribution.", "load_bearing": false, "why": "Evidence may arrive in any order, and the final belief should be consistent." },
+          { "id": "D3", "name": "Partition Invariance", "statement": "Update does not depend on how the evidence is partitioned.", "load_bearing": true, "why": "Avoids arbitrariness in framing of evidence." },
+          { "id": "D4", "name": "Principled Justification", "statement": "Rule has foundational justification (e.g., Dutch book, scoring rules).", "load_bearing": true, "why": "Ensures the rule is rational and not ad hoc." },
+          { "id": "D5", "name": "Non-dogmatism", "statement": "Can update to any probability for the evidence event.", "load_bearing": true, "why": "Core requirement for handling uncertain evidence." },
+          { "id": "D6", "name": "Value of Learning", "statement": "Free evidence is never harmful in expectation.", "load_bearing": true, "why": "Incorporating evidence should not decrease expected utility." }
+       ]
+
+     Candidates:
+
+       [
+          {
+            "name": "Naive Conditioning",
+            "scores": {
+               "D1": "violated",   // because when uninformative, it changes to 1, and when uncertain, it doesn't reduce to conditioning
+               "D2": "violated",   // sequential updates are order-dependent
+               "D3": "violated",   // it conditions on a specific event, so framing matters
+               "D4": "violated",   // no justification for uncertain evidence
+               "D5": "violated",   // forces evidence event to 1
+               "D6": "violated"    // can lead to overconfidence and harm
+            },
+            "notes": "Conditions on the evidence event as if it were certain. Overconfident and not recommended."
+          },
+          {
+            "name": "Jeffrey Conditioning",
+            "scores": {
+               "D1": "satisfied",
+               "D2": "violated",   // known to be order-dependent
+               "D3": "violated",   // requires and depends on the choice of partition
+               "D4": "satisfied",  // minimizes KL divergence subject to the constraint on the partition
+               "D5": "satisfied",
+               "D6": "contested"   // it is not vulnerable to Dutch books? But some argue it can be improved. In terms of accuracy, it may not dominate.
+            },
+            "notes": "Standard rule for updating on a partition. Well-justified for a fixed partition but order-dependent and partition-dependent."
+          },
+          {
+            "name": "Simultaneous Minimum Relative Entropy",
+            "scores": {
+               "D1": "satisfied",  // when evidence is certain, it reduces to conditioning; uninformative leaves unchanged
+               "D2": "satisfied",  // simultaneous update, so order is irrelevant
+               "D3": "satisfied",  // the constraint is on the probabilities of events, not on a partition -> but note: if we constrain the probabilities of overlapping events, it is not partition dependent
+               "D4": "satisfied",  // minimizes KL divergence, which has strong justification
+               "D5": "satisfied",
+               "D6": "satisfied"   // free evidence in the form of constraints should not harm if the minimization is done properly
+            },
+            "notes": "Updates by finding the distribution closest to the prior (in KL divergence) that satisfies all evidence constraints. Requires batching evidence and solving an optimization problem, which may be computationally intensive."
+          }
+       ]
+
+     Joint_satisfiability: "The full set of desiderata cannot be jointly satisfied due to conflicts between commutativity (D2) and partition invariance (D3) when combined with the other requirements. We recommend dropping commutativity (D2) as batching can mitigate order-dependence, but note that batch updates may not be feasible in real-time. Partition invariance (D3) is more critical to avoid framing effects."
+
+     Recommendation: "Given the constraints (analysts update fast and evidence is usually on a single natural language hypothesis), implement Jeffrey Conditioning for sequential updates on a binary partition for each piece of evidence. Advise analysts to phrase evidence as binary events and update in a fixed order. For complex evidence with multiple events, batch the evidence and use Simultaneous Minimum Relative Entropy if feasible."
+
+     Note: We added a candidate "Simultaneous Minimum Relative Entropy" even though it is not sequential because it is a viable alternative if batching is possible.
+
+     However, the problem states: "analysts update fast", so batching may not be the norm. But we include it for completeness.
+
+     We note that the Simultaneous Minimum Relative Entropy candidate is not defined for sequential updating. So for sequential updating, Jeffrey conditioning is the best among the evaluated.
+
+     We output the JSON accordingly.
+answer: |-
+  ### Desiderata for Uncertain Evidence Update Rules
+
+  **Core Problem**: Analysts receive probabilistic evidence (e.g., "shipment left port at 65% confidence"), not certain events. Standard Bayesian conditioning requires certain evidence, so we need a principled update rule for uncertain evidence.
+
+  #### Desiderata (Requirements)
+  1. **D1: Reduction to Standard Conditioning**  
+     - **Statement**: Must reduce to Bayesian conditioning when evidence is certain (P(E)=1) and leave probabilities unchanged when evidence is uninformative (P(E) unchanged).  
+     - **Why**: Ensures backward compatibility with probability theory. Violating this breaks coherence.  
+     - **Load-bearing**: Non-negotiable.  
+
+  2. **D2: Commutativity**  
+     - **Statement**: Sequential updates on different evidence partitions must yield the same final distribution, regardless of order.  
+     - **Why**: Real-world evidence order is arbitrary; order-dependence introduces subjectivity.  
+     - **Load-bearing**: Highly desirable, but may conflict with D3.  
+
+  3. **D3: Partition Invariance**  
+     - **Statement**: Updates must be invariant to how evidence is partitioned (e.g., framing "A" vs. "not A" shouldn’t change results).  
+     - **Why**: Analysts describe evidence differently; outcomes should depend on information, not framing.  
+     - **Load-bearing**: Non-negotiable (avoids arbitrariness).  
+
+  4. **D4: Principled Justification**  
+     - **Statement**: Must have foundational justification (e.g., Dutch book coherence, scoring rule optimization, or value-of-learning arguments).  
+     - **Why**: Prevents ad hoc rules vulnerable to irrationality (e.g., Dutch books).  
+     - **Load-bearing**: Non-negotiable.  
+
+  5. **D5: Non-Dogmatism**  
+     - **Statement**: Must accommodate any degree of confidence (0 < P(E) < 1) without forcing certainty.  
+     - **Why**: Evidence is intrinsically uncertain; forcing P(E)=1 destroys information.  
+     - **Load-bearing**: Non-negotiable.  
+
+  6. **D6: Non-Harmfulness of Free Evidence**  
+     - **Statement**: Free evidence (costless to acquire) never reduces expected accuracy/utility.  
+     - **Why**: Rational agents should never ignore free evidence; violations imply update pathology.  
+     - **Load-bearing**: Negotiable if computationally prohibitive.  
+
+  **Conflicts**:  
+  - **D2 (Commutativity) clashes with D3 (Partition Invariance)**: Jeffrey conditioning satisfies D3 but violates D2. Field conditioning satisfies D2 but violates D3.  
+  - **D6 may conflict with simplicity**: Some rules (e.g., simultaneous MRE) satisfy D6 but are computationally heavy.  
+
+  ---
+
+  ### Candidate Update Rules  
+  **Key Candidates**:  
+  1. **Naive Conditioning**: Treat uncertain evidence as certain (e.g., condition on "shipment left" if P(E)=0.65).  
+  2. **Jeffrey Conditioning**: Update by rescaling probabilities proportionally to new evidence probabilities.  
+  3. **Field Conditioning**: Adjust odds ratios with a fixed exponent to enforce commutativity.  
+  4. **Simultaneous MRE (Minimal Relative Entropy)**: Batch all evidence and find the closest distribution to the prior satisfying all constraints.  
+
+  #### Scorecard (JSON)
+
+  ```json
+  {
+    "desiderata": [
+      { "id": "D1", "name": "Reduction to Conditioning", "statement": "Reduces to Bayes when evidence is certain; invariant when uninformative.", "load_bearing": true, "why": "Core coherence requirement." },
+      { "id": "D2", "name": "Commutativity", "statement": "Order of updates does not affect final distribution.", "load_bearing": true, "why": "Evidence order is arbitrary; order-dependence is subjective." },
+      { "id": "D3", "name": "Partition Invariance", "statement": "Invariant to evidence partitioning/framing.", "load_bearing": true, "why": "Avoids arbitrariness in evidence description." },
+      { "id": "D4", "name": "Principled Justification", "statement": "Foundational rationale (e.g., Dutch books, scoring rules).", "load_bearing": true, "why": "Prevents irrational or arbitrary rules." },
+      { "id": "D5", "name": "Non-Dogmatism", "statement": "Supports partial evidence (0 < P(E) < 1).", "load_bearing": true, "why": "Evidence is never certain." },
+      { "id": "D6", "name": "Non-Harmfulness of Free Evidence", "statement": "Free evidence never reduces expected accuracy/utility.", "load_bearing": false, "why": "Mildly negotiable for tractability." }
+    ],
+    "candidates": [
+      {
+        "name": "Naive Conditioning",
+        "scores": {
+          "D1": "violated",
+          "D2": "violated",
+          "D3": "violated",
+          "D4": "violated",
+          "D5": "violated",
+          "D6": "violated"
+        },
+        "notes": "Forces P(E)=1, destroying uncertainty. Violates all desiderata except trivial cases. Overconfident and irrational."
+      },
+      {
+        "name": "Jeffrey Conditioning",
+        "scores": {
+          "D1": "satisfied",
+          "D2": "violated",
+          "D3": "satisfied",
+          "D4": "satisfied",
+          "D5": "satisfied",
+          "D6": "contested"
+        },
+        "notes": "Minimizes KL divergence for a fixed partition. Justified by probability kinematics (D4). Order-dependent (D2 violated), but partition-invariant (D3). D6 contested: may harm accuracy if partitions correlate."
+      },
+      {
+        "name": "Field Conditioning",
+        "scores": {
+          "D1": "satisfied",
+          "D2": "satisfied",
+          "D3": "violated",
+          "D4": "contested",
+          "D5": "satisfied",
+          "D6": "depends"
+        },
+        "notes": "Fixes commutativity (D2) via odds-ratio exponents. Violates D3: sensitive to partition granularity. D4 contested: exponent choice lacks consensus. D6 depends on implementation."
+      },
+      {
+        "name": "Simultaneous MRE",
+        "scores": {
+          "D1": "satisfied",
+          "D2": "satisfied",
+          "D3": "satisfied",
+          "D4": "satisfied",
+          "D5": "satisfied",
+          "D6": "satisfied"
+        },
+        "notes": "Batches evidence and minimizes KL divergence under constraints. Satisfies all but computationally intensive. Requires solving optimization; impractical for real-time streaming."
+      }
+    ],
+    "joint_satisfiability": "No rule satisfies all desiderata. D2 (Commutativity) and D3 (Partition Invariance) conflict: Jeffrey satisfies D3 but violates D2; Field satisfies D2 but violates D3. Simultaneous MRE satisfies all but isn't sequential. Drop D2 for sequential contexts: accept order-dependence with a fixed update protocol to mitigate arbitrariness.",
+    "recommendation": "Implement Jeffrey Conditioning for sequential updates. Analysts receive evidence as natural-language probabilities (e.g., 65% confidence), which map cleanly to a binary partition. To mitigate order-dependence (D2): (1) Predefine partitions where possible, (2) Use a fixed update order (e.g., time-received), and (3) Document order assumptions. For complex evidence, batch periodically with Simultaneous MRE."
+  }
+  ```
+
+  #### Rationale for Recommendation  
+  - **Why Jeffrey?**  
+    - Analysts supply evidence as confidence on hypotheses (e.g., "65% shipment left"), fitting binary partitions.  
+    - Satisfies D1, D3, D4, D5—non-negotiable requirements.  
+    - Computationally trivial (scales to fast updates).  
+  - **Mitigating Weaknesses**:  
+    - **Order-dependence (D2)**: Fix update order (e.g., by timestamp) to remove subjectivity.  
+    - **D6**: Evidence is free; small inaccuracies from order-dependence are acceptable vs. computational cost of MRE.  
+  - **Alternatives**:  
+    - **Field**: Lacks justification (D4) and partition invariance (D3).  
+    - **MRE**: Ideal but too slow for real-time; reserve for end-of-day reconciliation.  
+  - **When to Revisit**: If evidence complexity grows (e.g., many overlapping events), invest in batched MRE.

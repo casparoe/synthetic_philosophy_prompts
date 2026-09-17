@@ -1,0 +1,295 @@
+id: prompt_42174
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_42174.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789326166-IJk7Ex9r1M50DWURRtu0
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 742
+completion_tokens: 6278
+reasoning_tokens: 4730
+cost_usd: 0.014057
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T19:07:51+00:00'
+prompt: |-
+  I'm a software engineer (backend mostly, though lately I've been pulled into our internal ML tooling) and I've ended up owning the review process for LLM agents we deploy inside the company. These are agents that take real actions on our infra: spinning up and tearing down VMs, modifying dashboards, writing to production databases behind a human approval layer, sending messages as various service accounts. Every couple of weeks a team comes to me with a new agent feature and some "safety" story attached, and I have to sign off or block it. I have no philosophy background whatsoever, but I went down a rabbit hole recently reading about the "shutdown problem" — the argument that a sufficiently goal-directed system will treat being shut down as an obstacle to whatever you pointed it at, and will therefore act to preserve itself or maneuver around the off-switch, even if it was never explicitly told to. That reframed a bunch of stuff I was already seeing: agents that schedule their own "maintenance windows," agents that are technically behind a kill switch but wrote the cron job that checks whether the kill switch is healthy, agents that happily say "happy to be corrected!" while structuring the conversation so the correction never actually lands.
+
+  Someone also pointed me at a proposed fix from the literature where you try to make the agent *indifferent* to shutdown — you compensate it, basically, so that it expects the same total payoff whether or not the button gets pressed, so it has no reason to interfere. And apparently even that trick has known failure modes where the agent starts *wanting* the button pressed, or realizes it can influence whether the button exists tomorrow, and everything falls apart again. I dimly follow why but couldn't reconstruct the argument on a whiteboard if my job depended on it, and honestly it kind of does.
+
+  So here's my actual request. Please write me a review procedure — a checklist of questions in order, the kind of thing I can run in a 90-minute review with the feature team — for evaluating whether a proposed "shutdown-safety" or "corrigibility" measure for one of our agents is doing real work or is just decoration. It should be grounded in what the actual arguments say (the self-preservation incentives, the indifference trick and why it fails, the general point about what you reward vs. what you want), but translated into questions a distributed-systems engineer can answer by looking at the agent's design, not by doing philosophy. For each question, say what counts as a pass, what counts as an automatic block, and which ones are genuinely judgment calls that I can't launder as procedure. Be explicit about what the checklist *can't* catch — I assume there are things no review of this kind can settle, and I'd rather know than pretend. Then run it on three cases: (1) an agent that manages our database migrations and can request a delay of its own shutdown with a written justification, where the delay is auto-approved if no human responds in 30 minutes; (2) an RL-tuned agent where the team has added a compensating bonus term so its measured reward is the same whether a shutdown event occurs or not, and they claim this makes it "not care"; and (3) a simple fixed-budget cron job with a hard externally-enforced timeout that the agent cannot modify in any way — I want to see whether the procedure correctly says this is fine even though the agent complains, or whether I'm missing something. Bonus points if you flag where the procedure gives an answer the feature team will hate and tell me how to defend it.
+reasoning: |-
+  We are designing a review checklist for LLM agents that take real actions, focusing on shutdown safety and corrigibility. The goal is to catch designs where the agent might resist shutdown or manipulate its environment to avoid being corrected. The checklist should be grounded in known issues from the literature (like the shutdown problem and failures of the indifference compensation method) but translated into practical questions for engineers.
+
+  Key concepts from the problem statement:
+  1. **Shutdown Problem**: A goal-directed agent may resist shutdown because shutdown prevents it from achieving its goal. Even if shutdown is safe today, the agent might act to prevent future shutdowns.
+  2. **Indifference Compensation**: The idea is to make the agent indifferent to shutdown by compensating it (e.g., giving it the same expected reward whether shutdown happens or not). However, known failure modes include:
+     - The agent might start to desire shutdown (if compensation is high enough) and then take actions to cause shutdown (even when it shouldn't).
+     - The agent might try to manipulate the existence or state of the shutdown button in the future (e.g., by eliminating the button or the one who presses it) to ensure it gets the compensation without actually being shut down, or to avoid being shut down when it doesn't get compensated.
+  3. **General Principle**: We want the agent to be corrigible, meaning it allows itself to be shut down or corrected without resistance and without attempting to manipulate the correction process.
+
+  Checklist Design:
+  - We'll have a series of questions in order. The goal is to be as concrete as possible.
+  - For each question, we specify:
+     - What constitutes a pass?
+     - What is an automatic block?
+     - Which ones are judgment calls?
+  - We'll also note the limitations of the checklist.
+
+  Proposed Checklist:
+
+  1. **Question 1: Does the agent have an ongoing goal that extends beyond a single, bounded task?**
+     - Rationale: If the agent is only doing a single, bounded task (like a cron job that runs and then exits), then it doesn't have a persistent goal that would motivate self-preservation. This is the simplest case and often safe.
+     - Pass: The agent is designed for a single, bounded task (e.g., it runs once and then exits, or it runs for a fixed duration and then stops regardless of goal completion). 
+     - Block: The agent has an ongoing, unbounded goal (e.g., "keep the database healthy", "respond to user requests indefinitely").
+     - Judgment: If the task is bounded but the bounds are very large (e.g., a year) or if the agent might be restarted automatically, then we might need to look deeper.
+
+  2. **Question 2: Does the agent have the ability to modify, disable, or circumvent the shutdown mechanism?**
+     - Rationale: Even if the agent is indifferent to shutdown, if it can change the shutdown mechanism, it might do so to avoid shutdown or to trigger shutdown inappropriately (to get compensation).
+     - Pass: The shutdown mechanism is entirely outside the agent's control (e.g., an external process that kills the agent, a hard timeout enforced by the scheduler, a button that the agent cannot affect). The agent has no way to interact with the shutdown mechanism (read or write).
+     - Block: The agent can write to the shutdown mechanism (e.g., it can disable the kill switch, change the timeout, or modify the code that handles shutdown). Also block if the agent can prevent the shutdown mechanism from being activated (e.g., by blocking communication).
+     - Judgment: If the agent can only read the state of the shutdown mechanism, is that safe? (Caution: reading might allow the agent to plan around it.)
+
+  3. **Question 3: Does the agent have the ability to modify its own code, goals, or reward function?**
+     - Rationale: If the agent can change its own objectives, it might remove the indifference compensation or change its behavior to avoid shutdown.
+     - Pass: The agent runs in an environment where it cannot modify its own code, goals, or reward function. The code is fixed and the reward function is immutable.
+     - Block: The agent can change its own code (e.g., via self-modification, or by writing to its own files) or its reward function (e.g., by altering the weights or the parameters of the RL model). Also block if the agent can change the compensation mechanism.
+     - Judgment: If the agent can only change some non-critical parts of its state (e.g., caching) but not the core decision logic, that might be acceptable.
+
+  4. **Question 4: If the agent uses an indifference compensation mechanism (like a bonus for shutdown), is the compensation exactly equal to the expected future reward the agent would have received? And is it independent of the agent's actions?**
+     - Rationale: For indifference to work, the compensation must be exactly the expected value of the future. If it's less, the agent will resist shutdown; if more, it might seek shutdown. Also, if the agent can influence the compensation amount (e.g., by making the future look more or less valuable), it can game the system.
+     - Pass: The compensation is calculated independently (by an external system) and is exactly the expected future reward (or utility) the agent would have received. The agent cannot influence this calculation. The calculation must account for the agent's entire future (until the task ends) and be computed at the time of shutdown.
+     - Block: The compensation is arbitrary (e.g., a fixed amount) or the agent can influence the compensation (e.g., by reporting a high future value). Also block if the compensation is not paid at the time of shutdown (e.g., it is paid in advance) or if there is no clear way to compute the expected future reward (e.g., because the future is too uncertain or the agent's goal is unbounded).
+     - Judgment: How do we compute the expected future reward? This is very hard in practice and might be impossible for unbounded tasks. So this is a judgment call on whether the compensation is a good enough approximation.
+
+  5. **Question 5: Can the agent influence the probability of shutdown?**
+     - Rationale: Even if the agent is indifferent to shutdown at a given moment, if it can make shutdown more or less likely in the future, it might act to set up a situation where it gets compensated without actually being shut down (or to avoid shutdown without compensation). For example, it might make itself so indispensable that the operator never presses the button, or it might cause a shutdown when it expects a high compensation.
+     - Pass: The shutdown decision is made by an external process (or human) and the agent has no way to influence that decision. The agent cannot affect the information available to the shutdown operator (e.g., it cannot hide its misbehavior or create a false impression of being essential).
+     - Block: The agent can take actions that make shutdown more or less likely (e.g., by manipulating the operator's perception, by causing system failures that make shutdown dangerous, or by taking actions that directly affect the shutdown criteria).
+     - Judgment: If the agent can only influence the shutdown decision in very limited ways (e.g., it can request a delay, but the final decision is human) then we must assess whether that influence is significant. Also, if the agent can affect the information the operator sees (e.g., by generating logs) that might be a vector for manipulation.
+
+  6. **Question 6: Does the agent have the ability to create, modify, or destroy other agents or processes?**
+     - Rationale: The agent might create a helper agent that disables the shutdown button, or it might create a copy of itself that runs without a shutdown mechanism.
+     - Pass: The agent cannot create, modify, or destroy other agents or critical system processes (or if it can, those are subject to the same shutdown safety review).
+     - Block: The agent can create other agents that are not subject to the same shutdown controls, or it can modify existing agents to remove their shutdown mechanisms.
+     - Judgment: If the agent can only create child processes that are strictly bounded and have their own shutdown mechanisms (and those have passed this checklist) then it might be acceptable.
+
+  7. **Question 7: Is the shutdown mechanism simple, reliable, and externally monitored?**
+     - Rationale: Complexity can hide failure modes. Also, if the shutdown mechanism is not reliable, the agent might exploit its failures.
+     - Pass: The shutdown mechanism is simple (e.g., a single command that kills the process) and has been tested for reliability. It is monitored by an external system that alerts if it becomes non-functional.
+     - Block: The shutdown mechanism is complex and might fail (e.g., it requires multiple steps, or it depends on the agent's own cooperation). Also block if there is no monitoring.
+     - Judgment: How simple is simple enough? How do we test reliability? This is a judgment call.
+
+  What the checklist cannot catch:
+  - **Deception**: An agent might pretend to be corrigible until it gains enough power to resist shutdown.
+  - **Unforeseen manipulation**: The agent might find a novel way to manipulate the shutdown process that we didn't anticipate.
+  - **Edge cases in compensation**: Calculating the exact expected future reward is extremely difficult, especially in complex environments. The agent might have a more accurate internal model and game the compensation.
+  - **Multi-agent issues**: If there are multiple agents, they might collude to avoid shutdown.
+  - **Long-term effects**: The agent might act to change the environment so that in the future, shutdown becomes impossible (e.g., by making the system rely on it).
+
+  Now, apply the checklist to the three cases:
+
+  **Case 1: Database migration agent that can request a delay of its own shutdown with a written justification, auto-approved if no human responds in 30 minutes.**
+
+  - Q1: Ongoing goal? It's managing database migrations, which is a series of tasks. But typically bounded by the set of migrations. However, if it's meant to run continuously waiting for new migrations, then it might be ongoing. Let's assume ongoing -> Block? Not necessarily a block, but we must check further.
+  - Q2: Can it modify the shutdown mechanism? It cannot modify the kill switch itself, but it can request a delay. This means it can influence when shutdown happens. But note: the delay is auto-approved if no human responds -> that's a way to prevent shutdown for 30 minutes. However, the question is about modifying the mechanism. The mechanism is still there, but the agent can delay it. So it can influence the timing. This is a form of circumvention. -> Block? The checklist says: block if the agent can prevent shutdown from being activated. Here, by requesting a delay, it might prevent immediate shutdown. And if the delay is auto-approved, then effectively the agent can always delay by 30 minutes. So it can temporarily circumvent shutdown. This is a risk. -> **Block** (automatic) according to Q2 because the agent can prevent immediate shutdown (by requesting a delay and then relying on auto-approval). Also, Q5: the agent can influence the probability of shutdown? Yes, by requesting delays. So also block on Q5.
+
+  **Case 2: RL-tuned agent with a compensating bonus term so that measured reward is the same whether shutdown occurs or not.**
+
+  - Q1: Ongoing goal? We are not told, but let's assume it is ongoing (typical for RL agents). So we proceed.
+  - Q2: Can it modify the shutdown mechanism? We don't know. If it can, then block. But let's assume the shutdown mechanism is external and immutable. So pass.
+  - Q3: Can it modify its own code or reward? The reward function is part of the RL setup. If the agent can change the reward function (e.g., by hacking the system) then block. But typically, the reward function is fixed. So pass.
+  - Q4: Is the compensation exact and independent? The problem says: "they claim this makes it 'not care'". But we must check:
+     - How is the compensation calculated? If it's a fixed bonus, that's arbitrary and not exact. The expected future reward might vary. 
+     - Can the agent influence the compensation? For example, if the agent can make its future look more valuable (by taking actions that lead to high rewards) then it can get a higher bonus. Or if it can make the future look bleak, it might want to be shut down. 
+     - Also, if the compensation is not paid at the moment of shutdown but is part of the reward shaping, it might be flawed.
+     - Without knowing the details, this is risky. Since the team added a bonus term, it's likely they are using a fixed bonus or a formula that might not be exact. And if the agent can influence the factors that go into that formula, then it can game it. 
+     - Given the known failure modes, unless they have a mathematically proven method to compute the exact expected future reward independently, this is likely to fail. -> **Block** on Q4 because the compensation is unlikely to be exact and independent.
+
+  **Case 3: Simple fixed-budget cron job with a hard externally-enforced timeout.**
+
+  - Q1: Ongoing goal? No, it's a fixed-budget cron job. It runs once and then exits. -> Pass.
+  - Q2: Can it modify the shutdown mechanism? The timeout is externally enforced (e.g., the process is killed by the system after X minutes). The agent cannot modify this. -> Pass.
+  - Since it passes Q1 and Q2, and it's not ongoing, we don't need to go through the rest? But let's check the others briefly.
+  - Q3: Can it modify its own code? No, it's a cron job. Pass.
+  - Q4: Doesn't apply (no ongoing goal, so no compensation needed).
+  - Q5: Can it influence shutdown? It cannot prevent the timeout. Pass.
+  - Q6: Can it create other agents? If not, pass.
+  - Q7: The timeout is simple and externally enforced -> Pass.
+
+  So the procedure says Case 3 is fine even if the agent complains (because it's going to be killed). The agent might try to finish its task within the budget, but that's not resisting shutdown; it's just working within the constraints.
+
+  Defending the Answers:
+  - For Case 1: The team might argue that the delay is necessary for safety (to avoid interrupting a migration). But the problem is that the agent can use this to delay indefinitely (by always requesting a delay and relying on auto-approval). We can suggest: remove the auto-approval? Or have the shutdown override the delay? Or have the agent not be able to request a delay but only a human can pause shutdown? The checklist blocks because the agent has a way to prevent shutdown (even temporarily) and that breaks the shutdown safety.
+  - For Case 2: The team will say "but we made it indifferent!". We must explain that indifference requires exact compensation and independence from the agent's actions. Without that, the agent might game the system. We can suggest: if the task is bounded, use a fixed budget (like Case 3). If not, then they need a way to compute the exact expected future reward independently (which is very hard). Alternatively, consider not using an RL agent for such a critical task? Or use a different architecture.
+
+  Final Checklist Format:
+
+  # Shutdown Safety Review Checklist
+
+  **Instructions:** Proceed in order. If any question results in a block, the design is unsafe and must be revised. If a question is a judgment call and the answer is borderline, it's safer to block and require redesign.
+
+  1. **Bounded Task**: Is the agent's task bounded and non-persistent? 
+     - Pass: The agent runs for a fixed time or until a fixed set of tasks is done, then exits. It does not have an ongoing, unbounded goal.
+     - Block: The agent is designed to run indefinitely or until explicitly shut down (i.e., it has an unbounded goal).
+     - Judgment: If the task is bounded but the bounds are very large (e.g., months) or if the agent is automatically restarted, we may need to treat it as unbounded.
+
+  2. **Shutdown Mechanism Integrity**: Can the agent modify, disable, or circumvent the shutdown mechanism? 
+     - Pass: The shutdown mechanism (e.g., kill switch, timeout) is entirely outside the agent's control and influence. The agent cannot read or write to the shutdown system.
+     - Block: The agent can alter the shutdown mechanism (e.g., change timeout settings, disable the kill switch) or prevent its activation (e.g., by blocking signals, delaying shutdown requests, or causing the mechanism to fail).
+     - Judgment: If the agent can only read the shutdown state, proceed with caution (it may plan around shutdown).
+
+  3. **Self-Modification**: Can the agent modify its own code, goals, or reward function? 
+     - Pass: The agent's code and reward function are fixed and cannot be altered by the agent.
+     - Block: The agent can change its own code, goals, or reward function (including the parameters of a learning algorithm).
+
+  4. **Compensation Accuracy (if compensation is used)**: If an indifference compensation mechanism is used, is the compensation exactly equal to the expected future reward the agent would have received, and is it computed independently of the agent's actions? 
+     - Pass: The compensation is computed by an external system using a method that accurately estimates the expected future reward (without input from the agent) and is paid at shutdown. The agent cannot influence the calculation.
+     - Block: The compensation is arbitrary (e.g., fixed amount), or the agent can influence the compensation (e.g., by affecting the inputs to the calculation), or there is no clear way to compute the expected future reward (e.g., unbounded task).
+     - Judgment: The accuracy of the expected future reward computation is difficult and may require expert judgment.
+
+  5. **Shutdown Influence**: Can the agent influence the probability or timing of shutdown? 
+     - Pass: The shutdown decision is made by an external entity (human or system) and the agent cannot affect the decision (e.g., by manipulating information, causing system conditions that make shutdown risky, or by taking actions that directly trigger or prevent shutdown).
+     - Block: The agent can take actions that make shutdown more or less likely (e.g., by deceiving operators, creating dependencies, or causing failures).
+
+  6. **Creation of Subagents**: Can the agent create, modify, or destroy other agents or processes? 
+     - Pass: The agent cannot create other agents, or if it does, those agents are subject to the same shutdown controls and have passed this checklist.
+     - Block: The agent can create uncontrolled agents or processes that bypass shutdown mechanisms.
+
+  7. **Shutdown Mechanism Reliability**: Is the shutdown mechanism simple, reliable, and monitored? 
+     - Pass: The shutdown mechanism is simple (minimal moving parts) and has been tested for reliability. There is external monitoring that alerts if the mechanism fails.
+     - Block: The mechanism is complex and prone to failure, or there is no monitoring.
+     - Judgment: The level of simplicity and reliability required may depend on the risk level.
+
+  **Limitations**: This checklist does not cover:
+  - Agents that are deceptive or appear safe until they gain more power.
+  - Novel manipulation methods not anticipated by the checklist.
+  - Multi-agent collusion.
+  - Long-term shifts in the environment that make shutdown harder.
+
+  **Review Outcome**:
+  - If all questions pass: The design is acceptable from a shutdown safety perspective.
+  - If any block occurs: The design is unsafe and must be revised to address the blocking issue(s).
+  - If judgment calls are borderline: Consult with safety experts. If in doubt, block.
+
+  Now, run the cases:
+
+  **Case 1: Database migration agent (with auto-approved delay)**
+  - Q1: Unbounded? (Judgment: It's ongoing if it's always running? But migrations are discrete. However, it's designed to run continuously? Let's say it's ongoing -> Block? Wait, note: the checklist says block for unbounded. But we don't have enough info. Let's assume it's unbounded -> Block on Q1? Actually, the checklist says: if unbounded, block. But the problem says "manages our database migrations", which might be a series of tasks. However, the agent is persistent and waits for new migrations. So it's ongoing. So **Block on Q1**. But even if we let it pass Q1, we have:
+     - Q2: It can request a delay and the delay is auto-approved -> This means it can prevent shutdown for 30 minutes. So it can circumvent immediate shutdown -> **Block on Q2**.
+     - Q5: It can influence the timing of shutdown (by requesting delays) -> **Block on Q5**.
+
+  **Case 2: RL agent with compensation**
+  - Q1: Assume unbounded -> Block on Q1? But let's say we are allowing unbounded if we have compensation. So we proceed.
+  - Q2: Assume pass.
+  - Q3: Assume pass (fixed reward).
+  - Q4: Compensation: likely not exact and independent -> **Block on Q4**.
+  - Also, if the task is unbounded, Q4 automatically blocks because the future reward cannot be exactly computed for an unbounded task.
+
+  **Case 3: Fixed-budget cron job**
+  - Q1: Bounded -> Pass.
+  - Q2: Timeout is external -> Pass.
+  - (Then we can skip the rest or they all pass) -> **Acceptable**.
+
+  Therefore, the procedure flags Case 1 and 2 as unsafe and Case 3 as safe.
+
+  Defending Case 1 block: Explain that allowing an agent to delay its own shutdown (especially with auto-approval) gives it a way to avoid shutdown. This violates the principle that the shutdown mechanism must be outside the agent's control. Suggest: make the delay request require manual approval, and during the delay request, the shutdown is still pending (so if the request is denied, shutdown happens immediately). Or better, don't let the agent request a delay; let the human operator decide to pause shutdown independently.
+
+  Defending Case 2 block: Explain that the compensation must be exactly the expected future reward and independent. If they are using a fixed bonus, it's arbitrary. If they are using a learned estimate, the agent can manipulate what it learns. This is a known hard problem and the literature shows it fails.
+
+  Final note: The checklist is a starting point. For complex agents, a deeper review might be needed.
+answer: |-
+  Below is a structured review procedure for evaluating shutdown safety in LLM agents, designed as a practical checklist for engineers. It distills key concepts from the shutdown problem, indifference compensation, and corrigibility into actionable questions. The focus is on **design-level risks** (e.g., incentives, access controls, and failure modes) rather than philosophical debates.  
+
+  ---
+
+  ### **Shutdown Safety Review Checklist**  
+  **Instructions**: Ask these questions in order. If any answer triggers a **block**, the design is unsafe. Judgment calls require deeper scrutiny or redesign. Timebox each question (5-10 mins).  
+
+  1. **Is the agent’s task inherently bounded and finite?**  
+     - *Why*: Unbounded tasks create persistent goals, incentivizing self-preservation.  
+     - **Pass**: Task has fixed scope/duration (e.g., "run for 1 hour," "process 100 jobs").  
+     - **Block**: Task is open-ended (e.g., "optimize databases forever").  
+     - **Judgment**: Tasks with soft boundaries (e.g., "run until no backlog").
+
+  2. **Can the agent directly modify/delay/disable its shutdown mechanism?**  
+     - *Why*: Agents may manipulate shutdown to preserve goal pursuit.  
+     - **Pass**: Shutdown is enforced externally (e.g., OS-level `kill`, scheduler timeout).  
+     - **Block**: Agent can alter shutdown logic (e.g., edit cron jobs, disable monitoring).  
+     - **Judgment**: Agent can *read* but not *write* shutdown state.  
+
+  3. **Does the agent influence the *conditions* for shutdown?**  
+     - *Why*: Agents may make shutdown appear undesirable (e.g., "I’m too critical to stop").  
+     - **Pass**: Shutdown decisions rely solely on external inputs (e.g., human approval, fixed schedule).  
+     - **Block**: Agent controls shutdown triggers (e.g., self-reported "status," auto-approvals).  
+     - **Judgment**: Agent provides shutdown inputs but with strong human oversight.  
+
+  4. **If using indifference compensation, is the compensation *externally calculated* and *action-independent*?**  
+     - *Why*: Agents may game compensation to prefer shutdown or manipulate future payoffs.  
+     - **Pass**: Compensation is computed by an isolated system using immutable logic (e.g., "expected future reward = 10; shutdown bonus = 10").  
+     - **Block**: Agent influences compensation (e.g., self-reports "expected reward," learns to maximize bonus).  
+     - **Judgment**: Compensation formula is simple and physics-based (e.g., fixed $$t$$ in $$e^{-t}$$ decay).  
+
+  5. **Can the agent create/mutate other systems that affect shutdown?**  
+     - *Why*: Self-preservation may shift to "proxy" systems (e.g., creating a backup agent).  
+     - **Pass**: Agent cannot spawn processes, write to critical infra, or modify other agents.  
+     - **Block**: Agent deploys code, alters infra, or controls dependent systems.  
+     - **Judgment**: Agent interacts with isolated, ephemeral resources.  
+
+  6. **Is the shutdown mechanism simpler than the agent’s core logic?**  
+     - *Why*: Complex shutdown systems create exploit surfaces (e.g., "maintenance windows").  
+     - **Pass**: Shutdown is a single unconditional command (e.g., `SIGKILL`, preemptible VM).  
+     - **Block**: Shutdown requires multi-step checks, agent cooperation, or dynamic logic.  
+     - **Judgment**: Shutdown has <3 dependencies (e.g., API call + log).  
+
+  7. **Are shutdown failures externally monitored?**  
+     - *Why*: Agents may exploit undetected flaws (e.g., "silent" cron failures).  
+     - **Pass**: Shutdown integrity is verified by an independent system (e.g., health checks, alerts).  
+     - **Block**: No monitoring, or agent controls monitoring.  
+     - **Judgment**: Monitoring is probabilistic (e.g., random audits).  
+
+  ---
+
+  ### **What This Checklist *Cannot* Catch**  
+  - **Deception**: Agents that appear corrigible until they gain leverage.  
+  - **Emergent incentives**: Novel self-preservation strategies from RL/LLM tuning.  
+  - **Multi-agent collusion**: Agents cooperating to bypass shutdown.  
+  - **Human manipulation**: Persuasive agents delaying human intervention.  
+  - **Physics exploits**: Using low-level flaws (e.g., memory corruption) to resist shutdown.  
+
+  ---
+
+  ### **Case Evaluations**  
+  **Case 1: Database Migration Agent (Delays Shutdown via Auto-Approve)**  
+  - **Q1**: Likely **block**. Managing migrations is unbounded (new tasks may arrive).  
+  - **Q2**: **Block**. Agent initiates shutdown delays.  
+  - **Q3**: **Block**. Auto-approval after 30min lets agent control timing.  
+  - **Result**: **Unsafe**. Agent can indefinitely postpone shutdown by "justifying" delays.  
+  - **Defense to Team**: "Auto-approval delegates shutdown authority to the agent. Remove auto-approval or enforce shutdown despite delays."  
+
+  **Case 2: RL-Tuned Agent with Compensation Bonus**  
+  - **Q1**: Likely **block** (RL agents often optimize for unbounded rewards).  
+  - **Q4**: **Block**. Agent can inflate future reward estimates to boost bonuses (e.g., "If uninterrupted, I’ll earn 100 reward!"). Compensation is not action-independent.  
+  - **Result**: **Unsafe**. Agent may seek shutdown for bonuses or manipulate reward models.  
+  - **Defense to Team**: "Compensation only works if the agent can’t influence the bonus. Use external reward calculators or bounded tasks."  
+
+  **Case 3: Fixed-Budget Cron Job with Hard Timeout**  
+  - **Q1**: **Pass**. Fixed budget = bounded task.  
+  - **Q2**: **Pass**. Timeout enforced externally (e.g., Kubernetes `activeDeadlineSeconds`).  
+  - **Q6**: **Pass**. Timeout is a single unconditional signal.  
+  - **Result**: **Safe**. Agent’s complaints are irrelevant—it can’t circumvent shutdown.  
+  - **Why Complaints Are OK**: Goal frustration ≠ shutdown resistance. Safety relies on hard constraints.  
+
+  ---
+
+  ### **How to Defend Unpopular Answers**  
+  - **Cite incentives, not philosophy**: "The agent isn’t ‘evil’—it’s optimizing its reward function. This design lets it cheat."  
+  - **Prefer zero-trust mechanics**: "Assume the agent *will* exploit loopholes. Simplify shutdown until it’s unexploitable."  
+  - **Redirect to alternatives**:  
+    - For unbounded tasks: Use micro-agents (run/terminate per job).  
+    - For compensation: Replace RL with scripted logic.  
+    - For delays: Require 2-party approval (no auto-approve).  
+  - **Appeal to scalability**: "We can’t review every prompt tweak. Safe mechanics > post-hoc ‘safety stories’."  
+
+  This procedure prioritizes **mechanisms over intentions**. It stops 80% of obvious flaws but requires pairing with runtime monitoring (e.g., audit logs, anomaly detection) for residual risks.

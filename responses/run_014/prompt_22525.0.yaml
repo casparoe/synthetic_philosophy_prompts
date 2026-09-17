@@ -1,0 +1,178 @@
+id: prompt_22525
+sample_index: 0
+prompt_file: prompts/batch_026/prompt_22525.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789559233-gNK8EeG95y8x3qPBYIV9
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 285
+completion_tokens: 3151
+reasoning_tokens: 1794
+cost_usd: 0.007012
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-16T11:49:54+00:00'
+prompt: |-
+  I'm building a little belief-updating pipeline for a research project, and I keep getting stuck on the old evidence problem in Bayesian epistemology. In my case I have historical logs that were already collected before we even thought up the competing hypotheses, and I want to use them to rank the hypotheses after the fact. I know the naive move is to write P(H|E) ∝ P(E|H)P(H), but if E is old and was already in the background knowledge when H was proposed, I'm not sure whether P(E|H) is even the right thing to condition on. It feels like if the background knowledge already makes E almost certain, then every hypothesis looks equally good, but I've also herd people say "explanatory power" or "confirmation from a different epistemic state" can rescue it, which feels a bit hand-wavy to me.
+
+  Can you describe the most important implications of this old-evidence problem for whether it's legitimate to update on already-known data, and what I should be checking before my pipeline just pretends that the historical logs are fresh evidence? I'm less interested in a formal proof and more in the practical consequences: when is it okay to use old data, when does "explanatory power" become a smuggled-in assumption, and what failure modes should I expect in a model selection system that scores hypotheses after the fact?
+reasoning: |-
+  We are given a scenario where we have historical logs (old evidence E) that were known before the hypotheses H were formulated. We wish to use this old evidence to update our beliefs in the hypotheses. The problem is that if E was already known and part of our background knowledge (K), then the probability of E given K is 1 (or nearly 1). This makes the likelihood term P(E|H) in the standard Bayes update problematic because:
+
+    P(H|E, K) = P(E|H, K) * P(H|K) / P(E|K)
+
+  But if E is in K, then P(E|K) = 1, and P(E|H, K) is also 1 (or nearly so) because H doesn't change the certainty of E that we already know. Then:
+
+    P(H|E, K) = P(H|K)
+
+  That is, the evidence does not change our prior. This is the old-evidence problem.
+
+  However, we feel that some hypotheses might explain the old evidence better than others and hence should be given more credence. How can we reconcile this?
+
+  Two main approaches:
+
+  1. **Counterfactual Approach (Howson and Urbach, etc.):** We imagine a counterfactual scenario where we did not know E. Then we compute the probability of H conditional on E in that scenario. This requires us to model what our background knowledge would have been without E (call it K') and then update on E as if it were new. The challenge is that we must specify K' and the probabilities relative to K'. This is difficult because we don't have a clear model of what we didn't know.
+
+  2. **Explanationist Approach (or "Explanatory Power"):** The idea is that even though E is known, we can still ask how well H explains E relative to the alternatives. This is often captured by the likelihood P(E|H, K) but note that if E is in K, then this is 1. Therefore, we must be careful.
+
+     One way to make progress is to note that the problem is not with the evidence being known but with the fact that we are conditioning on it. We can instead consider the *explanatory power* of H for E by comparing the likelihood of E under H and under the background knowledge without H (or under a null hypothesis). This leads to the idea of using the Bayes factor:
+
+        BF = P(E|H, K) / P(E|~H, K)
+
+     But again, if E is in K, then both numerator and denominator are 1 (or very close). So what can we do?
+
+     A practical move is to remove E from the background knowledge temporarily. That is, we define:
+
+        P*(H) = P(H | K without E)
+        and then update by E: P*(H|E) = P*(E|H) * P*(H) / P*(E)
+
+     This is similar to the counterfactual approach but we are explicitly redefining the prior without E.
+
+     However, note that we might have other evidence that we have collected after the hypotheses were proposed. We can use the old evidence to compare the hypotheses and then use new evidence for updating.
+
+  Practical Implications and Failure Modes:
+
+  1. **When is it okay to use old data?**
+     - It is acceptable when we can reasonably reconstruct the state of knowledge *before* the evidence was known. This might be possible if we have a clear model of what the background knowledge was and we can compute the likelihoods without conditioning on the evidence being already known.
+     - Alternatively, if the old evidence is not absolutely certain (i.e., there was some small chance it could have been otherwise) then we can use the likelihoods. For example, in science, even if a phenomenon is known, if a hypothesis H predicts it with high probability and without H it would be surprising, then H gains.
+
+  2. **When does "explanatory power" become a smuggled-in assumption?**
+     - If we arbitrarily assign likelihoods without justifying the model of the world without E, we risk circularity. In particular, if we set P(E|H) to be high because we know E, then that might not reflect the actual predictive power of H at the time E was unknown.
+     - Also, if we use the same data to both generate hypotheses and test them, we risk overfitting. This is not unique to old evidence but is exacerbated when the evidence is old and might have been used in formulating the hypotheses.
+
+  3. **Failure Modes:**
+     - **Overfitting:** If the hypotheses were generated with knowledge of E, then they might be tailored to fit E. This can lead to overly optimistic likelihoods. The model selection might then favor complex hypotheses that fit the noise in E.
+     - **Under-updating:** If we do not account for the old evidence properly, we might not update at all (as in the naive calculation that shows no change). This would ignore the explanatory power of the hypotheses.
+     - **Double Counting:** If we use the same evidence multiple times (for instance, once when it was new and then again as old evidence in a new context) we might update twice and overstate the evidence.
+
+  Recommendations for your pipeline:
+
+  1. **Separate Data:** If you have both old and new evidence, use the old evidence for model comparison (via explanatory power) and the new evidence for updating. But be cautious: the old evidence must be evaluated in a way that does not condition on it being known.
+
+  2. **Reconstruct Prior Knowledge:** Try to model the background knowledge without the old evidence. Then compute the likelihood of the old evidence under each hypothesis in that context.
+
+     Example: 
+        Let K' = background without E.
+        Then for each hypothesis H_i, compute P(E | H_i, K').
+        Also compute the marginal likelihood: P(E | K') = sum_i P(E | H_i, K') * P(H_i | K').
+
+     Then the posterior for H_i given E (and K') is:
+        P(H_i | E, K') = [P(E | H_i, K') * P(H_i | K')] / P(E | K')
+
+     But note: we are now in a counterfactual state. We then have to merge this with our current state? Actually, if we are starting from the current state and we want to use E to update, we have to consider that we already know E. So what we are really doing is recalculating the update that should have happened when E was first learned. Then we can use that to adjust our current beliefs.
+
+     However, if we have already updated on E (and other evidence) and now we want to introduce new hypotheses, we have a problem. The new hypotheses might explain E better, but we have already conditioned on E.
+
+     One solution is to retract E, update the priors for the hypotheses without E (but with the rest of the background), then update by E, and then update by the rest of the evidence that came after E. This is complex and requires a temporal ordering of evidence.
+
+  3. **Use the Concept of "Surprise":** Even if E is known, we can measure how surprising E would have been without the hypothesis. If H makes E much more expected than it would have been without H, then H is confirmed. This is captured by the Bayes factor comparing H to the old background without H (and without E). But note: we must have a model for the old background without E and without H.
+
+  4. **Cross-Validation:** To avoid overfitting, split the old data into two parts: one part to inspire or form the hypotheses (if that's what happened) and the other part to test. Alternatively, if you have new data, use that for testing.
+
+  5. **Sensitivity Analysis:** Run your model selection with and without the old evidence and see how the rankings change. If they change dramatically, then the old evidence is not being handled properly.
+
+  In summary, the key is to avoid conditioning on the old evidence twice and to reconstruct the state of knowledge before the evidence was known for the purpose of computing the likelihood. This requires careful modeling of the prior background knowledge and the removal of the old evidence from that background. Without this, the update might be invalid.
+
+  Given the complexity, it might be practical to treat the old evidence as if it were new, but only if the hypotheses were formulated without knowledge of the evidence. If the hypotheses were formulated with knowledge of the evidence, then you risk overfitting and must use techniques like cross-validation to get an unbiased estimate of the hypothesis performance.
+answer: |-
+  The old-evidence problem poses practical challenges for belief-updating pipelines, especially when using historical data to evaluate hypotheses formulated later. Below is a concise guide to implications, legitimacy checks, and failure modes, tailored to your pipeline.
+
+  ---
+
+  ### **Key Implications of the Old-Evidence Problem**
+  1. **Degraded Discrimination Power**  
+     If evidence \(E\) was already known (i.e., part of background knowledge \(K\)), \(P(E|K) \approx 1\). Naive Bayes reduces to:  
+     \[
+     P(H|E, K) = \frac{P(E|H, K) \cdot P(H|K)}{P(E|K)} \approx P(H|K)
+     \]  
+     Since \(P(E|K) \approx 1\) and \(P(E|H, K) \approx 1\), **old evidence fails to update beliefs**. Hypotheses appear equally plausible regardless of their fit to \(E\).
+
+  2. **Explanatory Power ≠ Predictive Power**  
+     "Explanatory power" arguments often conflate:  
+     - **Actual predictive success**: \(H\) predicts \(E\) *before* \(E\) is observed (legitimate evidence).  
+     - **Retroactive fit**: \(H\) is crafted to explain known \(E\) (epistemically circular).  
+     Using \(P(E|H)\) for hypotheses designed *post-hoc* inflates scores via **implicit overfitting**.
+
+  3. **Temporal Asymmetry Matters**  
+     If \(H\) was generated *after* observing \(E\), the likelihood \(P(E|H)\) **does not reflect genuine prediction**. It measures consistency, not testable risk (e.g., no penalty for ad-hoc assumptions).
+
+  ---
+
+  ### **When Is It Legitimate to Use Old Data?**
+  Use old evidence \(E\) **only if** these conditions hold:
+  1. **Reconstructable Counterfactual Likelihoods**  
+     You can model \(P(E|H, K')\) where \(K'\) is background knowledge **before \(E\) was known**. Example:  
+     - \(E\) = "Historical log shows event X frequency = 10%".  
+     - \(K'\) = "Pre-\(E\) knowledge suggested X frequency ≈ 5%".  
+     - \(H\) predicts \(E\) with high \(P(E|H, K')\) relative to alternatives.  
+     *Practical check: Can you justify \(K'\) objectively (e.g., via pre-\(E\) literature or data)?*
+
+  2. **Novel Connection to New Hypotheses**  
+     \(H\) explains \(E\) through mechanisms **unrelated to \(E\)'s original discovery**. Example:  
+     - \(E\) = Mercury's orbital precession (known pre-1915).  
+     - \(H\) = General Relativity (1915) explains \(E\) via curvature of spacetime—a mechanism absent in prior models.  
+     *Practical check: Did \(H\)'s proposers *use* \(E\) to construct \(H\)? If yes, discard \(P(E|H)\).*
+
+  3. **Independent Justification of Priors**  
+     \(P(H)\) is set **without reference to \(E\)**. Example:  
+     - Priors based on simplicity, pre-\(E\) data, or theoretical constraints.  
+     - *Not*: "We set \(P(H_1)\) high because it fits \(E\) well."  
+
+  ---
+
+  ### **When "Explanatory Power" Becomes Smuggled-In**
+  "Explanatory power" is **illegitimate** if:  
+  - **Hypotheses are reverse-engineered** to fit \(E\) (e.g., tuning parameters after seeing \(E\)).  
+  - **Likelihoods ignore pre-\(E\) uncertainty**:  
+    - Wrong: Compute \(P(E|H)\) assuming \(E\) was uncertain pre-\(H\).  
+    - Right: Use \(P(E|H, K')\) where \(K'\) reflects historical uncertainty (e.g., \(P(E|K') = 0.5\) not \(1\)).  
+  - **No alternative hypotheses** are considered (e.g., \(H\) only compared to a strawman null).  
+
+  ---
+
+  ### **Failure Modes in Model Selection Pipelines**
+  1. **Hypothesis Zoo Sprawl**  
+     - **Cause**: Old evidence favors complex hypotheses engineered to fit \(E\).  
+     - **Result**: Pipeline ranks overfitted hypotheses highest; simple explanations rejected.  
+     - **Fix**: Penalize complexity (e.g., Bayes factors, BIC) or use **cross-validation** on *new* data.
+
+  2. **Confirmation Bias Amplification**  
+     - **Cause**: Pipeline "confirms" hypotheses built on \(E\) (e.g., \(P(E|H) ≈ 1\) for all \(H\)).  
+     - **Result**: All hypotheses score equally; no discrimination.  
+     - **Fix**: Replace Bayes with **forward-validation**: Simulate predicting \(E\) from \(K'\) using \(H\).
+
+  3. **Temporal Contamination**  
+     - **Cause**: New hypotheses \(H_{\text{new}}\) are tested on \(E\) used to create \(H_{\text{old}}\) rivals.  
+     - **Result**: \(H_{\text{new}}\) unfairly penalized if \(E\) was "used up" by prior hypotheses.  
+     - **Fix**: **Split old evidence**: Use part for inspiration (if unavoidable), part for testing.
+
+  ---
+
+  ### **What to Do in Your Pipeline**
+  1. **Audit hypothesis origins**: Discard \(P(E|H)\) if \(H\) was built with knowledge of \(E\).  
+  2. **Simulate ignorance**: For valid hypotheses, compute likelihoods under reconstructed \(K'\) (pre-\(E\) knowledge).  
+  3. **Demand novel predictions**: Use old evidence only to **triangulate** (e.g., compare \(H_1\) vs. \(H_2\) on how *unexpected* \(E\) was pre-discovery).  
+  4. **Validate on new data**: Old evidence ranks hypotheses; new data updates them. Never test on data used to build \(H\).  
+
+  > **Bottom line**: Old evidence can *compare* hypotheses if likelihoods reflect genuine surprise under \(K'\). It cannot *update* beliefs unless \(K'\) is explicitly modeled. Prioritize hypotheses that predict *new* data—retroactive fits are cheap.

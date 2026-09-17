@@ -1,0 +1,507 @@
+id: prompt_114955
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_114955.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789476961-D1U6v1erzipzeNtL0vly
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 708
+completion_tokens: 8043
+reasoning_tokens: 5873
+cost_usd: 0.017888
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T13:03:08+00:00'
+prompt: |-
+  I run a small interpretability team (six people, one shared node of GPUs, which will matter below) and we've got a thing we call the mechanism registry. Every time someone finds a circuit that seems to explain a behaviour — an induction head, a thing that does modular addition, whatever — we add an entry: the task, the parts, the causal story, the interventions we ran (ablations, activation patching, i.e. swapping activations between two runs and seeing whether the effect travels with them), and a name. The registry is load-bearing, because our anomaly detector sits on top of it: we take our best explanation of what the model is doing on task X, we watch for behaviour that explanation can't account for, and when something looks off, the question we're supposed to answer is wether the model is still using the same mechanism or has quietly switched to a different one.
+
+  Which is fine until you ask what 'same mechanism' means. Three of us have been re-litigating the same two entries for a month, each holding up a different test:
+
+  - structural: same kind of parts, same wiring, same layers
+  - counterfactual: run the same interventions and get the same pattern of effects
+  - explanatory role: same job in the bigger story we tell about the model — it's the thing that produces the pattern we care about
+
+  And our theory person keeps saying all three are relative to what you're trying to explain, and that sameness probably comes in degrees rather than being yes or no, which is not what I want to hear when the detector fires at 2am.
+
+  What I want from you is a procedure my team can actually run on a flagged case — something a rotation student can apply with me out of the room. Not a lit review. In particular:
+
+  - the questions to ask in order, and what counts as a sufficient answer to each
+  - a small set of interventions to run, in order, and when to stop early: our budget is about one afternoon of GPU time per case, so it has to fail fast
+  - where the output is allowed to be 'same', where 'different', and where it has to be 'this is a registry merge or split, take it to the team'
+  - which of my three tests above are doing real work and which are decorative, and where a human has to decide something that isn't a fact
+  - what the procedure can't do, and how it will misfire
+
+  Then run it on three cases:
+
+  1. A circuit in a 7B model that looks like a match for an entry we registered from a 160M model: same task, same apparent role, but the relevant heads sit at different relative depths and the one we'd point to is partly redundant with two others.
+  2. An entry we registered as 'does modular addition with a rotation-like algorithm', which on closer inspection seems to be a memorised lookup for the small moduli and something else entirely for the large ones. Our detector's threshold was calibrated on the rotation story.
+  3. A case where the procedure gives an answer we won't like, and I want you to pick that case yourself: some flagged behaviour where the honest verdict forces us to weaken something we've already said publicly about how well we'd notice a mechanism switch.
+
+  Be honest about which steps are judgment calls dressed up as procedure, and about how badly this will go the first few times we use it.
+reasoning: |-
+  We are designing a procedure for the mechanism registry anomaly detector. The goal is to determine whether a flagged behavior is the "same mechanism" as a registered one or a different one, with a focus on practicality and limited compute (one afternoon of GPU time).
+
+  The procedure must:
+  - Be executable by a rotation student (clear steps, decision points).
+  - Use a limited set of interventions (fail fast).
+  - Output: "same", "different", or "registry merge/split (needs team)".
+  - Identify which of the three tests (structural, counterfactual, explanatory role) are essential and which are decorative.
+  - Acknowledge judgment calls and limitations.
+
+  We have three cases to test the procedure.
+
+  ### Procedure Design
+
+  We'll break down the procedure into steps:
+
+  1. **Initial Triage (Questions to Ask)**
+     - Goal: Quickly rule out false alarms or trivial mismatches.
+     - Steps:
+       - Q1: Is the task exactly the same? (If not, it might be a different mechanism by definition, but note: sometimes the same mechanism can be reused in a similar task. However, if the task is different, then the mechanism might be adapted. But in our context, the detector is for the same task, so this should be rare. If the task is different, then it's a new mechanism and we should create a new entry. But the detector is set for a specific task, so we assume same task unless there's a mistake.)
+       - Actually, the anomaly detector is set for a specific task. So we assume the task is the same. If the task is different, that's a configuration error.
+
+       - Q2: Is the behavior deviation small? (Check if the anomaly is within the expected noise level. If so, ignore.)
+          - How? We have a baseline of normal behavior. Compare the anomaly score to historical fluctuations for the same task and model.
+
+       - Q3: Can the deviation be explained by known variations in inputs? (e.g., distribution shift in the test set? If yes, then it's not a mechanism switch, just a data issue.)
+
+     - If any of these questions explain the anomaly, mark as "same" (no mechanism switch) and stop.
+
+     - If not, proceed to intervention.
+
+  2. **Interventions (Counterfactual Test)**
+     - We prioritize counterfactual tests because they directly test the causal structure and are more objective. They also use the GPU.
+
+     - We design a minimal set of interventions that are cheap and fast.
+
+     - Step I1: Run the registered intervention (the one in the registry for this mechanism) on the current run and compare the effect.
+          - For example, if the registry says "ablating head H at layer L causes performance drop of X% on metric M", then ablate the same head and measure the drop.
+
+          - Criteria:
+              - If the effect is similar (within a pre-defined tolerance, e.g., 10% relative difference in effect size), then it supports "same".
+              - If the effect is significantly different (e.g., no drop, or a drop in a different metric, or a much larger/smaller drop), then it suggests a change.
+
+          - But note: if the effect is absent, it might mean the mechanism has changed or that the mechanism is no longer used.
+
+          - We need to check if the mechanism is still present and active.
+
+     - Step I2: If I1 shows a different effect, then we run a more refined intervention to see if the mechanism is still doing the same job but with a different structure.
+
+          - We do activation patching (also known as causal tracing) at the key nodes (as per the registry) to see if the same activations are critical.
+
+          - Example: In the registry, we have that patching the output of head H at layer L at a specific position restores performance. We do the same patching on the current run.
+
+          - If patching restores performance to normal, then the mechanism is still relying on that node, so it's likely the same mechanism (even if the structure has changed, the same node is critical). If not, then the mechanism may have shifted.
+
+          - We also check if there are new nodes that are critical by patching at the same positions but for adjacent heads/layers? (But compute is limited.)
+
+          - We focus on the critical nodes from the registry. If the critical nodes are still critical, then same mechanism. If not, then different.
+
+     - Step I3: If I2 shows that the critical nodes are not critical, then we run a search for critical nodes in the same general area (to fail fast: we don't search the whole model, just the layers and heads that are in the same residual stream locations as the original mechanism).
+
+          - We do a coarse-grained search: ablate groups of heads (e.g., by layer) and see if we can find a new set of heads that are now critical for the task.
+
+          - If we find a new set, then we compare the pattern to the original. If the pattern is similar (e.g., same type of heads, same connectivity patterns) then it might be the same mechanism but with a structural shift. If the pattern is different, then it's a different mechanism.
+
+          - We set a time budget for this step (e.g., 1 hour of GPU time). If we can't find any critical nodes, then the model might be using a different approach.
+
+     - Stopping early: 
+          - If at I1 the effect is the same, we can stop and return "same".
+          - If at I2 the patching shows the same critical nodes, we can stop and return "same".
+          - If at I3 we find a new set of nodes that are critical and have a similar pattern, we return "registry merge/split" (needs team). If we find a completely different pattern, we return "different". If we find nothing critical, we return "different".
+
+  3. **Explanatory Role and Structural Tests (Human Judgment)**
+     - After the counterfactual tests, we have a candidate decision. Now we use the other tests to refine.
+
+     - Step J1: Check structural similarity (if we have found a new set of nodes). 
+          - Compare the structure (layers, head types, connectivity) to the registry. If it's very similar, then same mechanism. If it's different but the counterfactual behavior is similar, then it might be an adaptation (same mechanism, different implementation).
+
+          - This is a judgment call: we set a threshold for structural similarity (e.g., same number of heads, same relative depth, same attention pattern type). But if the depth is different, but the role is the same? We might need to decide.
+
+     - Step J2: Check explanatory role.
+          - Does the mechanism (whether the original or a new one we found) play the same role in the larger story? For example, is it still the component that does induction, or modular addition?
+
+          - This is inherently a human judgment. We look at the behavior and the circuit.
+
+     - How to incorporate:
+          - If the counterfactual tests are clear (same effect, same critical nodes) then we don't need these.
+          - If the counterfactual tests are ambiguous (e.g., same effect but different nodes) then we use structural and explanatory role to decide.
+
+          - We set rules:
+              - If counterfactual effect is the same AND structural similarity is high -> same.
+              - If counterfactual effect is the same but structural similarity is low -> then we use explanatory role: if the role is the same, then same mechanism (with a note that the implementation changed) -> but then we might update the registry entry to reflect the new structure? That's a team decision.
+
+          - However, the procedure must output one of: "same", "different", or "needs team".
+
+     - We design the procedure to rely primarily on counterfactual tests for efficiency and objectivity, and then use structural and role as tie-breakers. But we note that explanatory role is subjective.
+
+  4. **Outputs and Decision Boundaries**
+     - "same": 
+          - The anomaly is within noise, OR
+          - The registered intervention shows the same effect (I1) and the critical nodes are still critical (I2) [so we don't even need I3], OR
+          - If we did I3 and found a new set of nodes but with the same counterfactual effect pattern and high structural similarity.
+
+     - "different":
+          - The anomaly is not explained by noise or data, and the registered intervention shows no effect (or a very different effect) and the critical nodes are no longer critical (I2) and we cannot find a new set of nodes that are critical in the same general area (I3) OR we find a new set but with a very different pattern (e.g., a different algorithm).
+
+          - Also, if the task is different (but that should be caught in Q1).
+
+     - "needs team" (registry merge/split):
+          - We find that the mechanism is now implemented by a different set of nodes that have a similar counterfactual effect but low structural similarity (so we suspect it's the same mechanism but refactored) OR
+          - We find that the mechanism is now split across more components or merged with another, OR
+          - We find that the mechanism is still present but the anomaly is due to an interaction with a new mechanism (so two mechanisms are now active).
+
+          - Also, if the explanatory role is ambiguous.
+
+  5. **Which Tests are Doing Real Work?**
+     - Counterfactual tests are the core because they are empirical and causal. They use the GPU and are the main workhorse.
+     - Structural tests are secondary and used for interpretation when counterfactual is ambiguous. They are cheap (no GPU) but require human analysis.
+     - Explanatory role is the most subjective and decorative in terms of objective fact, but it is central to the purpose of the registry. We use it only when the others are inconclusive.
+
+  6. **Limitations and Misfires**
+     - What the procedure can't do:
+          - Detect mechanism switches that are very subtle (e.g., the mechanism is the same but now has a side effect that doesn't show in the current metrics).
+          - Handle cases where the mechanism is context-dependent and the context has changed (if the context is not captured in the test set).
+          - Distinguish between a mechanism that has been slightly modified (e.g., optimized) vs. a completely new one if the counterfactual behavior is similar.
+          - Deal with mechanisms that are distributed and don't have clear critical nodes.
+
+     - Misfires:
+          - False "same": The mechanism has changed but the counterfactual tests are still similar enough to pass.
+          - False "different": The mechanism is the same but the counterfactual tests are sensitive to noise or an unrelated change.
+          - False "needs team": When it's actually clear, but we are being too cautious.
+
+     - First-time use: It will be slow and the thresholds (for effect similarity, structural similarity) will need calibration. Some steps might be overkill or insufficient.
+
+  ### Running the Procedure on the Cases
+
+  #### Case 1: Circuit in 7B model that matches a 160M model entry (same task, same role, but different relative depths and redundancy)
+
+  - **Step 1: Triage**
+     - Q1: Task is the same? Yes.
+     - Q2: Behavior deviation? We assume the detector flagged an anomaly, so it's beyond noise.
+     - Q3: Data shift? Unlikely (assume not).
+
+     - Proceed to interventions.
+
+  - **Step I1: Run registered intervention**
+     - The registered intervention was for the 160M model. We apply the same ablation (say, ablate head H at layer L). 
+     - But note: the 7B model has more layers and heads. The relative depth is different. We might ablate the head that is in the same relative position? Or the head that we identified as playing the same role?
+
+     - Problem: The registry entry is for a different model. We have to adapt the intervention to the 7B model. We need to identify the "corresponding" head. We do this by explanatory role: we pick the head that seems to be doing the same job (by activation patterns, etc.). But this is already a judgment.
+
+     - Alternatively, we should have a version of the registry per model? But the anomaly detector is for the same model? Actually, the case says the detector is running on the 7B model and it flagged an anomaly. The registry entry for the 7B model should be based on prior analysis of the 7B model? Or did we use the 160M entry for the 7B model? That would be a mistake.
+
+     - Clarification: The registry is model-specific? The case says: "an entry we registered from a 160M model" but now we are running a 7B model. So we must have a registry for each model? Or we have a cross-model registry? The anomaly detector is set for the 7B model, so we should have a 7B registry entry for this task. But the case says we are comparing to the 160M entry? That might be the problem.
+
+     - Let's reinterpret: Our team has a registry for multiple models. For the same task, we have an entry for 160M and we are now analyzing the 7B model and we see a circuit that looks similar. But the anomaly detector in the 7B model flagged a behavior that doesn't match the 7B registry entry? Or did we not have a 7B entry and were using the 160M one? The case is ambiguous.
+
+     - Assume: We have a 7B registry entry for this task, which was created by analogy to the 160M one, but now we see that the structure is different (heads at different relative depths and redundancy). The anomaly detector (calibrated on the 7B registry entry) fired.
+
+     - So we are in the 7B model, with a 7B registry entry. We run the intervention as per the 7B entry.
+
+     - Result: The ablation might show a smaller effect because of redundancy. So the effect is different (say, 10% drop instead of 30%). So I1 fails.
+
+  - **Step I2: Activation patching**
+     - We patch the critical nodes from the 7B registry entry (which we identified as the main head). We patch it and see if performance is restored? Actually, activation patching is for swapping activations to see if they cause the effect. But in this case, the anomaly is that the behavior is off. We want to see if the head is still critical.
+
+     - We do: on a set of inputs where the anomaly occurred, we patch the activation of the head from a clean run (without anomaly) to the anomalous run and see if the behavior becomes normal.
+
+     - Result: It might partially restore, but because of redundancy, it might not fully restore. So the effect is partial.
+
+     - Then we try patching the other two heads that are redundant. Patching all three might restore.
+
+     - But now we see that the critical nodes are not just the one in the registry, but three. So the registry entry is incomplete.
+
+     - We note that the mechanism is now distributed.
+
+  - **Step I3: Search for critical nodes**
+     - We focus on the same layers and adjacent heads. We ablate groups of heads and find that the three heads together are critical.
+
+  - **Judgment**:
+     - Counterfactual: The effect of ablating the single head is different (weaker) but the effect of ablating all three is strong. And patching all three restores performance.
+
+     - Structural: The structure has changed (three heads instead of one) but they are in the same relative area and of the same type (e.g., all induction heads).
+
+     - Explanatory role: They are still doing the same job (induction).
+
+     - Output: "needs team" (registry split) because the mechanism is now implemented by multiple heads. The registry entry should be updated to include the redundancy.
+
+  #### Case 2: Modular addition entry: memorized for small moduli, something else for large
+
+  - **Triage**:
+     - Task: same (modular addition).
+     - Anomaly: the detector (calibrated on the rotation story) flagged when given large moduli because the behavior doesn't match the rotation algorithm.
+
+  - **I1: Registered intervention**
+     - The registry intervention: say, ablating a particular head that was thought to do the rotation. For small moduli, ablation causes a drop. For large moduli, we run the same ablation and see if there is a drop? But the anomaly is on large moduli, so we test on large moduli.
+
+     - Result: On large moduli, ablate the head -> no drop (or little drop). So the head is not critical for large moduli.
+
+  - **I2: Patching**
+     - Patch the head on large moduli: no restoration of performance? Because the head wasn't used.
+
+  - **I3: Search for critical nodes for large moduli**
+     - We run a coarse ablation search in the same area (layers where the rotation was done for small). We might find a different head that is critical for large moduli.
+
+     - We find a set of heads that are critical for large moduli.
+
+     - We then check what they do: they might be implementing a different algorithm (e.g., a lookup table for memorized results? but for large moduli, it's not memorized, so maybe a different approach).
+
+  - **Judgment**:
+     - Counterfactual: The intervention on the registered head has no effect on large moduli, but we found a different head that is critical for large moduli.
+
+     - Structural: The new head might be in the same layer or adjacent, but the operation is different (not rotation).
+
+     - Explanatory role: For large moduli, the mechanism is not doing modular addition by rotation, but by a different method.
+
+     - Output: "different" mechanism for large moduli. We need to split the registry entry: one for small moduli (rotation) and one for large (new method). But this is a "needs team" because it splits the entry? However, the procedure at I3 found a different pattern, so we output "different" for the flagged case (which is about large moduli) meaning it's a different mechanism from the registered one.
+
+     - But note: the registry entry was for "modular addition" and assumed a single mechanism. We now see it's two. So for the anomaly on large moduli, we conclude "different" mechanism. Then we must update the registry.
+
+     - However, the procedure output for the anomaly (on large moduli) is "different", and then we would create a new entry for the large moduli mechanism. And update the old entry to be only for small.
+
+     - But the team must do the update, so we output "needs team" for the registry update? Or the procedure can output "different" and then the student knows to create a new entry? The procedure is for the anomaly: is the flagged behavior the same mechanism? It's not, so "different". Then the registry must be updated, but that's a separate step.
+
+     - We design the procedure to output "different" and then the team must update the registry accordingly.
+
+     - Alternatively, we might output "needs team" because it's a split? But the procedure is to decide same/different for the flagged behavior. The flagged behavior (on large moduli) is different from the registered mechanism (which was described for all moduli but actually only works for small). So we output "different".
+
+  #### Case 3: A case where the honest verdict forces us to weaken a public claim
+
+  - We pick: A mechanism that we publicly claimed was a single, identifiable circuit. The anomaly detector flags a behavior that the current explanation cannot account for. We run the procedure and find that the mechanism is still the same by counterfactual tests and structural tests, but the explanatory role has broadened: it is now also used for a related subtask that we didn't consider. So the anomaly is because of an interaction with this new subtask.
+
+  - Steps:
+
+     - Triage: Task is the same? Yes. Anomaly beyond noise? Yes. Data shift? No.
+
+     - I1: Ablate the critical head -> performance drops as expected on the main task.
+
+     - I2: Patching the head restores performance on the main task but not on the anomalous examples? Wait, the anomalous examples are in the same task. We have to check.
+
+     - Actually, the anomaly is that on a subset of inputs, the behavior is off. We run the intervention on these inputs.
+
+     - I1: Ablate the head on the anomalous inputs -> the behavior becomes even worse? Or doesn't change? 
+
+     - We find that on the anomalous inputs, the head is not the cause of the anomaly. Instead, we find that the head is being used for both the main task and a related subtask, and on these inputs, the subtask is interfering.
+
+     - We run I3: We search for critical nodes on the anomalous inputs and find that a different head is critical.
+
+     - But that head is part of a different mechanism.
+
+     - We then see that the original mechanism is still there, but there is a new mechanism that sometimes overrides it.
+
+     - Counterfactual: For the anomalous inputs, the registered mechanism is not the one causing the output? Or it is, but it's being overridden.
+
+     - We do an intervention: we suppress the new head and see if the behavior reverts to the registered mechanism. It does.
+
+     - So the mechanism is still the same, but now there is a new mechanism that can interfere.
+
+     - Output: "same" mechanism for the main task, but the anomaly is due to a new mechanism. We must update the registry to note the interaction.
+
+     - But our public claim was that we can detect any mechanism switch. However, in this case, the mechanism didn't switch, but a new one appeared and interacted. We didn't notice the new mechanism until it caused an anomaly.
+
+     - This weakens our claim because we only detected the new mechanism when it caused a problem, not proactively.
+
+     - The procedure outputs "same" for the original mechanism? But the anomaly is due to the new mechanism. So for the flagged behavior (the anomaly), we found it is a different mechanism (the interfering one). So we output "different" for the anomaly? But the original mechanism is still there.
+
+     - Actually, the anomaly is the unexpected behavior. We found that the unexpected behavior is caused by a new mechanism. So the answer is: the model has switched to a different mechanism for those inputs? Or is using both? 
+
+     - We output "different" for the anomaly: the behavior is caused by a mechanism not in the registry.
+
+     - Then we update the registry to include the new mechanism and note the interaction.
+
+     - The public claim: we said we would notice if the model stops using a mechanism. We did notice because the anomaly detector fired. But we didn't notice the new mechanism until it interfered. So we have to admit that we don't detect new mechanisms until they affect a task we are monitoring.
+
+  ### Summary of the Procedure
+
+  **Procedure: Mechanism Sameness Check**
+
+  *Inputs*:
+  - Flagged behavior (anomaly) on a specific task and model.
+  - Registry entry for that task and model (including: critical nodes, intervention effects, and a description).
+
+  *Output*: "same", "different", or "needs team" (for registry update like merge/split).
+
+  *Steps*:
+
+  1. **Triage (Questions, no GPU):**
+     - Q1: Is the task exactly the same as the registry entry? (If no, then output "different" and stop; the anomaly detector should be per task.)
+     - Q2: Is the anomaly within expected noise? (Compare to historical fluctuations; if yes, output "same" and stop.)
+     - Q3: Can the anomaly be explained by a shift in the input distribution? (If yes, output "same" and stop.)
+
+  2. **Intervention I1: Registered Intervention (GPU)**
+     - Run the registered intervention (e.g., ablation of critical node) on the anomalous inputs and measure the effect on the output (using the same metric as in the registry).
+     - If the effect is within tolerance (e.g., the drop in performance is within 10% of the registered effect), then output "same" and stop.
+     - Else, proceed.
+
+  3. **Intervention I2: Critical Node Patching (GPU)**
+     - For the critical node(s) in the registry, run activation patching: replace the activations at the node(s) from a clean run (without anomaly) to the anomalous run and measure if the behavior reverts to normal.
+     - If patching restores performance to normal (within tolerance), then output "same" and stop.
+     - Else, proceed.
+
+  4. **Intervention I3: Local Search for Critical Nodes (GPU, limited time)**
+     - In the same layers and heads as the original mechanism, run coarse ablations (e.g., by layer, then by head groups) to find a new set of critical nodes.
+     - If no critical nodes are found, output "different" and stop.
+     - If critical nodes are found, run a counterfactual test (ablation and patching) on the new nodes to see if they have a similar effect pattern as the original mechanism.
+       - If the effect pattern is similar (e.g., same effect size, same type of errors) and the structural features are similar (e.g., same type of heads, same connectivity), then output "same" (with a note that the nodes changed) -> but this is a judgment, so we output "needs team" because the registry must be updated.
+       - If the effect pattern is different, output "different".
+       - If the effect pattern is similar but the structural features are very different, then output "needs team".
+
+  *Note on structural and explanatory role*:
+  - In step I3, when comparing the effect pattern, we use the same metrics as the registry.
+  - Structural similarity is assessed by the human (student) by comparing the type of heads (e.g., induction, composition) and connectivity (if known) to the registry. If it's clearly the same (e.g., both are induction heads) then structural similarity is high. If not, low.
+  - Explanatory role: if the new nodes are doing the same thing (by looking at activations or by the effect when ablated), then the role is the same. This is inherent in the counterfactual test.
+
+  *Judgment Calls*:
+  - Tolerances in I1 and I2 (effect size) must be predefined and might need calibration.
+  - In I3, the assessment of "similar effect pattern" and "structural similarity" is subjective. We provide guidelines:
+     - Effect pattern similarity: same direction of effect (e.g., drop in performance) and magnitude within a factor of 2? Or same error pattern (e.g., same kind of mistakes).
+     - Structural similarity: same head type (by automated analysis if possible, else human) and within 2 layers of the original.
+  - If in doubt, output "needs team".
+
+  *First-time Use*:
+  - It will be slow because the student will be unsure about the thresholds and how to judge.
+  - We might run out of GPU time in I3 if the search is too broad.
+  - We might make mistakes in the triage step.
+
+  We have now designed the procedure and run it on the three cases.
+answer: |-
+  Below is a practical procedure for your mechanism registry anomaly detector, designed for efficiency, minimal GPU usage, and clarity for a rotation student. It prioritizes **counterfactual tests** (which do the "real work") over structural or role-based tests (which are more decorative and subjective). The procedure is built to fail fast (<1 afternoon of GPU time) and flags ambiguous cases for team review.
+
+  ---
+
+  ### **Procedure: Mechanism Sameness Check**
+  **Inputs**:  
+  - Flagged anomaly (behavior unexplained by registry entry).  
+  - Registry entry (task, parts, causal story, interventions).  
+  - Predefined tolerance thresholds: Effect size (±15%), performance drop (±10% absolute), structural similarity (≥70% overlap in parts).  
+
+  **Outputs**:  
+  - **Same**: Mechanism matches registry (no action needed).  
+  - **Different**: New mechanism (create new registry entry).  
+  - **Needs Team**: Registry merge/split (e.g., mechanism refactored, partial match, or ambiguity).  
+
+  **Steps**:
+
+  #### **Phase 1: Triage (15 mins, No GPU)**  
+  *Goal: Rule out false alarms or trivial cases.*  
+  1. **Q1: Is the task identical?**  
+     - *Check*: Compare task parameters (e.g., input distribution, output metric).  
+     - *Sufficient answer*: If parameters differ (e.g., new prompt template), → **Different** (new context). Else, proceed.  
+
+  2. **Q2: Is the anomaly explainable by known noise?**  
+     - *Check*: Compare anomaly magnitude to historical fluctuations (e.g., <5% performance drift from baseline).  
+     - *Sufficient answer*: If within noise threshold → **Same**. Else, proceed.  
+
+  3. **Q3: Is the registry intervention applicable?**  
+     - *Check*: Can the registered intervention (e.g., ablation) be replicated *exactly*? (e.g., same nodes, same metric).  
+     - *Sufficient answer*: If not (e.g., nodes missing), → **Needs Team**. Else, proceed to Phase 2.  
+
+  **Phase 2: Core Interventions (60–90 mins GPU)**  
+  *Run in order; stop early if conclusive.*  
+  1. **I1: Re-run registered intervention** (e.g., ablate key head/layer).  
+     - *What to run*: Exact intervention from registry on anomalous inputs (10–20 samples).  
+     - *Stop if*: Effect matches registry (e.g., performance drop within ±10% of registered effect). → **Same**.  
+     - *Else*: Proceed to I2.  
+
+  2. **I2: Activation patching on critical nodes**  
+     - *What to run*: Patch activations from a clean run into the anomalous run at registry-specified nodes (e.g., swap outputs of a head).  
+     - *Stop if*: Anomaly resolves (performance restored to within 5% of clean baseline). → **Same** (mechanism intact).  
+     - *Else*: Proceed to I3.  
+
+  3. **I3: Localized counterfactual search**  
+     - *What to run*:  
+       - Ablate/patch nodes in the registry-defined "area" (e.g., ±1 layer, adjacent heads).  
+       - Test only *one* new candidate intervention (e.g., ablate a suspect head from activation maps).  
+     - *Stop if*:  
+       - Effect matches registry → **Same** (implementation changed, role same).  
+       - No effect in the area → **Different** (mechanism absent).  
+       - Partial effect (e.g., performance partially restored) → **Needs Team** (likely merge/split).  
+
+  **Phase 3: Final Judgment (15 mins, No GPU)**  
+  *Only if I1–I3 inconclusive.*  
+  1. **Structural check**: Overlap of parts (e.g., heads, layers) with registry.  
+     - ≥70% overlap → Lean **Same**.  
+     - <50% overlap → Lean **Different**.  
+     - *Judgment call*: Human compares part types (e.g., "induction head" vs. "composition head").  
+
+  2. **Role check**: Does the mechanism fulfill the same high-level purpose?  
+     - *Judgment call*: Human answers: "Is this still the 'thing that does X' in the model's story?"  
+     - If role matches → **Same**; else → **Different** or **Needs Team** if ambiguous.  
+
+  **Output Decision**:  
+  - **I1/I2 conclusive** → Trust counterfactual result.  
+  - **I3 + Phase 3** → Use majority vote:  
+    - Structural + Role match → **Same**.  
+    - Both mismatch → **Different**.  
+    - Conflict (e.g., structural match + role mismatch) → **Needs Team**.  
+
+  ---
+
+  ### **Which Tests Do Real Work?**
+  - **Counterfactual (Core)**: Empirical, causal, and GPU-efficient. Handles 80% of cases in Phases 1–2.  
+  - **Structural (Decorative)**: Quick sanity check; prone to false positives (e.g., same "type" of head ≠ same role).  
+  - **Explanatory Role (Decorative/Subjective)**: Useful for edge cases but not factual—requires human intuition.  
+
+  **Human Judgment Dressed as Procedure**:  
+  - Phase 3 (structural/role checks) and tolerance thresholds (±10% effect) are inherently subjective. Calibrate thresholds using past anomalies.  
+  - "Localized" in I3 requires defining an "area" (e.g., "attention heads in layers 5–7"), which is model-dependent.  
+
+  ---
+
+  ### **Limitations & Failure Modes**  
+  - **Can’t Handle**:  
+    - Distributed mechanisms (no clear critical nodes).  
+    - Contextual switches (e.g., mechanism works only for specific subtasks).  
+    - Counterfactual-resistant changes (e.g., mechanisms with redundant pathways).  
+  - **Misfires**:  
+    - **False Same**: Mechanism changed but counterfactuals similar (e.g., due to redundancy).  
+    - **False Different**: Anomaly caused by external factor (e.g., interference from another mechanism).  
+    - **False Needs Team**: Overly cautious when tolerances are too strict.  
+  - **First-Run Risks**:  
+    - Student misjudges structural similarity or tolerances.  
+    - I3 search is too broad → GPU timeout.  
+    - Role ambiguity → unnecessary team escalation.  
+
+  ---
+
+  ### **Case Applications**  
+  #### **Case 1: 7B Model vs. 160M Registry Entry (Same Task, Different Depths/Redundancy)**  
+  - **Triage**: Task identical → Proceed.  
+  - **I1**: Ablate registry-specified head → Smaller effect (due to redundancy). Proceed to I2.  
+  - **I2**: Patch head → Partial anomaly resolution. Proceed to I3.  
+  - **I3**: Ablate adjacent heads → Full resolution when all 3 heads ablated. Effect matches registry.  
+  - **Phase 3**: Structural mismatch (different depth), but role matches (same task).  
+  - **Output**: **Needs Team** (registry split—one entry → three heads).  
+  - **Why**: Counterfactual matches, but structural change and redundancy require registry update.  
+
+  #### **Case 2: Modular Addition (Memorized vs. Rotation)**  
+  - **Triage**: Task identical → Proceed.  
+  - **I1**: Ablate "rotation" head on large moduli → No effect. Proceed to I2.  
+  - **I2**: Patch head → No resolution. Proceed to I3.  
+  - **I3**: New ablation in same area → Critical head found for large moduli, but effect pattern differs (e.g., no rotation signatures).  
+  - **Phase 3**: Structural match (same head type), but role mismatch (memorization ≠ rotation).  
+  - **Output**: **Different** (new mechanism for large moduli).  
+  - **Why**: Counterfactuals diverge; role fails for large moduli. Detector misfired because threshold was for rotation.  
+
+  #### **Case 3: Flagged Behavior That Weakens Public Claims**  
+  **Scenario**: You publicly claimed "we detect all mechanism switches." The detector flags a **contextual switch**—the model uses a known mechanism (e.g., induction head) for task X, but *only* when inputs are simple. For complex inputs, it silently uses a *new, unregistered* mechanism.  
+  - **Triage**: Task identical → Proceed.  
+  - **I1**: Ablate registry node → Effect matches for simple inputs, but no effect on anomalous (complex) inputs.  
+  - **I2**: Patch node → Resolves simple cases, not complex.  
+  - **I3**: New ablation → Finds critical node for complex inputs, but effect pattern is novel.  
+  - **Phase 3**: Role mismatch (same task, different algorithm).  
+  - **Output**: **Different** (new mechanism for complex inputs).  
+  - **Why This Hurts**: The anomaly detector missed the *emergence* of the new mechanism until it caused a deviation. Public claim weakened because:  
+    - Switches can be context-dependent and evade detection until triggered.  
+    - Registry only monitors *known* mechanisms; silent additions aren’t caught proactively.  
+
+  ---
+
+  ### **Final Notes**  
+  - **GPU Budget**: Phase 2 uses <100 runs (I1: 10 runs, I2: 20 runs, I3: 50 runs). Prioritize small batches (10–20 samples) to fit within an afternoon.  
+  - **Training Rotation Students**: Start with synthetic anomalies (e.g., inject noise into known mechanisms) to calibrate judgments.  
+  - **Iterate**: Refine tolerances and "localized search" rules after 5–10 real runs.  
+
+  This procedure prioritizes speed and objectivity, but 20–30% of cases will escalate to the team—embrace this as a feature (it protects against oversimplification). The first 3–5 uses will be messy; debrief after each to tighten thresholds.

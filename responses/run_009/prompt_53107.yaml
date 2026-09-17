@@ -1,0 +1,434 @@
+id: prompt_53107
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_53107.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789355159-gHMrfJzvsoSmK0xqhv6w
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 446
+completion_tokens: 6851
+reasoning_tokens: 5749
+cost_usd: 0.015158
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T03:11:28+00:00'
+prompt: |-
+  I'm a software engineer who owns the A/B testing pipeline at my company, and every few months an experiment lands on my desk where the numbers flip when we slice them: a feature looks harmful overall but positive in every segment, or the reverse. Right now the choice of which number we report goes to whoever argues loudest, and the PM who sponsored the feature signs off on it, so the stakes are real. Write me a decision procedure I can run in about ten minutes, alone, with only a dashboard in front of me: the checks to do in order (starting with whether the reversal could just be noise), what each check settles, what counts as a sufficient answer, where the procedure concludes "report the aggregate," where it concludes "report a stratified number," and where it has to give up and hand the call to a person. One suspicion I want the procedure to address head-on: it feels like it matters whether the slicing variable was fixed before the test (platform, plan tier) or only measured after it (users who completed onboarding, engaged users), because in the well-known graduate-admissions case the aggregate was the misleading number, while slicing by post-test behavior sometimes seems to manufacture reversals that dissolve in the aggregate — though I can't say why, and I'd like to know whether the procedure ends up silently committed to some view about what it means for a feature to cause an outcome, and if so what it is. Then run the procedure on two cases: (1) a notification feature that lowers seven-day retention overall but shows positive retention on both mobile and desktop, where the assignment logs later reveal that the mobile share drifted between arms; and (2) the same overall-negative feature sliced by engagement in the first week, positive among both engaged and unengaged users — a slice the sponsoring PM is eager to report. Please say how confident you are in each rule of the procedure, single out the rule you are least sure of, and end with a machine-readable line of the form \answer{case 1: <aggregate or stratified>; case 2: <aggregate or stratified>} giving the number that should be reported in each case.
+reasoning: |-
+  We are facing Simpson's paradox, where the overall trend reverses when data is sliced. We need a procedure to decide whether to report the aggregate or a stratified number (or give up). The procedure should consider:
+  1. Whether the reversal could be noise.
+  2. The nature of the slicing variable: pre-test (like platform, plan tier) vs. post-test (like engagement, completion of onboarding).
+
+  Key principles:
+  - Pre-test variables are fixed before treatment assignment and are less likely to introduce bias when used for stratification.
+  - Post-test variables can be affected by the treatment and thus create bias (e.g., conditioning on a collider). 
+
+  Procedure (10 minutes, using dashboard data):
+
+  Step 1: Check if the reversal is statistically significant and not due to noise.
+     - Look at confidence intervals for the overall effect and for each segment. If the overall effect and the segment effects are not statistically significant (e.g., confidence intervals include zero), then the reversal might be noise. 
+     - If the reversal is not statistically significant (i.e., the overall effect CI includes zero and the segment effects CIs are wide and also include zero), then we cannot trust either and might need more data. But if one is significant and the other isn't, we have a clear signal? Actually, we are in a reversal: overall is one direction, segments are the opposite. So we need to see if the segment effects are strong enough to overcome the overall.
+     - Instead, we can check the interaction between the treatment and the segment variable. If the interaction is significant, then the effect differs by segment. But in a reversal, the effect in each segment is in the opposite direction to the overall. So we need to test for an interaction that reverses the sign.
+
+     How to do it quickly? 
+     - On the dashboard, if we can see the overall effect and the segment effects with confidence intervals, then:
+          - If the overall effect is not significant (CI includes zero) and the segment effects are not significant (CIs include zero), then the reversal is likely noise -> report aggregate? Or give up? Actually, if the overall is not significant, we might not have an effect at all. But the reversal might be real even if the overall is not significant? 
+          - We need to look at the magnitude of the reversal. If the segment effects are in the opposite direction and large, but the overall is not significant because of imbalance, then we have a problem.
+
+     Alternatively, we can compute the weighted average of the segment effects and compare it to the overall. If they are very different, then the segments are imbalanced.
+
+     Step 1a: Check the sample sizes in each segment and the assignment imbalance.
+          - If the segments are very imbalanced in size and the treatment assignment is also imbalanced in a segment (like in case 1: mobile share drifted between arms), then the aggregate might be misleading because of confounding by the segment variable.
+
+     Step 1b: Check the statistical significance of the interaction (if the dashboard doesn't show it, we can approximate by seeing if the segment effects are in the same direction and the overall is opposite, and if the segment CIs do not overlap with the overall effect? Not exactly, but we can look at the difference between segments and the overall).
+
+     However, without running a regression, we might not have the interaction p-value. So we rely on:
+
+          Rule 1: If the overall effect and the segment effects are not statistically significant (at the chosen alpha, say 0.05) and the confidence intervals are wide, then the reversal is likely noise -> report the aggregate (because it has more power) and note the uncertainty. But if the segment effects are significant and the overall is not, then we have a reversal that we cannot ignore? Actually, in reversal, the overall is significant in one direction and segments in the opposite? Or sometimes the overall is not significant? 
+
+          Actually, in our examples, the overall is negative (significant?) and the segments are positive (significant?).
+
+     Let's assume we have the following:
+          Overall effect: -1% (95% CI: -1.5% to -0.5%) -> significant negative.
+          Segment 1: +0.5% (95% CI: 0.1% to 0.9%) -> significant positive.
+          Segment 2: +0.7% (95% CI: 0.3% to 1.1%) -> significant positive.
+
+     Then the reversal is real and not noise.
+
+     But what if the segment CIs are wide and include zero? Then we cannot trust the segment effects.
+
+     So Step 1: 
+          - If the overall effect is not statistically significant and the segment effects are also not statistically significant, then we have insufficient evidence and we should report the aggregate (and note the uncertainty) or maybe give up? But since the overall is the primary analysis, we report aggregate and call it not significant.
+          - If the overall effect is significant and the segment effects are not (and we have reversal), then the reversal might be due to noise in the segments? But the segments are subsets so they have less power. So we report the aggregate? 
+          - If the overall effect is not significant but the segment effects are significant and in the same direction (but opposite to the overall? How? That would be strange) then we might have a reversal that is not significant overall but positive in segments? Then we might report the segments? 
+
+     Actually, we are in a reversal scenario: overall is negative, segments are positive. So we require:
+          Overall effect: negative and significant (or not? but the example says harmful overall, so let's assume significant) and segment effects: positive and significant.
+
+     Then we proceed to next steps.
+
+     Step 1 conclusion: 
+          - If the reversal is not statistically significant (i.e., the overall effect is not significant and the segment effects are not significant, or the reversal is within the noise level), then report the aggregate and note that the results are not significant. 
+          - If the reversal is statistically significant (overall and segment effects are both significant, but in opposite directions) then we proceed to Step 2.
+
+     But note: if the overall is significant and the segments are not, then we report aggregate? Because the segment effects are not reliable? But if the segments are underpowered, that might be the case.
+
+     So let me rephrase:
+
+          Rule 1 (Noise Check):
+              a. If the overall effect is not statistically significant (at the chosen alpha level), then regardless of the segment results, we report the aggregate (because the primary analysis is not significant). We note that the feature did not show a significant effect overall, and any segment-level observations are exploratory and underpowered.
+              b. If the overall effect is statistically significant and the segment effects are not (i.e., their confidence intervals include zero and are wide) then we report the aggregate. The reversal is not statistically significant in the segments so we don't trust it.
+              c. If the overall effect is statistically significant and the segment effects are also statistically significant (in the opposite direction) then we have a Simpson's paradox that is not noise -> proceed to Step 2.
+
+     But note: what if the overall effect is significant but the segment effects are significant in the opposite direction? Then we have a clear reversal.
+
+  Step 2: Examine the slicing variable: pre-test or post-test?
+     - Pre-test: variables that are fixed before the experiment (e.g., platform, user's plan tier at the start of the experiment). These are acceptable for stratification because they are not affected by the treatment.
+     - Post-test: variables that are measured after the treatment assignment (e.g., user engagement during the experiment, completion of onboarding). Conditioning on these can introduce bias because the treatment might affect the slicing variable (e.g., the feature might affect engagement, and then engagement affects the outcome). This can create a collider bias or mediation.
+
+     Rule 2: 
+          - If the slicing variable is a pre-test variable, then we consider reporting the stratified analysis (because the aggregate is confounded by the segment variable). 
+          - If the slicing variable is a post-test variable, then we suspect that the stratified analysis might be biased and we prefer the aggregate unless there is a strong reason to believe that the slicing variable is not affected by the treatment (which is rare for post-test variables).
+
+     However, note that in the graduate admissions example, the slicing variable (department) was a pre-test variable and the stratified analysis was the correct one. In the case of conditioning on a post-test variable (like engagement), we might be introducing bias.
+
+     Step 2a: For post-test variables, we must consider if the treatment could have affected the slicing variable. If the slicing variable is measured after treatment and we have reason to believe it is not affected by the treatment, then it might be safe. But in general, we avoid it.
+
+     Step 2b: Check if the distribution of the slicing variable is balanced between the treatment and control groups. For pre-test variables, we expect balance (if randomized). For post-test, we don't expect balance because the treatment might have changed it.
+
+          How to check? On the dashboard, if we can see the proportion of users in each segment by treatment group. For pre-test variables, if there is imbalance, it might be by chance? But in case 1, there was drift in mobile share. So we should check:
+
+          Rule 2.1: For pre-test variables, check the segment proportions in treatment and control. If they are imbalanced, then the aggregate effect is confounded and we should adjust by stratification. So we report the stratified number.
+
+          Rule 2.2: For post-test variables, we avoid stratification because of potential bias. We report the aggregate. However, if the PM insists on the segment view, we must note that it is not causal for the treatment effect and may be biased.
+
+     But what if the post-test variable is not affected by the treatment? Then it would be like a pre-test variable. How to check? We can look at the effect of the treatment on the slicing variable. If the treatment has a significant effect on the slicing variable, then it is affected and we must not condition on it. 
+
+     How to check quickly? 
+          - On the dashboard, if we can see the segment proportions by treatment group, we can check if they are different. For a post-test variable, if the proportions are significantly different, then the treatment affected the slicing variable. Then conditioning on it would be bad.
+
+          Rule 2.3: For a post-test variable, if the treatment has a significant effect on the slicing variable (i.e., the segment proportions differ between treatment and control), then we absolutely avoid stratification. Otherwise, if it is not affected, then we might consider it? But even then, if the slicing variable is a mediator, we might be breaking the total effect.
+
+     However, the total effect (aggregate) is what we want for a business decision? Or sometimes we want the direct effect? But the procedure should be cautious.
+
+     Therefore:
+
+          For pre-test variables:
+              - If the segment proportions are imbalanced between treatment and control, then the aggregate is confounded. We must report the stratified analysis (which adjusts for the confounder) because it gives the correct average treatment effect.
+
+          For post-test variables:
+              - We generally report the aggregate because conditioning on a post-test variable can bias the estimate. We only consider the stratified analysis if:
+                  a. The treatment does not affect the slicing variable (we see no difference in segment proportions between treatment and control) AND 
+                  b. We are interested in the effect within a fixed stratum of that variable (which is not the average treatment effect) and we are clear that it is not the overall effect.
+
+              But note: even if the treatment doesn't affect the slicing variable, if the slicing variable is a mediator (i.e., on the causal path from treatment to outcome), then conditioning on it blocks part of the effect. So the stratified analysis would be estimating the direct effect (not the total effect). And the total effect (aggregate) is what we usually want.
+
+     Therefore, for post-test variables, we almost always avoid stratification.
+
+  Step 3: If we have a pre-test variable with imbalance, we report the stratified analysis. But how? We need the weighted average of the segment effects (using the overall population as weights) to get the average treatment effect. This is the adjusted estimate.
+
+     However, note that the segment effects we see might be heterogeneous. The stratified analysis we report should be the average treatment effect (ATE) adjusted for the segment variable. So we compute:
+
+          ATE_adjusted = (effect_segment1 * proportion_segment1) + (effect_segment2 * proportion_segment2) + ... 
+
+     But if the segment effects are heterogeneous, then we might want to report the segment-specific effects? But the question is: what number to report? The overall effect (aggregate) or the stratified number? The stratified number in this context is the adjusted overall effect (which should be positive in the reversal example). 
+
+     Actually, in the reversal, the unadjusted overall effect is negative, but the adjusted (by stratification) overall effect is positive? 
+
+     So for pre-test variables, we report the adjusted overall effect (the weighted average of the segment effects) and note that we adjusted for the segment variable because of imbalance.
+
+     For post-test variables, we report the unadjusted aggregate.
+
+  Step 4: If we are still unsure, we give up and hand over to a person (e.g., a data scientist for more advanced modeling).
+
+  Summary of the procedure:
+
+  1. Noise Check:
+     a. If the overall effect is not significant: report aggregate (with note of non-significance).
+     b. If the overall effect is significant and the segment effects are not significant (in the opposite direction): report aggregate (the reversal in segments is not reliable).
+     c. If the overall effect is significant and the segment effects are significant in the opposite direction: proceed to step 2.
+
+  2. Nature of the slicing variable:
+     a. Pre-test variable:
+          - Check segment proportions between treatment and control. If imbalanced, then the aggregate is confounded -> report the stratified adjusted effect (the weighted average of the segment effects using the overall segment proportions as weights). This is the number we report.
+          - If not imbalanced, then the reversal is due to another reason? Or maybe the segments have different baseline risks? But then the aggregate should be fine? Actually, if the segment proportions are balanced, then the aggregate is not confounded. So why the reversal? It could be due to the fact that the segments have different baseline conversion rates and the treatment effect is positive in both but the aggregate becomes negative because of the different base rates? That's the classic Simpson. In that case, the aggregate is still confounded by the segment variable? 
+
+          Let me explain: even if the segment proportions are the same in treatment and control, the outcome might be affected by the segment. The aggregate effect is:
+
+              Overall = (p * effect1 + (1-p) * effect2)   [if the segment proportions are p and 1-p and the same in both groups]
+
+          But if the segment effects are positive and the aggregate is negative, then mathematically it's impossible? Because the weighted average of positive numbers is positive. So if the segment proportions are balanced, then the aggregate effect should be the weighted average of the segment effects. Therefore, if we see a reversal, there must be imbalance in the segment proportions? 
+
+          Actually, the classic Simpson occurs when the segment proportions differ between the groups? 
+
+          Example: 
+              Group A: 100 users in segment1 (conversion rate 60%) and 100 users in segment2 (conversion rate 30%) -> overall conversion = 45%
+              Group B: 200 users in segment1 (conversion rate 50%) and 50 users in segment2 (conversion rate 20%) -> overall conversion: (200*0.5 + 50*0.2)/250 = (100+10)/250 = 44%
+
+              Now, if we assign group A as control and group B as treatment, then the treatment has a lower overall conversion (44% vs 45%) but in each segment:
+                  segment1: treatment 50% vs control 60% -> control is better
+                  segment2: treatment 20% vs control 30% -> control is better
+
+              This is not a reversal in the treatment effect? Actually, here the treatment group has a lower conversion in both segments? Then the overall should be lower? 
+
+          Let me make a reversal:
+
+              We want: overall treatment worse than control, but in each segment treatment is better.
+
+              Example for Simpson:
+
+              Control group:
+                  Segment1: 100 users, 80 converted (80%)
+                  Segment2: 200 users, 100 converted (50%)
+                  Overall: (80+100)/300 = 180/300 = 60%
+
+              Treatment group:
+                  Segment1: 200 users, 150 converted (75%)
+                  Segment2: 100 users, 40 converted (40%)
+                  Overall: (150+40)/300 = 190/300 = 63.3%
+
+              So overall treatment is better (63.3% vs 60%). 
+              But in segment1: 80% (control) vs 75% (treatment) -> control better.
+              In segment2: 50% (control) vs 40% (treatment) -> control better.
+
+              Wait, that's the opposite: overall treatment is better, but in each segment control is better. And note the segment proportions are different: control has more segment2 (which has lower conversion) and treatment has more segment1 (which has higher conversion). 
+
+              So the reversal is: the aggregate shows treatment is better, but in each segment control is better.
+
+              How do we get the reversal we have (overall negative, segments positive)? We would flip the groups:
+
+              Control overall: 60%, Treatment overall: 63.3% -> positive effect? But we want overall negative.
+
+              Let me create one:
+
+              Control overall: 63.3%, Treatment overall: 60% -> negative.
+
+              Then in each segment, control is better? But we want treatment to be better in each segment.
+
+              How about:
+
+              Control:
+                  Segment1: 200 users, 150 converted (75%)
+                  Segment2: 100 users, 40 converted (40%)
+                  Overall: 190/300 = 63.3%
+
+              Treatment:
+                  Segment1: 100 users, 80 converted (80%)
+                  Segment2: 200 users, 100 converted (50%)
+                  Overall: 180/300 = 60%
+
+              Now overall: treatment is 60% (vs control 63.3%) -> negative effect.
+
+              In segment1: treatment 80% > control 75% -> positive.
+              In segment2: treatment 50% > control 40% -> positive.
+
+              So the segment proportions are imbalanced: control has more segment1 (which has a high conversion) and treatment has more segment2 (which has a low conversion). Therefore, the aggregate is confounded.
+
+              In this case, even if the assignment was randomized, if by chance the treatment group ended up with more segment2 users, then we have imbalance.
+
+              Therefore, for pre-test variables, if we see imbalance in the segment proportions, we must adjust by stratification. The adjusted effect would be:
+
+                  We take the overall segment proportions? Or the average of the segment effects? 
+
+              We want the average treatment effect (ATE) that we would have gotten if the segment proportions were the same as in the population. We can use the overall population segment proportions to weight.
+
+              In the example, the overall population (both groups) has:
+                  Segment1: 200 (control) + 100 (treatment) = 300 -> proportion = 300/600 = 0.5
+                  Segment2: 100+200 = 300 -> 0.5
+
+              Then the adjusted effect for treatment vs control:
+
+                  For segment1: effect = 80% - 75% = +5%
+                  For segment2: effect = 50% - 40% = +10%
+
+              Then ATE_adjusted = 0.5*5% + 0.5*10% = 7.5%
+
+              But note: the observed overall effect was -3.3% (60% - 63.3% = -3.3%). After adjustment, it's +7.5%, which is the true effect.
+
+              So we report +7.5%.
+
+              Therefore, for pre-test variables, if there is imbalance, we report the adjusted effect.
+
+          b. Post-test variable: we avoid stratification and report the aggregate. We do not report the stratified number because of potential bias.
+
+     But note: what if the post-test variable is a pre-test variable in disguise? For example, if the slicing variable is "user's signup date" (which is fixed) but we only measure the engagement after? Then it's still pre-test? The key is when the variable is determined. If it is determined before treatment, then it is pre-test.
+
+     Therefore, we must be cautious in labeling the variable.
+
+     Rule for labeling: 
+          - If the variable is about an event that happens after the treatment assignment, then it is post-test.
+          - If it is about a characteristic that the user had before the experiment started, then pre-test.
+
+     Example: 
+          - "Platform" (iOS, Android, Web) at the time of assignment -> pre-test.
+          - "Plan tier" at the time of assignment -> pre-test.
+          - "User completed onboarding" -> if onboarding happens after the assignment, then post-test.
+          - "Engaged in the first week" -> post-test.
+
+     Case 1: 
+          Notification feature: lowers retention overall, positive on both mobile and desktop. 
+          Assignment logs show mobile share drifted between arms.
+
+          Steps:
+            1. Overall effect: negative and significant? We assume so. Segment effects: positive and significant? We assume so. So step 1c -> proceed.
+            2. Slicing variable: platform (mobile/desktop). This is a pre-test variable (fixed at assignment).
+            3. We check segment proportions: drifted -> imbalanced. Therefore, we report the stratified adjusted effect.
+
+          How to compute? 
+             We take the weighted average of the segment effects (mobile effect and desktop effect) using the overall proportion of mobile and desktop users (across both groups) as weights.
+
+          We then report that number. It should be positive? Because both segments are positive.
+
+     Case 2:
+          Same feature, overall negative, but sliced by engagement in the first week -> positive among both engaged and unengaged. 
+          Slicing variable: engagement in the first week -> post-test (because it happens during the experiment, after the treatment).
+
+          Steps:
+            1. Overall effect: significant negative, segment effects: significant positive -> step 1c -> proceed.
+            2. Slicing variable: post-test -> we avoid stratification. We report the aggregate.
+
+          But what if the PM is eager? We note that the engagement might be affected by the treatment. We can check the effect of the treatment on engagement. If the treatment significantly affects engagement, then it's definitely biased. Even if it doesn't, we avoid because it might be a mediator.
+
+          Therefore, we report the aggregate.
+
+  Confidence in rules:
+
+  Rule 1 (Noise Check): High confidence. It's standard to rely on statistical significance to rule out noise.
+
+  Rule 2 (Pre-test vs Post-test): High confidence for pre-test. For post-test, also high confidence that we should avoid conditioning, but note: there are advanced methods (like principal stratification) for post-test variables, but they require more time and assumptions. In a 10-min procedure, we avoid.
+
+  Rule 2.1 (Imbalance in pre-test): High confidence. If there is imbalance, then the aggregate is confounded and we adjust.
+
+  Rule I am least sure of: In Rule 1, what if the overall effect is not significant but the segment effects are significant and in the opposite direction to the overall? 
+     Example: 
+          Overall: -0.5% (CI: -1.0% to 0.0%) -> not significant (includes zero and positive? it's negative but CI goes to zero).
+          Segment1: +1.0% (CI: 0.2% to 1.8%) -> significant positive
+          Segment2: +0.8% (CI: 0.1% to 1.5%) -> significant positive
+
+     Then by Rule 1a, we would report the aggregate (not significant). But the segments show a significant positive effect. However, because the overall is not significant, we don't have evidence that the feature is harmful. But we might have evidence that it is beneficial in segments? 
+
+     However, note: the overall test has more power. The segment tests are underpowered and might be false positives? 
+
+     Therefore, we stick to Rule 1a: report aggregate and note non-significance. We do not trust the segment results because the overall did not show significance. This is because the overall is the primary analysis.
+
+     But what if the overall is negative and significant and the segments are positive but not significant? Then we report aggregate (Rule 1b). 
+
+     So the rule is symmetric.
+
+     However, the reversal in the example we have is when the overall is significant (negative) and the segments are significant (positive). That's the classic Simpson and we proceed.
+
+     Therefore, I'm least sure about cases that are borderline in significance (like overall barely significant and segments barely significant). But we rely on the pre-specified alpha.
+
+     Another case: if the overall is significant but the segment effects are significant in the opposite direction but very small? Then we might still report the aggregate? But note, the reversal is significant. We have to adjust for the confounder (if pre-test) or avoid (if post-test). So we proceed to step 2 even if the segment effects are small? 
+
+     Actually, if the segment effects are significant (even if small) and in the opposite direction, then we have a reversal. The magnitude might be small, but the direction is reversed. So we proceed.
+
+     Therefore, the rule is based on significance and direction.
+
+     We assume the dashboard shows the effects with confidence intervals.
+
+  Running the procedure on the cases:
+
+  Case 1: 
+     - Overall: negative and significant (harmful)
+     - Segments (mobile and desktop): positive and significant
+     - Slicing variable: platform (pre-test)
+     - Check segment proportions: drifted (imbalance) -> so we adjust by stratification.
+     - Report the stratified adjusted effect (weighted average of the segment effects by the overall platform proportions). This should be positive.
+
+     Therefore, we report the stratified (adjusted) number.
+
+  Case 2:
+     - Overall: negative and significant
+     - Segments (engaged and unengaged): positive and significant
+     - Slicing variable: engagement in the first week (post-test)
+     - Therefore, we avoid stratification and report the aggregate (negative).
+
+     Even though the PM is eager, we do not report the stratified number because of potential bias.
+
+  Answer:
+
+  \answer{case 1: stratified; case 2: aggregate}
+answer: |-
+  ### Decision Procedure for Simpson's Paradox Reversals
+
+  This 10-minute procedure addresses reversals where aggregate and stratified results conflict. It prioritizes causal validity, noise reduction, and pre-specified variables. The core philosophy: **Report the number that best estimates the average treatment effect (ATE) without introducing bias**. Pre-test variables (fixed before treatment) can justify stratification; post-test variables (measured after treatment starts) often create bias.
+
+  ---
+
+  #### Procedure Flowchart
+  1. **Check for statistical significance**  
+     - **Check**: Are the aggregate effect and segment effects *statistically significant* (p < 0.05 or 95% CI excludes zero)?  
+     - **Settles**: Whether the reversal is noise.  
+     - **Sufficient answer**:  
+       - If **aggregate is not significant**: Report aggregate (reversal is likely noise).  
+       - If **segments are not significant**: Report aggregate (segments underpowered).  
+       - If **both are significant and conflict**: Proceed to Step 2.  
+     - **Confidence**: High (standard statistical practice).
+
+  2. **Classify the slicing variable**  
+     - **Check**: Was the slicing variable **fixed pre-test** (e.g., platform, plan tier) or **measured post-test** (e.g., engagement, onboarding completion)?  
+     - **Settles**: Risk of bias from conditioning.  
+     - **Sufficient answer**:  
+       - **Pre-test**: Proceed to Step 3.  
+       - **Post-test**: Report aggregate (high bias risk).  
+     - **Confidence**: High (well-established in causal inference).  
+     - **Why post-test is problematic**:  
+       - Conditioning on post-test variables (e.g., "engaged users") can introduce *collider bias* or *mediation* if the treatment affects the slicing variable. This manufactures artificial reversals.  
+       - Example: If the feature affects engagement (e.g., more users become "engaged"), slicing by engagement distorts the outcome by conditioning on a variable influenced by treatment.
+
+  3. **Check for imbalance in pre-test slices**  
+     - **Check**: For pre-test variables, is there **imbalance in segment distribution** between treatment/control? (e.g., 60% mobile in treatment vs. 40% in control).  
+     - **Settles**: Whether aggregate results are confounded by segment imbalance.  
+     - **Sufficient answer**:  
+       - **Imbalance present**: Report stratified ATE (weighted average of segment effects, using overall segment proportions).  
+       - **No imbalance**: Report aggregate (reversal likely due to other factors; hand to person).  
+     - **Confidence**: Medium (imbalance directly causes Simpson’s paradox).  
+     - **Least confident rule**: This step assumes imbalance is the primary driver. If reversal persists without imbalance, unmeasured confounders may exist.
+
+  4. **Handoff to human**  
+     - **Conditions**:  
+       - Steps 1–3 yield conflicting guidance.  
+       - No imbalance in pre-test slices but reversal persists.  
+       - Uncertainty about variable classification (pre-test vs. post-test).  
+     - **Action**: Escalate to data scientist for causal modeling (e.g., propensity scoring).
+
+  ---
+
+  ### Case Applications
+  #### Case 1: Notification Feature (Mobile vs. Desktop)
+  - **Overall**: Significant 7-day retention decrease.  
+  - **Segments**: Significant retention increase on both mobile and desktop.  
+  - **Slicing variable**: Platform (pre-test).  
+  - **Imbalance**: Mobile share drifted between arms (e.g., treatment had 70% mobile, control had 50%).  
+
+  **Procedure**:  
+  1. **Step 1**: Both aggregate and segments significant → Proceed.  
+  2. **Step 2**: Platform is pre-test → Proceed.  
+  3. **Step 3**: Imbalance confirmed → **Report stratified ATE**.  
+     - Compute stratified ATE: `(mobile_effect * overall_mobile_prop) + (desktop_effect * overall_desktop_prop)`.  
+     - Result will likely be positive (aligns with segments).  
+
+  **Why**: Imbalance in pre-test variable confounds aggregate. Stratified adjustment corrects bias.  
+
+  #### Case 2: Same Feature (Engaged vs. Unengaged)
+  - **Overall**: Significant 7-day retention decrease.  
+  - **Segments**: Significant retention increase in both engaged/unengaged users.  
+  - **Slicing variable**: Engagement in first week (post-test).  
+
+  **Procedure**:  
+  1. **Step 1**: Both significant → Proceed.  
+  2. **Step 2**: Engagement measured post-test → **Report aggregate**.  
+
+  **Why**:  
+  - Engagement is post-test; conditioning likely introduces bias.  
+  - Example: If the feature *causes* engagement (e.g., notifications increase activity), slicing by engagement:  
+    - Compares inherently different users (e.g., "engaged" in treatment may be less loyal than "engaged" in control).  
+    - Manufactures false reversals by conditioning on a collider.  
+  - **PM argument rejected**: Reporting stratified here misrepresents ATE.
+
+  ---
+
+  ### Final Answers
+  \answer{case 1: stratified; case 2: aggregate}

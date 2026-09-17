@@ -1,0 +1,212 @@
+id: prompt_69303
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_69303.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789401608-YrzQyp1MUxmgFpUTLgqw
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 430
+completion_tokens: 3745
+reasoning_tokens: 2239
+cost_usd: 0.008379
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T16:05:11+00:00'
+prompt: |-
+  I'm working on mechanistic anomaly detection: you've mapped some mechanism in a base model, then a finetuned checkpoint shows up and you want to flag cases where the mechanism got altered or replaced rather than just reweighted — and the whole program turns on a question nobody's pinned down, which is what makes two mechanisms in two different models the *same* mechanism. Before I commit to a criterion I want the spec for one. Assume the purpose is automated screening of every checkpoint we ship, so a human eyeballing each verdict is off the table, and note where that purpose is what's generating a requirement.
+
+  So: write the desiderata any account of mechanism identity has to meet — the cases it must get right (two redundant circuits doing the same job, the same computation smeared across different neurons after a finetune, a mechanism that's dormant until some off-distribution context, a change that reroutes a computation instead of deleting it), the distinctions it can't collapse, and the stuff about superposition and features not being universal across models that it has to stay consistent with. Give the motivating case or consideration behind each, not just the requirement. Then mark which are non-negotiable and which are just what one camp happens to want — scalability, human readability, that kind of thing. The part I most want: if some subset can't be jointly satisfied, say so and say which you'd give up. My suspicion is that "checkable by looking at behavior" and "sensitive to exactly what behavior can't show you" pul apart, but argue it rather than assume it.
+
+  Sections, in this order: **Desiderata** (numbered, 8–10 items, each with its motivating case — this is the bulk of the answer), **Negotiable vs. not**, **The squeeze** (~250 words on the unsatisfiable subset), **Candidates** (a few lines each on behavioral equivalence testing, activation-patching / circuit-match scores, representation-similarity metrics, and sparse-autoencoder feature overlap — no long scorecard, I'll do that myself).
+reasoning: |-
+  We are tackling the problem of defining when two mechanisms in different models are "the same" for the purpose of automated anomaly detection in mechanistic interpretability. The goal is to flag when a finetuned model has altered or replaced a mechanism rather than just reweighted it. We need desiderata that any account of mechanism identity must meet, considering various cases and constraints.
+
+  **Key Considerations from the Query:**
+  - Must be automatable (no human eyeballing).
+  - Must handle cases like:
+      - Redundant circuits doing the same job (should be considered same mechanism?).
+      - Same computation smeared across different neurons after finetuning (should be considered same?).
+      - Mechanisms that are dormant until off-distribution contexts (must not be falsely flagged as missing when dormant).
+      - Changes that reroute a computation without deleting it (should be flagged as altered?).
+  - Must be consistent with superposition and the fact that features are not universal across models.
+  - Must balance between behavioral equivalence (which might miss internal changes) and sensitivity to internal structural changes (which might flag benign rewrites).
+
+  **Desiderata (8-10 items):**
+
+  1. **Invariance to Reweighting (Non-Negotiable):**  
+     *Motivation:* If a finetuning only changes the weights (e.g., scaling the contributions of neurons) without altering the structure of the circuit, then the mechanism should be considered the same. For example, if a neuron's output is multiplied by a constant but the connections remain, this is a reweighting, not a replacement.  
+     *Requirement:* The criterion must not flag reweighting as an anomaly.
+
+  2. **Sensitivity to Circuit Alteration (Non-Negotiable):**  
+     *Motivation:* If the finetuning changes the structure of the circuit (e.g., by removing a connection, adding a new path, or changing the function of a node), then the mechanism is altered and should be flagged. For example, if a direct connection from A to B is replaced by a detour through C, the mechanism is altered.  
+     *Requirement:* The criterion must detect structural changes in the circuit.
+
+  3. **Robustness to Neuron Permutation and Splitting (Non-Negotiable):**  
+     *Motivation:* Due to model symmetry (e.g., permutation of neurons in a layer) and the possibility of "smeared" representations (where the same function is distributed across more neurons, or consolidated into fewer), the criterion must not flag these as anomalies. For instance, if after finetuning a computation that was in one neuron is now split across two, but the overall function remains, it should be considered the same mechanism.  
+     *Requirement:* The criterion must be invariant to neuron permutations and splitting/merging of representations that preserve the function.
+
+  4. **Activation Sparsity Awareness (Non-Negotiable):**  
+     *Motivation:* In some contexts, a mechanism might be dormant (e.g., on in-distribution data it is not used, but off-distribution it activates). The criterion must not flag a mechanism as missing if it is merely dormant on the test data.  
+     *Requirement:* The criterion must account for activation sparsity and context-dependent activation. It should require testing on inputs that activate the mechanism.
+
+  5. **Handling Redundancy (Negotiable):**  
+     *Motivation:* Models may have redundant circuits that can take over if one is damaged. If one of two redundant circuits is removed, the behavior might remain the same, but the mechanism has changed (redundancy reduced). However, for anomaly detection, we might care about the presence of a backup.  
+     *Requirement:* The criterion must flag the removal of a redundant circuit even if behavior is unchanged? (This is negotiable: some might say the mechanism is intact as long as one circuit remains; others might say the redundancy is part of the mechanism.)  
+     *Clarification:* We might require that the criterion is sensitive to the loss of redundancy if that is considered part of the mechanism's identity. But note: if we require this, it might conflict with behavioral tests (since behavior doesn't change). Alternatively, we might not require it and consider redundancy as an implementation detail.
+
+  6. **Consistency with Superposition (Non-Negotiable):**  
+     *Motivation:* In models, features are represented in superposition (i.e., a neuron can be part of multiple features). The criterion must not require that a neuron is exclusively dedicated to one mechanism.  
+     *Requirement:* The criterion must allow for neurons to participate in multiple mechanisms and must not require one-to-one neuron alignment.
+
+  7. **Automatability (Non-Negotiable):**  
+     *Motivation:* The entire purpose is automated screening. The criterion must be computable without human intervention.  
+     *Requirement:* The method must be scalable and run without human judgment for each checkpoint.
+
+  8. **Generalization Beyond Training Distribution (Negotiable):**  
+     *Motivation:* A mechanism might be altered in a way that only appears under off-distribution inputs. For example, a trojan trigger that is inactive on in-distribution data.  
+     *Requirement:* The criterion should ideally detect changes that manifest only off-distribution. However, this might require generating inputs that are off-distribution, which could be expensive or unsafe. Hence, this is negotiable: it might be omitted for scalability, but if included, it would require testing on a diverse set of inputs.
+
+  9. **Efficiency (Negotiable):**  
+     *Motivation:* The method must be efficient enough to run on every checkpoint.  
+     *Requirement:* The computational cost should be acceptable for deployment in a production environment. This might rule out extremely expensive methods (like exhaustive activation patching on many inputs).
+
+  10. **Human Readability (Negotiable):**  
+      *Motivation:* While the verdict must be automated, the reason for the flag might need to be interpretable by humans for debugging.  
+      *Requirement:* The method should ideally produce interpretable outputs (e.g., which part of the circuit changed) but this is a bonus, not a core requirement.
+
+  **Negotiable vs. Not:**
+
+  - **Non-Negotiable:**  
+    Invariance to Reweighting, Sensitivity to Circuit Alteration, Robustness to Neuron Permutation and Splitting, Activation Sparsity Awareness, Consistency with Superposition, Automatability.
+
+  - **Negotiable:**  
+    Handling Redundancy (we might choose to ignore redundancy loss if behavior is preserved), Generalization Beyond Training Distribution (due to cost), Efficiency (to some extent, but it must be feasible), Human Readability.
+
+  **The Squeeze (Trade-offs and Unsatisfiable Subset):**
+
+  The core tension is between **behavioral equivalence** (which is necessary to avoid false positives from benign rewrites) and **sensitivity to internal structural changes** (which is necessary to detect rerouting or replacement of mechanisms even when behavior is preserved). 
+
+  - Behavior-only tests (e.g., testing on a set of inputs) might miss internal changes that do not affect behavior (like the removal of a redundant circuit or a change that doesn't manifest on the test set). 
+  - Internal structural tests (e.g., requiring the exact same neurons to be involved) are too brittle and fail due to neuron permutation or smearing. 
+
+  Moreover, the requirement to account for **off-distribution behavior** (if we include it) is at odds with **efficiency** and even **safety** (generating off-distribution inputs might be problematic). 
+
+  Another tension is between **automatability** and **handling redundancy**. Automatically detecting the loss of a redundant circuit without behavior change requires a way to probe the model's internal redundancy, which is difficult and might require extensive testing (e.g., by ablating parts and seeing if behavior changes). 
+
+  Therefore, we cannot jointly satisfy:
+  - Sensitivity to the loss of redundancy (if considered important) and behavioral equivalence (because behavior does not change when redundancy is lost).
+  - Sensitivity to off-distribution changes and efficiency (because off-distribution testing is expensive and potentially unbounded).
+
+  Given the primary goal of automated screening, we would prioritize:
+  - Behavioral equivalence as a necessary condition (to avoid false alarms from benign rewrites) but then layer on internal checks to catch structural changes that might be behaviorally equivalent now but could break in the future or under specific conditions. However, without off-distribution testing, we might miss some changes.
+
+  We might have to give up on:
+  - Requiring detection of the loss of redundancy (if behavior is preserved) because it is too hard to define and detect without human interpretation or extensive testing.
+  - Full off-distribution coverage due to efficiency and safety concerns.
+
+  **Candidates:**
+
+  1. **Behavioral Equivalence Testing:**  
+     *Description:* Compare the outputs (e.g., logits, intermediate activations) of the base and finetuned models on a fixed set of inputs.  
+     *Pros:* Automatable, invariant to internal rewrites that don't change behavior.  
+     *Cons:* Misses changes that don't manifest on the test set (e.g., dormant mechanisms, off-distribution issues, redundant circuits).
+
+  2. **Activation Patching / Circuit-Match Scores:**  
+     *Description:* For a set of inputs, patch activations from the base model into the finetuned model (or vice versa) and measure the effect on output. A high match score indicates the same mechanism.  
+     *Pros:* Sensitive to the functional role of activations, can detect if a circuit is still performing the same function.  
+     *Cons:* Computationally expensive, requires defining the circuit in the base model, and may not generalize to all inputs.
+
+  3. **Representation Similarity Metrics (e.g., CKA, PWCCA):**  
+     *Description:* Compare the similarity of activations in the two models across layers for a set of inputs.  
+     *Pros:* Automatable, can handle permutation invariance.  
+     *Cons:* May not capture functional equivalence (similar activations might not play the same role in the next layers) and can be fooled by reweighting or smearing.
+
+  4. **Sparse Autoencoder (SAE) Feature Overlap:**  
+     *Description:* Train SAEs on both models and compare the features (dictionary elements) that activate for the same inputs. Measure overlap in feature activation patterns.  
+     *Pros:* Can handle superposition, provides an interpretable basis for comparison.  
+     *Cons:* Requires training SAEs (which might not be perfect), and the feature set might not align perfectly between models.
+
+  Each candidate has strengths and weaknesses, and none satisfies all desiderata perfectly. A hybrid approach might be necessary.
+answer: |-
+  ### Desiderata for Mechanism Identity in Mechanistic Anomaly Detection  
+  **Purpose:** Automated screening of finetuned checkpoints to flag *structural alterations* (replacement/rerouting) vs. *reweighting* of base-model mechanisms. Must be automatable, consistent with superposition, and handle edge cases.  
+
+  #### **Desiderata** (10 items, with motivations)  
+  1. **Invariance to Neuron Reweighting**  
+     *Motivation:* Finetuning often rescales neuron contributions without altering core functionality (e.g., attention head output multiplied by 0.9). This should not flag as "altered."  
+     *Non-negotiable*: Essential to avoid false positives from benign optimization.  
+
+  2. **Sensitivity to Computational Graph Alterations**  
+     *Motivation:* Detects rerouting (e.g., a direct path A→B replaced by A→C→B) or circuit replacement (e.g., new neurons computing the same function). Flags when *how* a computation happens changes, even if outputs match.  
+     *Non-negotiable*: Core to catching stealthy adversarial changes.  
+
+  3. **Robustness to Superposition & Smeared Representations**  
+     *Motivation:* After finetuning, a mechanism may distribute across different neurons (e.g., due to sparse feature reuse). The account must recognize this as "same mechanism" if computational role is preserved.  
+     *Non-negotiable*: Required by transformer architecture realities.  
+
+  4. **Dormant Mechanism Preservation**  
+     *Motivation:* Mechanisms inactive on training data (e.g., safety filters triggered only off-distribution) must not be flagged as "deleted" when dormant.  
+     *Non-negotiable*: Critical for safety-critical applications.  
+
+  5. **Redundancy Awareness**  
+     *Motivation:* Models may have backup circuits (e.g., duplicate attention heads). Removing one should flag as "altered" if redundancy was intentional, even if behavior is unchanged.  
+     *Negotiable*: Trade-off between sensitivity and false alarms. Some users may prioritize behavior over structure.  
+
+  6. **Activation Sparsity Tolerance**  
+     *Motivation:* Mechanisms active only in narrow contexts (e.g., rare tokens) must be identifiable without exhaustive testing.  
+     *Non-negotiable*: Needed for efficiency in automated screening.  
+
+  7. **No Universal Feature Assumption**  
+     *Motivation:* Features/neurons are not aligned across models (e.g., via superposition). The account cannot assume one-to-one neuron correspondence.  
+     *Non-negotiable*: Fundamental to modern ML.  
+
+  8. **Behavior-Integrated Internal State Comparison**  
+     *Motivation:* Purely behavioral tests miss rerouted internals; purely internal tests ignore function. The account must link both (e.g., "same mechanism" iff identical outputs *and* internal causal structure for targeted inputs).  
+     *Non-negotiable*: Avoids blindness to behavior-preserving attacks.  
+
+  9. **Scalability to Large Models**  
+     *Motivation:* Must run on every shipped checkpoint (e.g., 1B+ params) with minimal compute.  
+     *Negotiable*: Could relax for high-stakes models, but strict automation requires this.  
+
+  10. **Off-Distribution Generalization**  
+      *Motivation:* Must detect changes visible only in edge cases (e.g., trojan triggers).  
+      *Negotiable*: Conflict with scalability; may require sampling-based approximations.  
+
+  ---
+
+  #### **Negotiable vs. Not**  
+  - **Non-negotiable:** 1, 2, 3, 4, 6, 7, 8.  
+    *Why:* Core to detecting *mechanistic* anomalies (not behavioral) while respecting model physics.  
+  - **Negotiable:** 5 (redundancy), 9 (scalability trade-offs), 10 (off-distribution coverage).  
+    *Why:* Context-dependent; e.g., redundancy might be irrelevant for non-safety mechanisms, and off-distribution testing may be impractical.  
+
+  ---
+
+  #### **The Squeeze** (~250 words)  
+  The unresolvable tension is between **behavioral equivalence** (Desideratum 8) and **sensitivity to dormant/off-distribution mechanisms** (Desiderata 4, 10). Behavior-based checks (e.g., output similarity on test sets) are automatable and scalable but fail for mechanisms invisible on standard inputs (e.g., a trojan circuit). Conversely, probing dormant mechanisms requires exhaustive input generation—infeasible for automation—and may violate safety if maliciously triggered. Desideratum 6 (sparsity tolerance) exacerbates this by demanding efficiency, while Desideratum 10 requires unbounded input exploration.  
+
+  **Which to surrender?**  
+  - **Option A:** Drop strict off-distribution coverage (Desideratum 10). Rely on curated inputs to activate mechanisms, accepting risk for scalability.  
+  - **Option B:** Relax behavior-integration (Desideratum 8) for internal-state heuristics, risking false positives from benign rewrites.  
+
+  **Argument:** Automation and safety necessitate sacrificing *full* off-distribution coverage. Desideratum 10 is negotiable; Desiderata 4 and 8 are not. Thus:  
+  1. Use behavior-integrated checks *on targeted inputs* that activate mechanisms (satisfying 4, 6, 8).  
+  2. Approximate off-distribution coverage via adversarial input synthesis (e.g., using the base model to generate probes). This balances 10 with 9 but doesn’t guarantee completeness. The true conflict is between scalability (9) and off-distribution sensitivity (10)—prioritize 9 for automation.  
+
+  ---
+
+  #### **Candidates**  
+  1. **Behavioral Equivalence Testing**  
+     Compare outputs on fixed inputs. *Fails:* Desiderata 2 (misses rerouting), 4 (dormant mechanisms), 5 (redundancy), 10 (off-distribution).  
+
+  2. **Activation Patching / Circuit-Match Scores**  
+     Patch activations between models; measure output recovery. *Fails:* Desiderata 3 (superposition), 9 (scalability: expensive per-input), 7 (assumes aligned features).  
+
+  3. **Representation Similarity Metrics (CKA, PWCCA)**  
+     Compare activation correlations across layers. *Fails:* Desiderata 2 (insensitive to computational role changes), 8 (decouples behavior from internals).  
+
+  4. **Sparse Autoencoder (SAE) Feature Overlap**  
+     Align SAE features between models; measure activation overlap. *Fails:* Desiderata 3 (if features re-superpose post-finetune), 9 (SAE training cost), 5 (redundancy obscured).  
+
+  **Hybrid Suggestion:** Combine activation patching (for behavior-integrated internal checks) with SAE-based feature tracking (for superposition robustness). This targets Desiderata 1–4, 6–8 but struggles with 5, 9–10.

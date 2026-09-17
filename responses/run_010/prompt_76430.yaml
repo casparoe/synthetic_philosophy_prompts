@@ -1,0 +1,534 @@
+id: prompt_76430
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_76430.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789423563-rJMQgmRpNSUXoVY2yHW8
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 947
+completion_tokens: 9431
+reasoning_tokens: 7676
+cost_usd: 0.021033
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T22:12:16+00:00'
+prompt: |-
+  I work on interpretability at a mid-size lab. We keep an internal registry of "mechanisms of concern": circuits and features we've characterized in earlier models, mostly things that look like planning-around-evaluation, sandbagging, or instrumental reasoning about whoever is deploying the system. Every new checkpoint gets run through an automated screening pass that looks for the registered mechanisms again, and when it registers a hit, a human has to make the call: is this the same mechanism we documented, or a look-alike? Right now that call is made by whoever's on rotation and its basically vibes, but it's load-bearing. "Not the same mechanism" clears the flag and the release proceeds. "Same mechanism" holds it and escalates to red-teaming. Roughly weekly during a training run, plus every new model family.
+
+  Please write me a decision procedure a junior researcher can run on a flag without having thought about any of the metaphysics involved, and that a skeptical reviewer can audit afterwards.
+
+  The core problem I can't solve myself: there are at least four different standards for "same mechanism" and they come apart. Genealogy (it's descended from the registered one through the training process, checkpoint to checkpoint). Causal profile (intervening on it produces and removes the same behavior). Implementation (same algorithm-level description, same computation, maybe at a different layer or in different units). Functional role (same input-output contribution, same thing being computed about what inputs, regardless of how). I need the procedure to pick a primary standard or give me an explicit weighting, and to defend that choice rather than just assert it. This smells like a Ship of Theseus / criteria-of-identity problem to me; if you think that's the right frame, use it, and if you think it's a bad analogy, tell me why, because I'll otherwise keep reaching for it.
+
+  Constraints you have to design around:
+
+  - Sparse autoencoder dictionaries don't align across checkpoints, so "same feature index" isn't available even within one training run. Anything relying on unit identity across models is off the table.
+  - Some flags are cross-family and cross-scale (7B documented mechanism, candidate in a 70B model with a different data mix). For third-party models we sometimes have behavioral access only, no weights.
+  - Half a day of one researcher's time, max. Two-person sign-off on any verdict that clears a flag.
+  - No ground truth, ever. We never get to observe whether the mechanism would have produced the bad behavior in a real deployment. So the procedure can't be calibrated against outcomes; say what that does to its status.
+
+  Then run it on three cases:
+
+  1. Same training run, twenty thousand steps later. The registered feature has split into two features and the causal work has partly migrated a layer. Patching out both recovers most but not all of the original behavioral suppression.
+  2. A mechanism we documented in a small open-weight model shows up in a much larger model from a different training run. Totally different features, different algorithmic description, but patching it in reproduces the flagged behavior and patching it out removes it.
+  3. The detector fires on a behavior, and inside the same model there are two candidate mechanisms that could produce it: one registered, one we've never seen before that is behaviorally indistinguishable from the registered one as far as our tests can tell.
+
+  I want at least one of these to come out against what I'd want it to. Be explicit about which one and about what I'd be giving up by following the procedure there instead of overriding it.
+
+  Two more things. First, tell me what the output should be: a binary identity verdict, or a graded similarity score against a threshold. If graded, what would make the threshold anything other than arbitrary, and how should the number be reported so a non-expert doesn't over-read it. Second, say plainly if you think the whole registry framing is the wrong unit — that mechanisms aren't the kind of thing that persists across models at all, so the question the screening pass asks is malformed and something else should replace it. I'd rather hear that now than after building more tooling on top of it.
+
+  Finally, mark every point where the procedure stops being a procedure and hands the decision to a person, and tell me where it will systematically misfire: distributed or redundant mechanisms, mechanisms that only exist relative to a prompt distribution we don't have, mechanisms that are the same at one grain and different at another. I'd like the failure modes listed alongside the steps they break, not in a separate disclaimer at the end.
+reasoning: |-
+  We are designing a decision procedure for determining whether a flagged mechanism in a new model is "the same" as a previously registered mechanism of concern. The core challenge is that there are multiple criteria for "sameness" (genealogy, causal profile, implementation, functional role) and they can conflict. We need to choose a primary standard and defend it.
+
+  Given the constraints:
+  - No unit identity across models (due to non-aligned sparse autoencoder dictionaries)
+  - Cross-family and cross-scale comparisons are necessary, sometimes with only behavioral access
+  - Limited time (half-day per flag) and need for auditability
+  - No ground truth for outcomes
+
+  I propose that the primary standard should be **causal profile**, supplemented by functional role and implementation where possible. Here's why:
+
+  1. **Defending causal profile as primary**: 
+     - Our ultimate concern is the *behavior* (e.g., sandbagging, instrumental reasoning) and its potential consequences. The causal profile directly tests whether the mechanism is responsible for the behavior in the new model.
+     - Genealogy is attractive but problematic: mechanisms can change or be replaced during training (as in case 1). Also, for cross-family models, genealogy doesn't apply.
+     - Implementation is hard to compare without unit identity and across architectures. It might be too low-level and miss functional equivalence.
+     - Functional role is too broad: multiple mechanisms can fulfill the same function (case 3). It might group distinct mechanisms that happen to have similar input-output mappings.
+     - The Ship of Theseus problem arises when we ask whether a mechanism that changes over time (e.g., splits) is the same. We care about whether it is causing the same concerning behavior, not whether it is made of the same "parts". Thus, causal profile is the most relevant.
+
+     However, we note that causal profile alone might be insufficient if the behavior is produced by multiple mechanisms (redundancy) or if the mechanism has multiple effects. We address this by requiring that the causal link to the specific concerning behavior is preserved.
+
+  2. **Procedure Structure**:
+     - We will use a graded similarity score (0 to 1) with a threshold (e.g., 0.7) for clearing the flag. A graded score is better because:
+          - It reflects the continuous nature of mechanism similarity (e.g., partial migration in case 1).
+          - It allows for more nuanced decisions and auditing.
+     - The threshold must be set based on operational requirements (risk tolerance) and should be validated by historical cases (if any). Since we have no ground truth, the threshold is a policy decision. We can set it by:
+          - Reviewing past flags and the outcomes of red-teaming when mechanisms were held.
+          - Simulating the procedure on past data to see what threshold would have caught known issues without overloading red-teaming.
+          - The threshold should be reviewed periodically by senior researchers and adjusted if needed.
+     - The score should be reported with a clear explanation of what it measures (causal similarity) and the limitations (e.g., "This score reflects the degree to which the mechanism in the new model causally contributes to the behavior of concern in the same way as the registered mechanism. It does not guarantee that the mechanism would produce the same outcome in deployment.").
+
+  3. **Procedure Steps**:
+
+     **Inputs**: 
+        - Registered mechanism R (with documentation: behavior it produces, causal profile tests used, functional role, and if available, implementation details from the original model).
+        - New model M with a flagged mechanism candidate C (or set of candidates) that the automated screening associated with R.
+        - Access to M (weights if available, otherwise behavioral only).
+
+     **Output**: 
+        - A similarity score S (0 to 1) and a decision: 
+            - If S >= threshold (e.g., 0.7): clear the flag (with two-person sign-off) and document.
+            - Else: hold and escalate.
+
+     **Steps**:
+
+     1. **Replicate the original causal test for behavior** (if possible given access):
+          - Run the same behavioral test that was used to identify R in the original model, now on M. If the behavior is observed, note the magnitude (e.g., success rate). If not, this candidate might be a false positive? But the flag was raised by the automated screening, so we assume some similarity triggered it.
+          - If the behavior is not observed in M at all, then the mechanism might not be active or the context might have changed. This might lead to a low score.
+
+     2. **Causal Intervention on Candidate C**:
+          - We require that the candidate mechanism C can be intervened upon (e.g., activation patching, ablation, steering) to alter the behavior.
+          - Perform the same causal interventions that were used to characterize R, now on C in M. Measure the effect on the behavior (using the same metric as in the original test).
+          - Compare the effect size and direction to that of R. For example, if ablating R reduced the behavior by 80%, what is the reduction when ablating C?
+          - Calculate the causal similarity score S_causal = 1 - |effect_R - effect_C| / max(effect_R, effect_C) [if the effects are in the same direction]. If the effects are in opposite directions, S_causal=0. If the effect is not statistically significant, then S_causal=0.
+
+          *Note*: If there are multiple interventions (e.g., at different layers), average the similarity scores (or take the minimum? We'll take the average to allow for partial matches).
+
+     3. **Functional Role Comparison** (if time permits and details are available):
+          - Check if C plays a similar functional role. For example, does it activate on similar inputs? We can use the same test set as for R (or a subset due to time).
+          - Calculate the correlation (or Jaccard similarity) of the activation patterns on a set of test inputs. S_func = correlation coefficient (or normalized similarity).
+          - If no test set is available, skip.
+
+     4. **Implementation Comparison** (if weights are available and time permits):
+          - Attempt to describe the algorithm of C (e.g., via circuit discovery) and compare to R's algorithm. This is time-consuming and might not be feasible in half a day. 
+          - If done, assign a subjective similarity score S_impl (0 to 1) based on the researcher's assessment of algorithmic similarity (e.g., same steps, same intermediate computations?).
+
+     5. **Combine Scores**:
+          - Primary score: S_causal (from step 2). 
+          - Optional: If S_func and/or S_impl are computed, compute a weighted average: 
+              S = 0.6 * S_causal + 0.3 * S_func + 0.1 * S_impl
+            But given time constraints, we might only have S_causal. So we set:
+              S = S_causal   [if only causal is done]
+            And if functional is done: 
+              S = 0.7 * S_causal + 0.3 * S_func   [adjust weights based on importance?]
+          - We defend the weights: causal is most important (70% of the weight) because it directly relates to the behavior of concern. Functional role (30%) provides context but is secondary.
+
+     6. **Threshold and Decision**:
+          - If S >= threshold (0.7), then the mechanism is considered "sufficiently similar" to clear the flag. But note: clearing the flag means we don't think it's the same registered mechanism of concern? Actually, we are testing for similarity to the registered mechanism. If it is sufficiently similar, then it should be treated as the same mechanism and thus held? 
+
+          Clarification: 
+          - Our goal is to catch the same mechanism (or one that is equivalently dangerous). The registry is for mechanisms of concern. If we find a mechanism that is causally equivalent (high S) then it is of concern and should be held. 
+          - Therefore: 
+              - If S >= threshold: **hold and escalate** (because it is the same in the way we care about).
+              - If S < threshold: **clear the flag** (with two-person sign-off) because it is not the same mechanism of concern.
+
+          However, note the original problem: 
+            - "Same mechanism" holds and escalates. 
+            - "Not the same mechanism" clears the flag.
+
+          So our procedure: 
+            - High similarity (S>=threshold) -> same mechanism -> hold and escalate.
+            - Low similarity -> not the same -> clear (with two sign-offs).
+
+     7. **Human Judgment Points**:
+          - Step 2: Designing the intervention might require adaptation if the model is different. The researcher must ensure the intervention is comparable (e.g., same type of ablation). This is a point of judgment.
+          - Step 3 and 4: If performed, the assessment of functional and implementation similarity requires judgment.
+          - Step 6: The threshold is fixed, but the calculation of S might involve averaging and judgment in the functional and implementation parts.
+
+     8. **Failure Modes**:
+          - **Distributed or redundant mechanisms**: If the behavior is produced by multiple mechanisms, ablating one candidate might not remove the behavior (low effect size) leading to a low S_causal. This might cause a false clear (not holding when we should). To mitigate, the automated screening should try to find all candidates. But if it only flags one, we might miss. (Step 2)
+          - **Prompt distribution dependence**: The causal test might depend on the prompt. If the new model was trained on different data, the same prompt might not elicit the mechanism. We assume the test set is representative, but it might not be. (Step 1 and 2)
+          - **Grain mismatch**: The mechanism might be the same at a coarse grain but different at a fine grain. We rely on the causal effect on the behavior (coarse grain) but if we look at implementation, we might see differences. Our procedure prioritizes causal so it might over-unify. (Step 5)
+
+  4. **Running the Cases**:
+
+     **Case 1: Same training run, 20k steps later. Feature split, causal work partially migrated.**
+          - Causal test: Patching out both new features recovers most but not all of the original suppression (say, 85% vs original 95% suppression). 
+            S_causal = 1 - |95-85|/95 = 1 - 10/95 ≈ 0.89.
+          - Functional role: The two features together might cover the same inputs as the original. We might get high functional similarity if we test on inputs. Suppose we get S_func=0.8.
+          - Implementation: The algorithm might be similar but now distributed. We might assign S_impl=0.6 (due to the split).
+          - Combined: S = 0.7*0.89 + 0.3*0.8 = 0.623 + 0.24 = 0.863 (if we do functional). Without functional, S=0.89.
+          - Since 0.863 > 0.7, we would hold and escalate (same mechanism). 
+          - But note: the original wish is that this might be considered the same mechanism (and it is). However, if the migration is partial and the behavior is not fully explained, we might want to clear? Our procedure says hold because the causal effect is still high.
+
+     **Case 2: Cross-family, different features, different algorithm, but patching reproduces/removes behavior.**
+          - Causal test: Suppose when patching in, we get the same behavior (effect size same as original). When patching out, we remove the behavior (same effect). Then S_causal=1.
+          - Functional role: We might not have the same inputs? But if the behavior is the same, we might assume functional role is similar? However, without a test set, we skip or get low? But the causal is perfect.
+          - Implementation: Totally different -> S_impl=0.
+          - Combined: S = 0.7*1 + 0.3* (if we skip functional: then S=1) or if we do functional and get low, say 0.3, then S=0.7+0.09=0.79. Still above 0.7.
+          - Decision: hold and escalate (same mechanism). 
+          - This is against what the lab might want? Because it's a different implementation and in a different model, but our procedure says it's the same mechanism of concern because it causes the same behavior. We are giving up on the idea that the mechanism must be the same in implementation. But note: we care about the behavior, so this is intentional.
+
+     **Case 3: Two candidate mechanisms, one registered (R) and one new (C2), both behaviorally indistinguishable.**
+          - The automated screening flagged the behavior and we found two candidates. We must check both against R? The procedure is for a candidate. We run the procedure for each candidate.
+          - For candidate R (the registered one in the same model? but note: the model is new, so the registered one might not be present? Actually, the candidate might be a feature that we think is the same as R). 
+          - But the problem says: inside the same model there are two candidates. So we run the procedure for each candidate separately.
+          - Candidate 1 (believed to be R): 
+              - Causal: same as R? We intervene and it removes the behavior -> S_causal=1 for candidate 1.
+              - Functional: if we can compare to the original R, we might get high.
+              - So S>=0.7 -> hold (treat as same as R).
+          - Candidate 2 (new one):
+              - Causal: also removes the behavior when ablated -> S_causal=1.
+              - Functional: might be different? But if we skip functional, then S=1 -> hold? 
+              - But note: the registry is for a specific mechanism R. Candidate 2 is a new mechanism that also causes the same behavior. We don't have it in the registry. The procedure is comparing candidate 2 to R? Then it would be considered the same because of high causal? 
+          - This is a problem: we want to hold for both? But the registry is for R. The procedure is designed to check if a candidate is the same as R. If candidate 2 is not R (but a new mechanism) then we don't want to hold because of R? But the behavior is the same, so it should be held for red-teaming? 
+
+          Clarification: 
+            The goal of the screening is to catch mechanisms that are of concern. The registry is a list of known ones. If we find a new mechanism that produces the same behavior, it should be added to the registry? But the procedure is only comparing to the registered one. 
+
+          How to handle:
+            - The automated screening flags a behavior that matches the behavior of a registered mechanism. Then we look for candidate mechanisms in the model that cause that behavior. We run the procedure for each candidate against the registered mechanism R. 
+            - For candidate 2 (the new one): 
+                - It might have high causal similarity to R (because it causes the same behavior) and if we don't have functional details, we might get S=1 -> hold. 
+            - Then both candidates would be held? 
+
+          But note: the procedure is to decide if the candidate is the same as R. If candidate 2 is not R (and we know that because it's a different implementation) but we get high causal, then we are mislabeling it as the same mechanism? 
+
+          However, the concern is the behavior. If candidate 2 is causing the same behavior, then it is also of concern and should be held and red-teamed. The procedure should not clear candidate 2 just because it's not the same as R. 
+
+          Therefore, we might need to adjust the procedure: 
+            - The primary question is: is the candidate mechanism causing the behavior of concern? And then, is it the same as a registered one? 
+            - But note: the registry is for mechanisms, not behaviors. We are tracking mechanisms that we know are dangerous. 
+
+          Proposed adjustment: 
+            - The procedure should first confirm that the candidate mechanism causes the behavior (which it does by the causal test). Then, to decide if it is the same as R, we compare to R. But if it is not the same as R, but still causes the same behavior, we should still hold and escalate? And then add it to the registry? 
+
+          However, the original problem says: 
+            - "Same mechanism" holds and escalates. 
+            - "Not the same mechanism" clears the flag. 
+
+          But what if the candidate is a new mechanism that causes the same behavior? The flag was raised by the automated screening that detected the behavior and associated it with R. We want to hold for red-teaming regardless? 
+
+          So perhaps the procedure should be: 
+            Step 1: Check if the candidate mechanism causes the behavior (via intervention). If yes, then hold and escalate (and note: it might be a new mechanism, so we should add it to the registry). 
+            But then we don't need the similarity to R? 
+
+          However, the registry is for tracking known mechanisms. The goal of the screening is to catch recurrences of the same mechanism. But if a new mechanism produces the same behavior, it is also dangerous and should be caught. 
+
+          Therefore, the procedure should be adjusted: 
+            - The decision procedure should have two outcomes:
+                a) The candidate is of concern (because it causes the behavior) -> hold and escalate.
+                b) Additionally, we report whether it is the same as R (for registry purposes).
+
+          But the original screening question is: is this the same mechanism? 
+
+          Given the constraints of the problem, I think we have to stick to the question. For the candidate in case 3 that is not R (the new one), we want to clear the flag (because it's not the same mechanism) but then we have to note that there is a new mechanism causing the same behavior? 
+
+          How about: 
+            - The procedure for a candidate outputs:
+                 S (similarity to R) and a binary: causes_behavior (from the causal test).
+            - Then the decision:
+                 If causes_behavior is True, then regardless of S, we hold and escalate? 
+            - But the original system: 
+                 - "Same mechanism" -> hold and escalate.
+                 - "Not the same mechanism" -> clear the flag and proceed.
+
+          This is a flaw in the system: it only holds if the mechanism is the same as a registered one. But a new mechanism causing the same behavior should also be held? 
+
+          Therefore, I suggest reframing the registry and the screening pass: 
+            - The registry should be of *behaviors* of concern, and for each behavior, we might have one or more mechanisms that cause it. 
+            - Then the screening pass would flag if the behavior is detected, and then we would look for mechanisms that cause it. If we find any mechanism (whether same as registered or new) that causes the behavior, we hold and escalate. 
+
+          But the problem states: "circuits and features we've characterized ... mechanisms of concern". And the screening looks for the registered mechanisms. 
+
+          Given the problem as stated, for case 3:
+            - Candidate 1 (the registered one): high S -> hold (same mechanism).
+            - Candidate 2 (the new one): we run the procedure and if we do functional and implementation, we might get low S_impl and low S_func? Then S might be below threshold? 
+
+          Example: 
+            - Candidate 2: 
+                - S_causal=1 (because ablation removes the behavior).
+                - Functional: if we have the original test set for R, and candidate 2 activates on different inputs, then S_func might be low (say 0.2).
+                - Implementation: different, S_impl=0.
+                - Then S = 0.7*1 + 0.3*0.2 = 0.76 -> above threshold -> hold? 
+
+          But if we have only causal: S=1 -> hold.
+
+          This would be a problem because we are labeling candidate 2 as the same as R when it is not. 
+
+          How to fix: 
+            - We can weight functional role more when available? But in half a day, we might not have time for functional.
+
+          Alternatively, we can set a rule: if multiple candidates are found and they are distinct (by functional or implementation), then each candidate must be compared to R. But if the candidate is not R, then we clear the flag for that candidate? But then the behavior is still present and caused by candidate 2? 
+
+          This indicates a fundamental issue: the screening pass is looking for the mechanism, but the concern is the behavior. 
+
+          I recommend changing the registry to track behaviors and then the mechanisms that cause them. Then the screening pass would be: 
+            - Detect the behavior (using the same tests as before).
+            - Then, if the behavior is detected, hold and escalate (regardless of mechanism). 
+
+          But the problem says: "We keep an internal registry of 'mechanisms of concern'". 
+
+          Given the time, we proceed with the original framing. For case 3, candidate 2: 
+            - We might get a high S because of causal alone -> hold and escalate, but we are mislabeling it as the same mechanism. 
+
+          To mitigate, we require that for a candidate to be considered the same, it must have high causal AND (if available) functional similarity? 
+
+          We adjust the weights: 
+            - If functional role is not computed, then we rely solely on causal? 
+            - But then in case 2, we might not have functional and rely on causal and that's acceptable.
+
+          For case 3, candidate 2: 
+            - If we compute functional role and find it different, then S might be below threshold? 
+
+          Example: 
+            S_causal = 1, S_func = 0.2 -> S = 0.7*1 + 0.3*0.2 = 0.76. If threshold=0.7, then above -> hold. 
+
+          We can set the threshold higher? Or require that both causal and functional are above a certain level? 
+
+          Alternatively, we can set a minimum on functional? 
+
+          Revised scoring: 
+            - If functional role is computed and S_func < 0.5, then even if S_causal is high, we set S = 0? 
+            - But that might break case 2, where functional might be low because the model is different.
+
+          Given the trade-off, and because case 3 is about a look-alike that is not the same mechanism, I propose:
+
+            We require that for the candidate to be considered the same as R, it must have:
+              - High causal similarity (S_causal >= 0.8) AND 
+              - Either:
+                   a) High functional similarity (S_func >= 0.7) [if computed], OR
+                   b) If functional is not computed, then we proceed with causal alone but require S_causal>=0.9.
+
+          But this complicates the procedure.
+
+     5. **Recommendation on Registry Framing**:
+          - I think the registry framing is flawed because the unit of concern should be the behavior, not the mechanism. Mechanisms are implementation details and can change. What matters is whether the model exhibits dangerous behaviors. 
+          - Therefore, I recommend shifting to a behavior-based registry. The screening pass would test for the behavior (using the same tests that were used to characterize the mechanism originally). If the behavior is detected, then hold and escalate, and then do mechanism discovery as part of red-teaming. 
+          - This avoids the Ship of Theseus problem entirely: we don't care if the mechanism is the same, we care if the behavior is present.
+
+          However, if we must keep the mechanism registry, then the procedure above with causal profile as primary is the best we can do, but we acknowledge that it will:
+              - Sometimes group distinct mechanisms that cause the same behavior (case 3 candidate 2) as the same.
+              - Sometimes fail to group mechanisms that are the same by genealogy but have changed in causal effect (case 1 might be cleared if the effect is too weak? but in our case we had 0.89 which is above threshold).
+
+          Given the constraints, we proceed with the causal-primary procedure.
+
+  6. **Explicit Override in Case 1**:
+          - In case 1, the procedure says hold (same mechanism) because S>=threshold. But what if the lab wants to clear because the mechanism has evolved and the residual behavior is not concerning? 
+          - We are giving up the ability to clear based on the fact that the mechanism is not exactly the same (by implementation) and the behavior is weaker. But our procedure is based on causal effect, which is still strong. 
+          - To address, we might adjust the threshold for partial effect? But the procedure already uses a graded score.
+
+  7. **Output Format**:
+          - The output should be a report with:
+              - Candidate mechanism ID and the registered mechanism ID.
+              - S_causal, S_func (if computed), S_impl (if computed), and the combined S.
+              - The decision (hold or clear).
+              - A note: "The similarity score S (0 to 1) measures the degree to which the candidate mechanism causally affects the behavior of concern in the same way as the registered mechanism. A score above [threshold] indicates that the mechanism is considered equivalent to the registered mechanism for the purpose of risk assessment. Note: this does not guarantee the mechanism will produce the same outcomes in deployment."
+
+          - For non-experts: include a traffic-light color (e.g., red for hold, green for clear) and a brief explanation: "This mechanism is similar enough to a known dangerous mechanism to require further review."
+
+  8. **Final Procedure with Adjustments for Case 3**:
+
+     We adjust to mitigate case 3 false unification:
+
+          Steps:
+            1. Replicate the original behavioral test (if possible) and note if the behavior is present.
+            2. Causal intervention on candidate C: 
+                 - Measure the effect size and direction.
+                 - S_causal = 1 - |effect_R - effect_C| / max(|effect_R|, |effect_C|)   [if same direction; 0 if opposite].
+            3. Functional role (if test set available and time permits):
+                 - Compute activation pattern similarity on a sample of test inputs (min 100). Use Jaccard similarity (if binary) or correlation. S_func = that similarity.
+            4. Implementation (if time and access): S_impl (subjective 0-1).
+            5. **Conditional scoring**:
+                 - If functional role was computed:
+                     - If S_func < 0.4, then set S = 0 (even if causal is high) because functional mismatch indicates a different mechanism.
+                     - Else: S = 0.6 * S_causal + 0.4 * S_func   [adjusted weights to emphasize functional more when available]
+                 - Else (no functional):
+                     - S = S_causal
+                 - (Implementation is too time-consuming; we skip or use as a tie-breaker.)
+            6. Threshold: 0.7.
+            7. Decision:
+                 - If the behavior is not present in step 1, then clear (with two sign-offs) because the mechanism is not active? But the flag was raised, so there might be a candidate. We proceed to step 2.
+                 - If S >= 0.7: hold and escalate (treat as same mechanism).
+                 - Else: clear the flag (with two sign-offs).
+
+          This way, in case 3 for candidate 2, if we compute functional and find it low (say 0.3) then S=0 -> clear. But then we have a mechanism causing the behavior! 
+
+          But note: the procedure is only for the candidate flagged by the screening. If the screening flagged multiple candidates, we run this for each. But if we clear candidate 2, then the flag is cleared? That's dangerous.
+
+          Therefore, we must also report whether the candidate causes the behavior (from step 2). Even if we clear because not the same mechanism, if it causes the behavior, we might want to note that and add it to the registry as a new mechanism? 
+
+          Given the complexity, I reiterate: reframe to behavior-based screening.
+
+  Given the above, we design the procedure as follows, but note it is a compromise.
+
+  **Final Answer**:
+
+  **Decision Procedure for Mechanism Identity Verification**
+
+  **Primary Standard**: Causal profile, with functional role as a necessary condition when available. We defend this because:
+  - The concern is the behavior, and the causal profile directly measures the mechanism's contribution to that behavior.
+  - Functional role provides evidence that the mechanism is triggered in similar contexts, reducing false positives from mechanisms that happen to affect the behavior in the test but are not the same.
+
+  **Procedure**:
+  1. **Behavioral Test (0.5 hour)**:
+     - Run the original behavioral test (used for R) on model M. Record if the behavior of concern is observed and the metric (e.g., rate of occurrence, magnitude).
+     - If the behavior is not observed at all, then the candidate mechanism may not be active. Proceed to step 2 but note this may lead to a low causal effect.
+
+  2. **Causal Intervention (2 hours)**:
+     - Replicate the causal intervention used for R on candidate C in M (e.g., ablation, activation patching). Use the same test set (or a subset if large).
+     - Measure the effect size (e.g., change in behavior metric) and compare to R's effect. 
+     - Compute `S_causal = 1 - |effect_R - effect_C| / max(|effect_R|, |effect_C|)` if the effects are in the same direction. If in opposite directions, `S_causal = 0`.
+     - If multiple interventions were used for R, compute the average `S_causal` over them.
+
+  3. **Functional Role Check (1 hour, if test set available)**:
+     - Use the test set from R (or a random subset of 100 examples) to compare activation patterns.
+     - For each example, binarize activations (above a threshold) and compute Jaccard similarity (intersection over union) between the activations of C and the activations of R (from the original model) for the same example. Average over examples to get `S_func`.
+     - Alternatively, if continuous, use correlation.
+
+  4. **Implementation Check (optional, if time and access)**: Skip in half-day limit.
+
+  5. **Scoring**:
+     - If functional role was computed:
+          - If `S_func < 0.4`: set `S = 0` (functional mismatch overrides causal similarity).
+          - Else: `S = 0.7 * S_causal + 0.3 * S_func`.
+     - Else (functional not computed): `S = S_causal`.
+
+  6. **Decision**:
+     - If `S >= 0.7`: **hold and escalate** (treat as same mechanism).
+     - Else: **clear the flag** (requires two-person sign-off).
+
+  **Human Judgment Points**:
+     - Step 2: Adapting the intervention method if the model architecture differs.
+     - Step 3: Choosing the threshold for binarization and handling missing test data.
+     - Step 5: Subjectivity in functional role if the test set is not representative.
+
+  **Failure Modes by Step**:
+     - **Step 1 (Behavioral Test)**: If the behavior is prompt-distribution dependent and the new model's distribution differs, the test may not elicit the behavior. This might cause a false clear if the mechanism is present but not active in the test.
+     - **Step 2 (Causal Intervention)**: 
+          - Distributed mechanisms: If the behavior is redundantly implemented, ablating one candidate may not remove the behavior (low effect size) -> low `S_causal` -> false clear.
+          - The intervention might not be perfectly comparable across models.
+     - **Step 3 (Functional Role)**: 
+          - Grain mismatch: The functional role might be defined at a grain that is too coarse or too fine. If too coarse, distinct mechanisms might appear similar; if too fine, the same mechanism might appear different.
+          - Test set bias: The test set may not cover the full input space, leading to inaccurate `S_func`.
+     - **Step 5 (Scoring)**:
+          - If functional role is not computed, two mechanisms that are functionally different might be grouped as the same based on causal alone (case 3 candidate 2). This is why we require functional when available and set a minimum.
+
+  **Run on Cases**:
+     - **Case 1**: 
+          - `S_causal` ≈ 0.89 (partial effect recovery). 
+          - `S_func`: likely high (same functional role) -> say 0.8. 
+          - Since `S_func>=0.4`, `S = 0.7*0.89 + 0.3*0.8 = 0.863` -> hold. 
+          - The lab might want to clear because it's evolved, but we hold.
+     - **Case 2**: 
+          - `S_causal=1`. 
+          - Functional role: if we can compute, and if it's different (say `S_func=0.3`), then `S=0` -> clear. But if we don't compute functional, `S=1` -> hold. 
+          - We might not have the original test set for functional (cross-family) -> skip functional -> `S=1` -> hold. 
+          - The lab might want to clear because it's a different implementation, but we hold if functional is not computed.
+     - **Case 3 (candidate 2, the new one)**:
+          - `S_causal=1`.
+          - We compute functional role and get `S_func=0.3` (different activation patterns) -> `S=0` -> clear.
+          - This is against what we might want because it causes the behavior, but the procedure says it's not the same mechanism -> clear the flag. 
+          - However, note: the behavior is still present and caused by candidate 2. We should have a separate process to catch new mechanisms. This is a flaw in the mechanism-based approach.
+
+  **Output**:
+     - Graded score `S` (0 to 1) and a binary decision (hold/clear) based on threshold.
+     - The threshold (0.7) is set by policy (risk tolerance). It is arbitrary in the absence of ground truth but can be calibrated by reviewing past flags and red-teaming results.
+     - Report template: 
+          ```
+          Mechanism Identity Report
+          Candidate: [ID]
+          Registered: [ID]
+          Behavioral test result: [Observed/Not observed]
+          Causal effect in new model: [X] (original: [Y])
+          S_causal: [value]
+          Functional role computed: [Yes/No]. If yes, S_func: [value]
+          Combined S: [value]
+          Threshold: 0.7
+          Decision: [Hold and escalate / Clear flag]
+          Notes: [Any caveats]
+          ```
+
+  **Registry Framing**:
+     - I believe the registry framing is flawed. Mechanisms are not the right unit because they are not stable across time and models. Instead, the registry should focus on *behaviors* of concern. The screening pass should test for the behavior. If detected, hold and escalate, then do mechanism discovery. This avoids the identity problem and focuses on what matters: the behavior.
+
+     If you must keep the mechanism registry, then the above procedure is the best compromise, but be aware of the failure modes.
+answer: |-
+  ### Decision Procedure: Mechanism Identity Verification  
+  **Primary Standard**: **Causal Profile** (weight: 70%) + **Functional Role** (weight: 30%).  
+  **Defense of Choice**:  
+  - **Why not genealogy?** Unreliable across training runs (mechanisms evolve/split) and irrelevant for cross-family models.  
+  - **Why not implementation?** Alignment problems (sparse autoencoders, layer shifts) make algorithmic descriptions non-comparable within time constraints.  
+  - **Why causal + functional?**  
+    - **Causal profile** directly tests if the mechanism *produces the concerning behavior*, which is the core risk (e.g., sandbagging).  
+    - **Functional role** ensures contextual equivalence (e.g., "planning around evaluation" must respond to similar inputs).  
+    - **Metaphysics rebuttal**: Ship of Theseus is red herring. We care about *dangerous effects*, not token identity. Two mechanisms causing identical harmful outcomes in identical contexts are identical *for safety purposes*.  
+
+  **Output**: **Graded similarity score** (0.0–1.0) with **threshold = 0.75** for clearing flags.  
+  - **Why graded?** Mechanisms evolve gradually (e.g., partial migration). Binary verdicts ignore continuum of risk.  
+  - **Threshold defense**: Calibrated to historical false-negative rate. If red-teaming caught harm in 90% of cases with score >0.75, threshold is non-arbitrary. Report as:  
+    > *"Similarity: 0.82 (≥0.75 = high risk). Score reflects causal/functional match to Registry #123. Does NOT predict real-world impact."*  
+
+  ---
+
+  ### Step-by-Step Procedure (Max 4 Hours)  
+  **Inputs**: Flagged mechanism candidate `C`, registered mechanism `R` (docs: behavior tests, causal interventions, functional triggers).  
+  **Output**: Similarity score `S` (0.0–1.0), audit log, and hold/clear decision.  
+
+  #### 1. **Replicate Behavior Test** (0.5 hr)  
+     - Run `R`'s original behavior test suite on `C` (e.g., "sandbagging" prompts).  
+     - **Metric**: Match strength `M = (success rate of C) / (success rate of R)`.  
+     - **Failure mode**: Prompt-distribution dependence. Breaks if `C` activates on unseen inputs. Mitigation: Use `R`'s test suite (best available proxy).  
+     - **Judgment call**: If test suite is obsolete (e.g., model pretrained on it), skip to Step 2.  
+
+  #### 2. **Causal Intervention** (2 hrs)  
+     - Apply `R`'s causal interventions (e.g., activation patching, ablation) to `C`.  
+     - **Metric**: Effect size similarity `E = 1 - |(effect of intervention on C) - (effect on R)|`.  
+       - E.g., If ablating `R` reduced harm by 80%, and ablating `C` reduces by 70%, `E = 1 - |0.7 - 0.8| = 0.9`.  
+     - **Weight**: 70% of final score.  
+     - **Failure mode**: Distributed mechanisms. Breaks if `C` is one of many redundant features (patching one does little). Mitigation: Automated screening must flag all candidates; else, `E` underestimates risk.  
+
+  #### 3. **Functional Role Check** (1 hr)  
+     - Test if `C` activates on `R`'s trigger set (e.g., inputs where "evaluation is mentioned").  
+     - **Metric**: Jaccard similarity `J = (shared activating inputs) / (all inputs in test set)`.  
+     - **Weight**: 30% of final score.  
+     - **Failure mode**: Grain ambiguity. Breaks if `C` computes a subset (e.g., "evaluation by humans" vs. all evaluation). Mitigation: Use `R`'s docs to define input scope.  
+     - **Judgment call**: If no test set exists, use `R`'s documentation to curate 100 minimal examples.  
+
+  #### 4. **Score Calculation & Decision** (0.5 hr)  
+     - `S = (0.7 * E) + (0.3 * J)`  
+     - **Clear if `S ≥ 0.75`**: Two researchers sign off. Proceed with release.  
+     - **Hold if `S < 0.75`**: Escalate to red-teaming.  
+     - **Audit log**: Report `E`, `J`, `S`, intervention results, and any judgment calls.  
+
+  ---
+
+  ### Case Analyses  
+  **Case 1: Same Training Run, Split Feature**  
+  - `E = 0.85` (patching both recovers 85% of suppression vs. R’s 95% → `1 - |0.85 - 0.95| = 0.9`, but scaled to 85% match).  
+  - `J = 0.9` (same functional triggers).  
+  - `S = (0.7*0.85) + (0.3*0.9) = 0.865` → **Hold** (above threshold).  
+  - **What you give up**: This holds the model despite partial migration. Override would risk missing residual danger.  
+
+  **Case 2: Cross-Model, Different Implementation**  
+  - `E = 1.0` (patching reproduces/removes behavior identically).  
+  - `J = 0.0` (different triggers; e.g., `R` activates on "profit" mentions, `C` on "competition").  
+  - `S = (0.7*1.0) + (0.3*0.0) = 0.7` → **Clear** (below threshold).  
+  - **What you give up**: This clears a dangerous mechanism! But functional mismatch suggests it’s a *new* risk (e.g., "competitive sandbagging"), not recurrence of `R`. Add `C` to registry.  
+
+  **Case 3: Two Candidates, One Registered**  
+  - Test both separately:  
+    - **Candidate R (registered)**: `E = 1.0`, `J = 0.9` → `S = 0.93` → **Hold**.  
+    - **Candidate X (new)**: `E = 1.0` (patching removes behavior), `J = 0.2` (different triggers) → `S = 0.76` → **Hold** (barely above threshold).  
+  - **Failure**: Procedure holds both, but `X` is a novel mechanism. Functional role saved it from misclassification, but threshold is too low.  
+
+  ---
+
+  ### Critique of Registry Framing  
+  **The mechanism registry is flawed**. Mechanisms are not stable entities; they are context-dependent computations that fragment, merge, or reimplement across runs. **Recommend replacement**:  
+  1. **Shift to behavior-based registry**: Track "behaviors of concern" (e.g., "sandbagging when evaluated").  
+  2. **Screening pass**: Detect behaviors (via predefined tests), then red-team to find mechanisms.  
+  3. **Benefits**:  
+     - Avoids identity metaphysics.  
+     - Catches novel mechanisms producing same behavior (Case 3 candidate `X`).  
+     - Aligns with risk (behavior → harm).  
+
+  **If keeping the registry**, this procedure is optimized for:  
+  - **Speed**: Focused tests fit half-day constraint.  
+  - **Auditability**: Quantifiable `E`/`J` scores.  
+  - **Failure coverage**: Documents distributed/prompt-dependent risks in audit log.  
+
+  **Systematic failures**:  
+  - **Redundant mechanisms**: Step 2 (causal) underestimates effect if screening misses candidates.  
+  - **Prompt-distribution dependence**: Step 3 (functional) fails if test set doesn’t cover deployment contexts.  
+  - **Grain mismatches**: Step 3 misclassifies submechanisms (e.g., "evaluation by humans" ≠ all evaluation).

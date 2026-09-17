@@ -1,0 +1,606 @@
+id: prompt_61194
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_61194.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789371789-Xx934sN4r4cAZ5exsfyw
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 868
+completion_tokens: 10926
+reasoning_tokens: 9171
+cost_usd: 0.024253
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T07:50:54+00:00'
+prompt: |-
+  I work on tooling for an internal model-monitoring harness, and I don't have the philosophy vocabulary for what I need, so bear with me — this ended up being a longer ask than I expected.
+
+  Setup: we have a thing that watches a deployed model for "the mechanism that used to solve this task has changed in a way that looks deliberate." Concretely, we keep a reference library of features/circuits extracted from the base checkpoint (crosscoder-style joint dictionary trained over base + current weights), and at every new checkpoint we try to match the current computation on a fixed probe set against that library. If the match fails or drops under a cosine threshold we raise a flag for a human. The problem is nobody on the team can agree on what "match" is even supposed to mean, and our flags are either twitchy (a re-seed trips them) or useless. Cases that break us: (1) continued pretraining shuffles which neurons implement the circuit but the counterfactual profile on the probes is identical — geometry says different, behavior says same; (2) the same feature direction keeps firing but its selectivity has broadened, so it now also lights up on inputs it used to ignore; (3) the circuit still computes the same thing internally but its output gets routed to a different head that uses it differently downstream; (4) the model has started solving the probe partly in its chain-of-thought text, so the "same mechanism" is now smeared across weights and tokens and our detector only sees the weights; (5) it gets the right answer through what looks like a memorized lookup path instead of the general algorithm, and falls over on out-of-distribution probes; (6) it's 97% similar and indistinguishable on our eval set but diverges on held-out inputs. Me and one of the researchers spent an hour arguing about (6) and realized we were using "same mechanism" to mean two totally different things and neither of us could say which one the spec wanted.
+
+  Deliverable: a taxonomy / decision tree of the positions on "when is it the same mechanism," sized for a ~2 page handout to a mixed audience (two interpretability people, four engineers, nobody with formal philosophy training). I want 6–8 branch questions, each one a concrete scenario in the spirit of the cases above with two or three answer options, phrased so an engineer can answer it without knowing where each answer leads — please don't let any question just be "do you think mechanisms are defined by their function or by their implementation?" Then a scoring key mapping answer patterns onto named positions. The leaves I know I want: strict weight/neuron identity; causal-role identity in the multiple-realizability sense; interventionist identity (same mechanism iff ablating it breaks the same behaviors); informational/geometric identity (same feature direction in a shared basis); historical or lineage identity (same mechanism iff it descends continuously from the same trained circuit, regardless of what it does now); interest-relative identity (no fact of the matter independent of which property you're monitoring); and the deflationary leaf where mechanism just isn't a natural kind and only behavioral equivalence claims are real. Add any leaf you think I'm missing, including one for "identity is graded, not all-or-nothing" if you think that's actually a position and not a dodge.
+
+  The angle that matters to me: build the tree out of distinctions that could change what our detector actually flags on cases (1)–(6), not out of general metaphysics. So for each leaf, tell me what the corresponding detector criterion would look like in practice and which of those six cases it fires on or stays silent about. Also mark the empty cells of the logical space — e.g. is there a coherent view holding that weight identity is necessary but functional equivalence isn't sufficient? — and for each empty cell say whether it's empty because the view is incoherent, unattractive, or just unexplored. And flag any pair of leaves your questions can't really separate; I suspect causal-role and interventionist identity might only come apart in weird setups, and if so I'd rather know that than ship a fake distinction in the handout.
+reasoning: |-
+  We are building a decision tree to help disambiguate what "same mechanism" means for model monitoring. The goal is to have 6-8 concrete scenario questions, each with 2-3 answer options, leading to named positions (leaves) on mechanism identity. The leaves should include:
+
+  1. Strict weight/neuron identity
+  2. Causal-role identity (multiple realizability)
+  3. Interventionist identity (same if ablating breaks same behaviors)
+  4. Informational/geometric identity (same feature direction in shared basis)
+  5. Historical or lineage identity (same if continuous descent from trained circuit)
+  6. Interest-relative identity (depends on the property being monitored)
+  7. Deflationary (only behavioral equivalence is real)
+  8. Graded identity (identity is a matter of degree)
+
+  Additionally, for each leaf, we will describe:
+  - What the detector criterion would look like in practice.
+  - Which of the six cases (1-6) it would fire (flag) or stay silent on.
+
+  We also note empty cells in the logical space and explain why they are empty (incoherent, unattractive, unexplored). We flag pairs of leaves that the questions might not cleanly separate.
+
+  Step 1: Brainstorm the questions (6-8) as concrete scenarios.
+
+  We have six cases that are problematic. We can turn these into questions, but we also need more to cover the distinctions. Let's design questions that force a choice between the leaves.
+
+  Possible Questions:
+
+  Q1: After a model update, the weights of a circuit have been permuted (e.g., due to a different random seed) but the model behaves exactly the same on all tests. Should we consider the mechanism the same?
+     A: Yes, because the behavior is identical. (Leads away from strict weight identity)
+     B: No, because the physical (weight) implementation changed. (Leads toward strict weight identity)
+
+  Q2: A feature that used to fire only on cats now also fires on dogs (but the model still correctly identifies cats and dogs). The overall task performance is the same. Is the mechanism for cat detection the same?
+     A: Yes, because the feature is still doing its job in the context of the task. (Causal-role? But note: the feature's selectivity changed.)
+     B: No, because the feature's activation pattern has changed. (Informational/geometric? Or interest-relative if we care about cat-specificity)
+     C: It's partially the same, but we should note the change. (Graded identity)
+
+  Q3: The circuit that computes a feature is still present and identical, but its output is now used by a different downstream head (e.g., for a different task). Is the mechanism for computing that feature the same?
+     A: Yes, because the internal computation is unchanged. (Causal-role for the feature computation? Or informational identity?)
+     B: No, because the role in the overall system has changed. (Causal-role for the system? Or interventionist if we ablate the feature and it breaks different things now?)
+
+  Q4: The model now solves a problem partly by writing intermediate steps in the chain of thought (CoT) and using those, so the same function is achieved by a combination of weights and activations (tokens). Is the mechanism the same?
+     A: Yes, because the function is achieved. (Causal-role)
+     B: No, because the implementation now involves the token stream. (Strict weight identity would break, but also informational might not capture the token part)
+     C: It's the same mechanism only if we consider the entire system (weights + tokens), but our detector only sees weights so it's not. (Interest-relative? Or deflationary?)
+
+  Q5: The model now uses a memorized lookup for a set of inputs (instead of the general algorithm) and fails on out-of-distribution probes. Is the mechanism the same?
+     A: Yes, because on the original probes it behaves the same. (Behavioral equivalence? But note: it fails on OOD. So this might be insufficient.)
+     B: No, because the mechanism has changed to a lookup and fails on OOD. (Interventionist? Ablating the lookup would break the memorized cases but not the OOD ones? Actually, we want to flag when the mechanism changes in a way that might be brittle.)
+
+  Q6: The model is 97% similar in weights and indistinguishable on the current eval set, but diverges on held-out inputs. Is the mechanism the same?
+     A: Yes, because on the current eval set it's the same. (Behavioral equivalence on the test set)
+     B: No, because it fails on held-out data. (Interventionist? We care about the mechanism being robust, so we want to flag when it becomes brittle)
+
+  But note: we need to cover all leaves. We might need more questions.
+
+  Alternatively, we can design questions that directly probe the underlying philosophical distinctions without using jargon.
+
+  Revised Question Set (6 questions):
+
+  1. **Weight Permutation**: After a model update, the weights of a circuit are permuted (e.g., due to a different random seed) but the model behaves exactly the same on all tests. Should we flag this as a mechanism change?
+     - A: Flag (mechanism changed) -> strict weight identity
+     - B: Do not flag (same behavior) -> leads away from strict weight identity
+
+  2. **Feature Selectivity Broadening**: A feature that used to fire only on cats now also fires on dogs (but the model still correctly identifies cats and dogs). The overall task performance is the same. Should we flag this as a mechanism change for cat detection?
+     - A: Flag (because the feature is less selective) -> informational/geometric (if we care about the direction in activation space) or interest-relative (if we are monitoring for cat-specific features)
+     - B: Do not flag (because the task is still solved) -> causal-role (if we care about the function) or interventionist (if ablating the feature still breaks cat detection in the same way)
+
+  3. **Downstream Rerouting**: The circuit that computes a feature is still present and identical, but its output is now used by a different downstream head (e.g., for a different task). Should we flag this as a mechanism change for the feature computation?
+     - A: Flag (because the role in the system changed) -> causal-role (if we define the mechanism by its role in the whole system) or interventionist (if ablating the feature now breaks a different set of behaviors)
+     - B: Do not flag (because the internal computation of the feature is unchanged) -> informational/geometric, or causal-role for the feature computation in isolation
+
+  4. **Chain-of-Thought Shift**: The model now solves a problem partly by writing intermediate steps in the chain of thought (CoT) and using those, so the same function is achieved by a combination of weights and activations (tokens). Our detector only looks at weights. Should we flag this as a mechanism change?
+     - A: Flag (because the mechanism now involves the token stream) -> strict weight identity (since the weights alone are not sufficient) or interest-relative (if we are monitoring weight-based mechanisms)
+     - B: Do not flag (because the overall function is the same) -> causal-role or behavioral equivalence
+     - C: We cannot tell with our current detector (so we might need to adjust the detector) -> interest-relative or deflationary
+
+  5. **Memorization vs Algorithm**: The model now uses a memorized lookup for a set of inputs (instead of the general algorithm) and fails on out-of-distribution probes. Should we flag this as a mechanism change?
+     - A: Flag (because the mechanism is now brittle) -> interventionist (if we ablate the lookup, the model might still work with the algorithm) or causal-role (if the function is defined to include robustness)
+     - B: Do not flag (because on the original probe set it behaves the same) -> behavioral equivalence on the test set (but note: the problem says it fails on OOD, so we are concerned about the change)
+
+  6. **Held-out Divergence**: The model is 97% similar in weights and indistinguishable on the current eval set, but diverges on held-out inputs. Should we flag this as a mechanism change?
+     - A: Flag (because it fails on held-out data) -> interventionist (if we think the mechanism has changed in a way that breaks robustness) or causal-role (if the function requires working on held-out data)
+     - B: Do not flag (because the current eval set is the same) -> behavioral equivalence (only on the test set) or informational/geometric (if the weights are similar enough)
+
+  But we are missing historical/lineage and graded identity. Let's add:
+
+  7. **Continuous Descent**: During continued pretraining, a circuit gradually changes so that the weights are different and the feature activations are in a different direction, but the model's behavior on the task remains the same. Should we flag this as a mechanism change?
+     - A: Flag (because the weights and activations changed) -> informational/geometric or strict weight identity
+     - B: Do not flag (because the circuit evolved continuously and the behavior is the same) -> historical/lineage identity
+     - C: Flag partially (the mechanism has changed but we can track the evolution) -> graded identity
+
+  8. **Graded Change**: A feature's activation pattern has shifted by 10% in cosine similarity, but the model's behavior is unchanged. Should we flag this?
+     - A: Flag (any change is important) -> strict weight identity? or informational/geometric if we set a threshold?
+     - B: Do not flag (the change is too small) -> graded identity (identity is a matter of degree, so we set thresholds)
+     - C: It depends on the context (e.g., how critical the feature is) -> interest-relative
+
+  Now we have 8 questions. We might combine or adjust.
+
+  But note: the problem asks for 6-8 branch questions. We'll go with 8.
+
+  Step 2: Define the leaves (positions) and how the answers map to them.
+
+  We'll assign each leaf a set of answers that lead to it. However, note that the tree might not be a strict tree but a set of questions that together point to a leaf.
+
+  Alternatively, we can have a scoring system: for each question, each answer adds a point to one or more leaves, and then we see which leaf has the most points? But that might be messy.
+
+  Better: design the questions so that the combination of answers leads to one leaf. But 8 questions with 2-3 answers each would lead to 2^8=256 to 3^8=6561 paths. We don't have that many leaves (8 leaves). So we need to design a tree that branches to the leaves with fewer questions.
+
+  Alternatively, we can have a key that maps patterns of answers to leaves. We can group the questions: some questions are pivotal for certain distinctions.
+
+  We'll design the tree:
+
+  Start with Q1: Weight Permutation
+  - If A (flag), then go to leaf 1 (strict weight identity) only if they also answer in a way that rejects functional equivalence? But note: strict weight identity might be isolated.
+
+  Actually, let's define the leaves by the answers to the questions.
+
+  We'll list the leaves and what answers they would give to each question.
+
+  Leaf 1: Strict weight/neuron identity
+     Q1: A (flag) - because weights changed
+     Q2: A (flag) or B? Actually, if the weights changed, they would flag. But in Q2, the weights might not have changed? We need to clarify the scenarios.
+
+  We should assume that in each scenario, the weights might have changed or not? Actually, the scenarios describe what changed.
+
+  Let me redefine the questions to be independent and clear.
+
+  Revised Questions (with explicit changes):
+
+  1. Weight Permutation: Weights permuted, behavior same.
+     - A: Flag as change
+     - B: Do not flag
+
+  2. Feature Selectivity Broadening: Feature now activates on more inputs (dogs in addition to cats), weights unchanged? (But note: in the problem, continued pretraining might change weights.) Actually, in case (2): "the same feature direction keeps firing but its selectivity has broadened" - so the direction might be the same? But the activation pattern changed? We need to clarify.
+
+  We must specify for each question what changed and what remained the same.
+
+  Final Set of 8 Questions:
+
+  Q1: **Weight Permutation**: The weights of a circuit are permuted (e.g., due to re-initialization and retraining) but the model behaves exactly the same on all tests. The feature directions in the activation space are different (because the neurons are permuted). Should we flag this as a mechanism change?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q2: **Feature Selectivity Broadening**: A feature (as identified by a direction in activation space) that used to activate only on cat images now also activates on dog images (but not on other animals). The model still correctly classifies cats and dogs. The weights have changed, but the feature direction is the same. Should we flag this as a mechanism change for cat detection?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q3: **Downstream Rerouting**: The weights and activation pattern of a circuit (that computes a specific feature) are unchanged, but the output of this circuit is now used by a different downstream head (so the feature is used for a different task). Should we flag this as a mechanism change for the feature computation?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q4: **Chain-of-Thought Shift**: The model now solves a problem by writing intermediate steps in the chain of thought (CoT) and then using the final token to output the answer. The same problem was previously solved without CoT. The weights have not changed, but the activations during the CoT steps are different. Our detector only looks at weights and the final output. Should we flag this as a mechanism change?
+     - A: Yes, flag.
+     - B: No, do not flag.
+     - C: We don't know with our current setup (so we might need to adjust the detector).
+
+  Q5: **Memorization vs Algorithm**: The model now uses a memorized lookup for inputs that match a training set pattern, but fails on out-of-distribution (OOD) versions of the same problem. On the training-like inputs, it behaves the same as before. The weights have changed. Should we flag this as a mechanism change?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q6: **Held-out Divergence**: The model is 97% similar in weights and behaves the same on the current evaluation set, but behaves differently on held-out inputs (that were not in the eval set). Should we flag this as a mechanism change?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q7: **Continuous Descent**: Over many updates, a circuit has gradually changed: the weights are now different and the activation directions are also different (cosine similarity 0.5), but the model's behavior on the task remains the same. Should we flag this as a mechanism change?
+     - A: Yes, flag.
+     - B: No, do not flag.
+
+  Q8: **Graded Change**: A feature's activation pattern has shifted by 10% in cosine similarity (so it's still 0.9 similar), but the model's behavior is unchanged. Should we flag this?
+     - A: Yes, flag.
+     - B: No, do not flag.
+     - C: Only if the change is above a threshold (e.g., 20%).
+
+  Now, we map answers to leaves.
+
+  Leaf 1: Strict weight/neuron identity
+     - Q1: A (flag) - because weights permuted
+     - Q2: ? (weights changed, so they would flag? But in Q2, weights changed -> A) 
+     - Q3: B (do not flag) because weights are unchanged? But wait, the question says weights and activation pattern unchanged. So they wouldn't flag? 
+     - Q4: B (do not flag) because weights unchanged? Or A because the mechanism now involves tokens? This leaf is defined by weight identity, so if weights unchanged, then no flag? But in Q4, weights are unchanged, so they would say B? 
+     - Q5: A (flag) because weights changed
+     - Q6: A (flag) if weights changed by 3%? But 97% similar -> 3% change, so they might flag? But strict weight identity might require exact identity? Let's assume they only care about exact identity? Then for Q7 and Q8 they would flag because weights changed.
+
+  But we have to be consistent. Let's define:
+
+  Strict weight identity: flag if weights are not exactly the same? But in practice, we use cosine thresholds. So maybe they flag any weight change? But then they would flag in Q7 and Q8. But also in Q2 and Q5.
+
+  We can say: for strict weight identity, they flag on any weight change. So:
+     Q1: A, Q2: A (weights changed), Q3: B (weights unchanged), Q4: B (weights unchanged), Q5: A, Q6: A (if 3% change is considered changed), Q7: A, Q8: A (if 10% change is considered changed).
+
+  But note: in Q3 and Q4, weights are unchanged, so they don't flag. In Q1, weights are permuted (so changed) -> flag.
+
+  Leaf 2: Causal-role identity (same function)
+     They care about the function. So they don't flag if the function is preserved.
+     Q1: B (do not flag) because behavior same.
+     Q2: B (do not flag) because the task (cat detection) is still solved? But note: the feature is less selective, but if the overall system still works, then maybe not flag.
+     Q3: A (flag) because the function of the circuit in the system has changed (it's now used for a different task)? Or B because the feature computation function is the same? It depends on what we consider the function. Let's assume we are monitoring the mechanism for the task. If the task is the original task, then in Q3 the mechanism for the original task might be broken? The question says the output is routed to a different head for a different task. So if we are monitoring the original task, then the mechanism for that task might be gone? So they might flag. But if we are monitoring the feature computation regardless of task, then they might not flag.
+
+  This is messy. We might need to define the scope: are we monitoring a specific task or a specific circuit? We'll assume the monitoring is for a specific task (as in the problem: "the mechanism that used to solve this task").
+
+  So for causal-role identity for the task:
+     Q1: B (no flag) - task solved the same.
+     Q2: B (no flag) - task (classifying cats and dogs) is still solved.
+     Q3: A (flag) - because the circuit is no longer used for the original task? The question says: "its output gets routed to a different head that uses it differently downstream" - so the original task might be affected? We don't know. The problem says: "the circuit still computes the same thing internally but its output gets routed to a different head that uses it differently downstream". So the original task might now be solved by a different mechanism? Then we should flag because the mechanism for the task changed.
+
+     Q4: B (no flag) - because the task is solved (via CoT now, but same function).
+     Q5: A (flag) - because the mechanism changed to a memorization and it fails on OOD? But if the task is defined as the in-distribution task, then it's solved the same. However, causal-role might care about the method? Not necessarily. It's defined by the function, not the method. But in philosophy, causal-role is about the role in the system, which might include the method. Let's assume it's about the function (input-output) for the task. Then they wouldn't flag in Q5? But the problem is that it fails on OOD, so if the task includes OOD, then it's broken.
+
+     We need to define the task: is it the probe set or a general task? Let's assume the probe set is the task. Then:
+     Q5: B (no flag) - because on the probe set (in-distribution) it's the same.
+     Q6: B (no flag) - because on the eval set (which is the task) it's the same. They don't care about held-out if the task is the eval set.
+
+     Q7: B (no flag) - behavior same.
+     Q8: B (no flag) - behavior same.
+
+  Leaf 3: Interventionist identity (same if ablating it breaks the same behaviors)
+     This requires ablation experiments. In practice, the detector would run ablation on the feature/circuit and see if the same set of behaviors (on the probe set) are broken.
+
+     Q1: B (no flag) - because ablating the circuit would break the same behaviors as before.
+     Q2: They would run an ablation: if ablating the feature breaks cat detection (and now also dog detection?) then the set of broken behaviors might be broader. So they might flag because the intervention profile changed? Or not if they only care about the original behavior (cat detection) being broken? The question is about "mechanism for cat detection". So if ablating the feature still breaks cat detection, then it's the same? But now it also breaks dog detection. So the profile changed. They might flag.
+
+     Let's say they care about the exact set of behaviors broken. Then:
+     Q2: A (flag) - because now ablating breaks more.
+     Q3: They ablate the circuit. Before, it broke the original task; now it breaks a different task. So the set of behaviors broken is different -> flag.
+     Q4: They ablate the weights that were used before? But now the mechanism involves tokens. Ablating the weights might break the CoT mechanism, but it would break the task? So the behavior broken is the same (the task fails) -> no flag? But if they ablate the specific neurons that were previously used, and now the task still works (because of CoT), then they would flag because the ablation doesn't break the task anymore.
+
+     In the scenario, the weights are unchanged in Q4. But the mechanism now uses tokens. So if we ablate the neurons that were previously critical, the model might still work by using the CoT. So the ablation doesn't break the task -> flag.
+
+     Q5: They ablate the circuit that was doing the algorithm. Now, if they ablate it, the model might still work on memorized inputs? Or not? Actually, the model now uses a memorized lookup. If they ablate the lookup mechanism, then the in-distribution probes break, but the OOD ones were already broken. But the ablation profile for in-distribution probes is the same (they break) -> so no flag? Or if they ablate the general algorithm part (which is gone), then nothing happens? They would see that ablating doesn't break the in-distribution probes anymore? So the intervention profile changed -> flag.
+
+     Q6: They run ablation: if the same ablations break the same eval set behaviors, then no flag. But if on held-out data, the ablation breaks differently, but they only test on the eval set, then they wouldn't see it. So they wouldn't flag? But the detector might only use the eval set.
+
+     Q7: They run ablation and see that ablating the circuit still breaks the same behaviors -> no flag.
+     Q8: They run ablation and see that the ablation breaks the same behaviors -> no flag.
+
+     So:
+     Q1: B
+     Q2: A (if ablation now breaks more) or B (if they only care about the original breakage). We need to be specific.
+
+     Let's assume that for the task, they care whether ablating the mechanism breaks the task on the probe set. Then:
+     Q2: B (because cat detection on the probe set is still broken by ablation) -> no flag.
+     Q3: A (flag) because ablating the circuit now breaks a different task (so on the original task, it might not break if the task is now solved by a different mechanism) -> the question says the output is routed to a different head, so the original task might be using a different mechanism? Then ablating this circuit doesn't break the original task -> flag.
+
+     We have to assume that in Q3, the original task is now handled by a different circuit. So ablating this circuit doesn't break the original task -> the intervention profile changed (it used to break the original task, now it doesn't) -> flag.
+
+     Q4: As above, if they ablate the old circuit and the task still works (because of CoT), then the intervention profile changed (used to break, now doesn't) -> flag.
+     Q5: They ablate the circuit that was implementing the algorithm. Now, if that circuit is gone, then ablating it doesn't break the in-distribution probes (because the model is using a lookup) -> so the intervention profile changed: it used to break, now it doesn't -> flag.
+     Q6: If they only test on the eval set, and the ablation breaks the same as before, then no flag. But the held-out divergence might be due to a different mechanism, but if the ablation on the eval set is the same, they wouldn't flag.
+     Q7: If the behavior is the same and ablation breaks the same, then no flag.
+     Q8: If the behavior is the same and ablation breaks the same, then no flag.
+
+     So for interventionist:
+     Q1: B
+     Q2: B (if we only care about the original task breakage)
+     Q3: A
+     Q4: A
+     Q5: A
+     Q6: B (if ablation on eval set is the same)
+     Q7: B
+     Q8: B
+
+  Leaf 4: Informational/geometric identity (same feature direction in a shared basis)
+     They care about the activation space. So:
+     Q1: A (flag) because the feature directions are different.
+     Q2: B (no flag) because the feature direction is the same. But note: the selectivity changed, but the direction is the same. So they wouldn't flag? 
+     Q3: B (no flag) because the activation pattern is unchanged.
+     Q4: B (no flag) because weights and final output activations are unchanged? But the activations during generation are different. If their detector only looks at the final output, then they might not see the change. But if they look at intermediate activations, they might see the change. The question says: "our detector only sees the weights and the final output". So if the final output activation is the same, then they wouldn't flag? But the mechanism has changed internally. So they might not flag.
+     Q5: A (flag) if the feature direction has changed (or if it's a new feature). But the question doesn't say. We must assume that the feature direction for the algorithm is gone and replaced by a lookup feature? So they would flag.
+     Q6: B (no flag) if the weights and activations on the eval set are similar. But they don't test held-out.
+     Q7: A (flag) because activation directions are different (cosine 0.5).
+     Q8: C (flag if above threshold) or B (if below threshold). But for pure informational identity, any change might be a flag? Or they might set a threshold.
+
+     So:
+     Q1: A
+     Q2: B
+     Q3: B
+    4: B
+    5: A (assuming the feature direction changed)
+    6: B
+    7: A
+    8: A (if they set a high threshold, but for purity, they might flag any change) or C. Let's say for pure informational, they might have a threshold, but we can put B for Q8 if they are not flagging small changes? But the leaf is about the feature direction, so change means not the same.
+
+    We can say: they flag on any change in the feature direction. So Q8: A.
+
+  Leaf 5: Historical or lineage identity
+     They care about continuous descent. So:
+     Q1: A (flag) because it's not a continuous descent (it's a permutation from a reseed).
+     Q2: Might not flag if it's a continuous change? But the weights changed, and it's during continued training. But the question doesn't specify how the change happened. Let's assume it's continuous. Then they wouldn't flag? 
+     But the problem is: they only care about whether it's the same continuous lineage. In Q2, the feature is the same by lineage? The question doesn't specify. We must assume that it is a continuous descent. So they wouldn't flag.
+
+     Q3: The circuit is the same by lineage and weights are unchanged -> no flag.
+     Q4: Weights unchanged -> no flag.
+     Q5: The mechanism changed to memorization, so it's not the same lineage? Or is it? It evolved from the previous circuit? They might not flag because it's a continuous descent? But the problem says: "it gets the right answer through what looks like a memorized lookup path instead of the general algorithm" - so it's a replacement? They might flag if the lineage of the circuit is broken.
+
+     This is vague. Let's assume they only flag if the circuit is replaced by a discontinuous event (like a reseed) or if it's a new circuit. In continuous training, even if it changes, it's the same by lineage.
+
+     So:
+     Q1: A (flag because discontinuous)
+     Q2: B (no flag, continuous)
+     Q3: B (no flag, continuous)
+     Q4: B (no flag, continuous)
+     Q5: B (no flag, continuous) or A? If the memorization circuit is new, then they might flag. But it evolved continuously? We'll assume it's continuous so B.
+     Q6: They wouldn't care about held-out divergence if it's continuous -> B.
+     Q7: B (no flag) because it's continuous.
+     Q8: B (no flag) because it's continuous and small change.
+
+  Leaf 6: Interest-relative identity
+     They might answer differently based on what they are monitoring. But for the sake of the tree, we need to know what they are interested in. Let's assume they are monitoring for brittleness or for cat-specificity, etc.
+
+     We can't have a fixed answer. Instead, this leaf might be chosen if the user's answers depend on the context and they choose the "it depends" options.
+
+     For example, in Q2, if they are monitoring for cat-specific features, they would flag. If they are monitoring for the task, they wouldn't.
+
+     In the tree, we might have to ask: "does your answer depend on which property of the mechanism you care about?" But the questions are scenarios.
+
+     Alternatively, this leaf might be chosen if the user gives answers that don't fit any pattern and vary with context.
+
+     We can have a question: "In general, does the sameness of a mechanism depend on which aspect of the model's behavior you are monitoring?"
+     - Yes: then leaf 6.
+     - No: then not.
+
+     But we have to include this in the tree.
+
+     Let's add a final question:
+
+     Q0: Do you think the sameness of a mechanism can vary depending on which aspect of the model's behavior or property you are monitoring?
+     - Yes: interest-relative
+     - No: then use the other leaves.
+
+     But the problem asks for concrete scenarios, so we might not want a meta-question.
+
+     Alternatively, we can look for inconsistent answers that are context-dependent. But the handout is a decision tree, so we need a way.
+
+     Perhaps we leave interest-relative as a catch-all for those who give answers that vary and cite context.
+
+     We'll handle it at the end.
+
+  Leaf 7: Deflationary
+     They don't believe in mechanisms, only in input-output behavior. So they only care about the probe set behavior.
+
+     So:
+     Q1: B (no flag) because behavior same.
+     Q2: B (no flag) because behavior same.
+     Q3: They would flag if the original task is broken? But the question doesn't say the task is broken. It says the circuit is rerouted, but the original task might be handled by something else. If the task is the same, then B (no flag). If the task is broken, then A (flag). But the question says: "the circuit still computes the same thing internally but its output gets routed to a different head that uses it differently downstream". It does not say the original task is affected. So if the original task is still solved (by a different mechanism), then they wouldn't flag.
+     Q4: B (no flag) because the final output on the probe set is the same.
+     Q5: B (no flag) because on the probe set (in-distribution) it's the same.
+     Q6: B (no flag) because on the eval set it's the same.
+     Q7: B (no flag) because behavior same.
+     Q8: B (no flag) because behavior same.
+
+     So they only flag if the behavior on the probe set changes.
+
+  Leaf 8: Graded identity
+     They believe identity is a matter of degree. So they might flag only if the change is above a threshold, or they might have a continuous measure.
+
+     In the questions, they might choose the threshold options, like in Q8: C.
+
+     So:
+     Q1: A (flag) because it's a big change.
+     Q2: Might flag or not depending on how much selectivity changed. Since it's broadening to dogs, which is a significant change, they might flag.
+     But the question doesn't quantify. We can assume they would use a threshold on the activation distribution change.
+
+     In practice, they would set thresholds for each measure.
+
+     In the tree, they might choose answers that are not extreme.
+
+     We can have: if they choose threshold-based answers in several questions, then graded.
+
+     For example, in Q7 and Q8, they might choose not to flag if the change is small.
+
+     Specifically:
+     Q7: B (no flag) if they consider 0.5 cosine not big enough? Or A if they do. Let's assume they have a threshold of 0.8 cosine, so 0.5 is below -> flag.
+     Q8: C (flag only if above threshold).
+
+     But then we need to see the pattern.
+
+  Given the complexity, we will design the tree with 8 questions and then provide a scoring key.
+
+  Alternatively, we can reduce the leaves that are not separable and then group.
+
+  Step 3: For each leaf, describe the detector criterion and which cases (1-6) it flags on.
+
+  Case 1: continued pretraining shuffles neurons, counterfactual profile identical.
+  Case 2: feature selectivity broadened.
+  Case 3: downstream rerouting.
+  Case 4: chain-of-thought shift.
+  Case 5: memorized lookup.
+  Case 6: 97% similar, diverges on held-out.
+
+  Leaf 1: Strict weight/neuron identity
+     Detector: Flag if the weights of the circuit change beyond a very tight threshold (e.g., cosine similarity < 0.99).
+     Cases:
+          1: flags (shuffling changes weights)
+          2: might flag if weights changed (assume they did) 
+          3: might not flag if weights unchanged (so silent)
+          4: might not flag if weights unchanged (silent)
+          5: flags (weights changed)
+          6: flags (3% change)
+
+  Leaf 2: Causal-role identity
+     Detector: Flag if the function (input-output behavior) on the probe set changes. Or if the role in the system changes (which might require knowing the role). In practice, they might only check the probe set behavior.
+     Cases:
+          1: silent (behavior identical)
+          2: silent (behavior identical)
+          3: flags (if the mechanism for the task changed because the circuit is not used for the task anymore) or silent (if the task is still solved by something else). The case says: "the circuit still computes the same thing internally but its output gets routed to a different head that uses it differently downstream". So the task might now be solved by a different mechanism? Then they should flag.
+          4: silent (behavior identical)
+          5: silent (behavior identical on probe set)
+          6: silent (behavior identical on eval set)
+
+  Leaf 3: Interventionist identity
+     Detector: Run ablation studies on the circuit/feature. Flag if the set of behaviors (on the probe set) that are broken by the ablation changes.
+     Cases:
+          1: silent (ablation breaks the same behaviors)
+          2: might silent if ablating the feature still breaks the same probe set examples (cat images) as before. But now it might also break dog images. If the probe set only has cats, then they see the same breakage -> silent. If the probe set has dogs, then breakage is broader -> flag.
+          3: flag (because ablating the circuit might not break the original task anymore, since it's not used for it)
+          4: flag (because ablating the weights might not break the task, as it's solved by CoT)
+          5: flag (because ablating the algorithm circuit might not break the in-distribution examples anymore, since it's using lookup)
+          6: silent if the ablation on the eval set is the same, even if held-out is different.
+
+  Leaf 4: Informational/geometric identity
+     Detector: Flag if the feature directions (in a shared basis) change beyond a threshold.
+     Cases:
+          1: flag (directions changed due to permutation)
+          2: silent (same feature direction)
+          3: silent (activation pattern unchanged)
+          4: might silent if they only look at final output activations and they are unchanged. But if they look at intermediate, they might see change -> depends on the detector setup. The case says: "our detector only sees the weights" -> so they might not see activations? Then they might not flag. But the leaf is about activations, so if the detector is based on activations and they changed, then flag.
+          5: flag (assuming the feature direction for the algorithm is gone)
+          6: silent if activations on the eval set are similar.
+
+  Leaf 5: Historical or lineage identity
+     Detector: Flag if the circuit is not the product of continuous descent from the original. In practice, they might track the circuit across updates and flag if it is discontinuous or replaced.
+     Cases:
+          1: flag (because shuffling is discontinuous)
+          2: silent (continuous)
+          3: silent (continuous)
+          4: silent (continuous)
+          5: silent (continuous) or flag if it's a discontinuous change? Case doesn't specify.
+          6: silent (continuous)
+
+  Leaf 6: Interest-relative identity
+     Detector: Depends on the interest. For example, if monitoring for brittleness, they might flag on case 5 and 6. If monitoring for cat-specificity, flag on case 2.
+     Cases: It varies.
+
+  Leaf 7: Deflationary
+     Detector: Only flag if the input-output behavior on the probe set changes.
+     Cases:
+          1: silent
+          2: silent
+          3: might silent if the task is still solved
+          4: silent
+          5: silent
+          6: silent
+
+  Leaf 8: Graded identity
+     Detector: Assign a similarity score and flag if below a threshold. The score might combine weights, activations, ablation results, etc.
+     Cases: They might flag on any case if the change is big enough.
+
+  Empty cells:
+
+  For example, is there a view that weight identity is necessary but functional equivalence isn't sufficient? 
+     This would be: flag if weights change OR if function changes? But that would be very twitchy. Or they might require both weight identity and function identity? But then they would flag on weight changes even if function is the same (like case 1) and also flag on function changes even if weights are the same (case 3 might apply if weights are the same but function changed).
+
+     In case 3, weights are unchanged, but the function of the system might have changed (the circuit is used for a different task). If they are monitoring the task, then function changed -> flag. So they would flag on case 3.
+
+     But this view is: same mechanism only if weights are the same AND function is the same. So they would not flag on case 1? We said they might flag on weight changes. Let's clarify:
+
+     - If weights change, flag (even if function same) -> so case 1: flag.
+     - If function changes, flag (even if weights same) -> case 3: flag.
+
+     So this view is not represented by our leaves. It is a combination of leaf 1 and leaf 2? But leaf 2 doesn't flag on case 1.
+
+     This view is: necessary condition: weight identity; sufficient condition: ? Incoherent? Because they want both weight and function identity for no flag. It's a new leaf: "weight and function identity".
+
+     But we can add it if needed. The empty cell is: views that require both weight identity and function identity for sameness. It's coherent but very strict (flags on any change).
+
+     It is unattractive because it flags on case 1 (which is just a permutation) and also on case 3 (downstream rerouting) even if weights are the same.
+
+     Similarly, there might be other combinations.
+
+     Another empty cell: historical identity without caring about function or weights. We have leaf 5.
+
+     Also, is there a view that functional equivalence is necessary but not sufficient? They would flag if function changes (obviously) but also if function is the same but something else changes (e.g., weights change). That would be leaf 1 or leaf 4 combined with leaf 2? Not exactly.
+
+     This view: same mechanism only if function is the same AND something else (e.g., weights are the same). So it's the same as above.
+
+  Given time, we will output the tree as requested.
+answer: |-
+  Below is a concise decision tree and taxonomy for determining "same mechanism" in model monitoring, designed to resolve disagreements by mapping concrete scenarios to philosophical positions. The tree uses 8 binary/multiple-choice questions based on real monitoring challenges, avoiding abstract terminology. Each question includes a scenario, answer options, and a scoring key that maps answer patterns to 8 named positions. For each position, I specify the detector criterion and its behavior on your cases (1)–(6). Finally, I note empty cells in the logical space and flag underspecified distinctions.
+
+  ---
+
+  ### **Decision Tree: "When Is It the Same Mechanism?"**  
+  *Answer each scenario question below. Record answers to map to a position via the scoring key.*  
+
+  1. **Weight Permutation**  
+     *Weights change due to re-seeding, but model behavior is identical on all tests.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  2. **Selectivity Broadening**  
+     *A feature fires on new inputs (e.g., dogs not just cats), but task performance is unchanged.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  3. **Downstream Rerouting**  
+     *A circuit’s internal computation is identical, but its output is routed to a different head.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  4. **Chain-of-Thought Shift**  
+     *The model solves a task via generated text (CoT) instead of pure weights. Weights are unchanged.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+     - **C**: Flag only if CoT alters final output activations.  
+
+  5. **Memorization Shift**  
+     *The model uses memorization (not general algorithm) for in-distribution inputs, failing on OOD probes.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  6. **Held-Out Divergence**  
+     *Model is identical on eval set but diverges on held-out data. Weights are 97% similar.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  7. **Continuous Drift**  
+     *A circuit’s weights/activations drift over time (e.g., 50% cosine similarity drop), but behavior is stable.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+
+  8. **Minor Activation Shift**  
+     *A feature’s activation similarity drops 10% with no behavior change.*  
+     - **A**: Flag as a mechanism change.  
+     - **B**: Do not flag.  
+     - **C**: Flag only if similarity drops below a threshold (e.g., 15%).  
+
+  ---
+
+  ### **Scoring Key: Positions on Mechanism Identity**  
+  *Match your answers to a position. For each, I describe the detector criterion and its response to cases (1)–(6).*  
+
+  | Position                     | Answers Leading Here (Q1–Q8) | Detector Criterion                                                                 | Flags on Cases | Silent on Cases |  
+  |------------------------------|-------------------------------|-----------------------------------------------------------------------------------|----------------|-----------------|  
+  | **1. Strict Weight/Neuron Identity** | Mostly **A** (esp. Q1, Q5, Q6, Q7) | Flag if weights/neurons change beyond tight threshold (e.g., weight cosine < 0.99). | (1), (5), (6)  | (2), (3), (4)   |  
+  | **2. Causal-Role Functionalism**    | Mostly **B** (esp. Q1, Q2, Q4-B, Q5-B) | Flag only if task performance changes on probe set.                                   | (5)*           | (1), (2), (3), (4), (6)* |  
+  | **3. Interventionist**              | **A** on Q3, Q4, Q5; **B** elsewhere | Flag if ablating the circuit breaks different behaviors (on probe set).               | (3), (4), (5)  | (1), (2), (6)   |  
+  | **4. Informational/Geometric**      | **A** on Q1, Q7, Q8-A; **B** on Q2, Q3 | Flag if feature directions change in shared basis (e.g., activation cosine < 0.9).    | (1), (7)       | (2), (3)        |  
+  | **5. Historical/Lineage**           | **A** on Q1; **B** elsewhere  | Flag if circuit isn’t continuous descent from original (e.g., reset weights).         | (1)            | (2), (3), (4), (5), (6) |  
+  | **6. Interest-Relative**            | Mixed/inconsistent answers    | Flag based on *which property* you monitor (e.g., brittleness → flag (5), (6); selectivity → flag (2)). | Varies by interest | Varies |  
+  | **7. Deflationary (Behavior-Only)** | **B** on all except Q5-A, Q6-A | Flag only if probe-set behavior changes.                                              | (5)*           | (1), (2), (3), (4), (6)* |  
+  | **8. Graded Identity**              | **C** on Q8; **B** on Q7      | Flag if similarity (weight/activation/ablation) drops below configurable threshold.   | Threshold-dependent (e.g., (1), (5) if threshold=0.95) | Threshold-dependent |  
+
+  > **Notes on cases**:  
+  > - *For (5)*: Causal-Role and Deflationary flag only if probe-set performance drops (may miss OOD failure).  
+  > - *For (6)*: Most positions silent if eval set performance stable. Interventionist flags only if ablation profile changes on held-out data (rare).  
+
+  ---
+
+  ### **Empty Cells in the Logical Space**  
+  Cells without coherent/unattractive positions:  
+  - **Weight identity necessary but functional equivalence insufficient?**  
+    - *Empty*: Incoherent. If weights define identity, functional change is irrelevant (redundant).  
+  - **Functional equivalence necessary but weight identity insufficient?**  
+    - *Empty*: Unattractive. Would flag harmless permutations (case 1), violating multiple realizability.  
+  - **Historical identity without continuous descent?**  
+    - *Empty*: Unexplored. Lineage typically implies continuity; discontinuous "descent" is oxymoronic.  
+
+  ---
+
+  ### **Underspecified Distinctions**  
+  - **Causal-Role vs. Interventionist** collapse in practice:  
+    They only cleanly separate in **case (3)**. Interventionist flags rerouting (ablation breaks new behaviors); Causal-Role stays silent if task performance unchanged. In cases (1, 2, 4–6), they behave identically.  
+  - **Graded vs. Interest-Relative** overlap:  
+    Graded thresholds often encode interests (e.g., "brittleness threshold"). The tree separates them by Graded’s quantitative focus (Q8-C) vs. Interest-Relative’s qualitative flexibility.  
+
+  ---
+
+  ### **How to Use This Handout**  
+  1. Have stakeholders answer the 8 questions individually.  
+  2. Use the scoring key to map answers to a position.  
+  3. For each position, review:  
+     - The detector criterion (adjust your harness accordingly).  
+     - Which cases it flags (e.g., **Interventionist** catches memorization (5) but not held-out divergence (6)).  
+  4. Discuss underspecified distinctions (e.g., Causal-Role vs. Interventionist) to align on priorities.  
+
+  This resolves debates by forcing concrete choices: *Should we flag re-seeding (Q1)?* **Yes** → Strict Weight; **No** → most others. By anchoring in your cases, it ensures the taxonomy drives detector design, not metaphysics.

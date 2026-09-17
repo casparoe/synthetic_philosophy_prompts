@@ -1,0 +1,584 @@
+id: prompt_30542
+sample_index: 0
+prompt_file: prompts/batch_033/prompt_30542.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789290228-AdKHWy8sxK21Z9sorTCz
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 636
+completion_tokens: 14089
+reasoning_tokens: 11369
+cost_usd: 0.031032
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T09:14:29+00:00'
+prompt: |-
+  I am a software engineer with no formal background in philosophy or economics, so please explain any technical terms you cannot avoid. I maintain an internal compute platform at a mid-sized company. Several times a quarter I have to arbitrate how a fixed resource — a weekly pool of GPU hours, a bandwidth guarantee, a shared storage budget — is divided between two service teams. These decisions are currently made in meetings, are hard to justify afterwards, and matter: a poor allocation wastes capacity or degrades a revenue-critical service, and the losing team remembers.
+
+  I have been reading about the Kalai–Smorodinsky bargaining solution. As I understand it, the solution takes each party's best feasible gain over the disagreement point as a benchmark, normalises each party's actual gain by that benchmark, and then selects the Pareto-efficient outcome at which the two normalised gains are equal. I would like that turned into a reusable procedure my team can run, not a one-off analysis.
+
+  Please write a step-by-step procedure for producing a two-party allocation according to the Kalai–Smorodinsky solution, written so that a platform engineer with no philosophy background can implement it. It should cover:
+
+  - the inputs to collect from each party and in what form, including how to elicit a disagreement point and each party's maximum feasible gain, and what to do when a team can only give rankings or rough utilities rather than cardinal numbers;
+  - how to construct or approximate the feasible set and its Pareto frontier in code, and how to find the Kalai–Smorodinsky point computationally;
+  - the edge cases: non-convex feasible sets, a party whose maximum equals its disagreement point, multiple points satisfying the equal-normalised-gain condition, and more than two parties;
+  - which steps are mechanical and which are judgement calls, and where the procedure should stop and hand the decision to a person rather than return a number;
+  - where the Kalai–Smorodinsky solution differs in practice from the more familiar Nash bargaining solution, and why that difference matters when the feasible set changes asymmetrically.
+
+  Then apply the procedure to three worked cases from my context. (1) Dividing a fixed weekly GPU-hour budget between a training workload that saturates at a modest allocation and a serving workload that benefits from every additional hour. (2) Dividing a guaranteed bandwidth allocation between a latency-sensitive request path and a batch data-transfer job that has a hard ceiling on how much it can ingest in a day. (3) A case where one team's stated maximum is implausibly high or its disagreement point is close to its maximum, so the normalisation becomes fragile. For each case show the inputs, the computation, the resulting allocation, and one way the parties could game the procedure.
+
+  Close by saying plainly what the procedure can and cannot do for me: where it rests on assumptions about measurable, comparable utility that may not hold in an engineering organisation, and at least one worked outcome that is correct by the solution's lights but that I, as the person accountable for the platform, would probably regard as unfair or operationally perverse. Please write in British English.
+reasoning: |-
+  We are going to design a step-by-step procedure for the Kalai-Smorodinsky (KS) bargaining solution for two parties. The KS solution aims for a fair allocation by equalising the normalised gains of the two parties relative to the disagreement point and the ideal point.
+
+  ### Step-by-Step Procedure
+
+  #### 1. **Define the Disagreement Point (d)**
+     - **What it is**: The outcome that occurs if the parties fail to agree. It represents the minimum utility each party would accept.
+     - **How to elicit**: Ask each team to specify the minimum level of the resource they require to keep their service operational (or the utility they get with no extra allocation beyond what is absolutely necessary). This should be a cardinal number (a utility value) or, if utilities are not available, a minimal resource amount that can be converted to a utility by a known function.
+     - **Form**: A pair (d1, d2) where d1 is the utility for party 1 and d2 for party 2.
+
+  #### 2. **Define the Utility Functions**
+     - **What they are**: Each party must provide a function that maps the resource allocation to a utility. The utility should represent the benefit they get from that allocation. The function should be increasing (more resource -> more utility) but may have different shapes (e.g., diminishing returns, saturation).
+     - **How to elicit**:
+       - If a team can only give rankings or rough utilities, we can use a technique called the "midpoint method" to build a cardinal scale. For example, ask: "What allocation gives you half the benefit of your maximum feasible allocation?" and use that to fit a utility function.
+       - Alternatively, if the team can only provide ordinal rankings, we might use a simple linear interpolation between the disagreement point and the maximum feasible gain, but note that this is an approximation and may not capture the true shape.
+     - **Form**: Two functions u1(x1) and u2(x2) where x1 and x2 are the allocations to party 1 and 2 respectively. Note: the allocations must be in the same unit (e.g., GPU-hours) and the total resource is fixed? Not necessarily, but in our context, we are dividing a fixed resource. So we have x1 + x2 = R (the total resource). However, note that the utility functions might depend on the entire allocation (e.g., if there are externalities) but in the standard setup, we assume they are independent.
+
+  #### 3. **Determine the Ideal Point (or Utopia Point)**
+     - **What it is**: The ideal point for each party is the maximum utility they can achieve when the other party is held at their disagreement point. However, note that in the KS solution, the ideal point is defined as:
+          u1_max = max { u1(x1) : (u1(x1), u2(x2)) in S, and x1+x2<=R, and u2(x2)>=d2 }
+          u2_max = max { u2(x2) : (u1(x1), u2(x2)) in S, and x1+x2<=R, and u1(x1)>=d1 }
+     - But note: the feasible set S is defined by all allocations (x1, x2) such that x1>=0, x2>=0, x1+x2<=R, and possibly other constraints (like minimum allocations for each). So we must compute:
+          u1_max = maximum of u1(x1) over x1 in [0, R] such that there exists x2 in [0, R] with x1+x2<=R and u2(x2)>=d2.
+          Similarly for u2_max.
+     - However, in many cases (like a fixed resource and independent utilities) we can compute:
+          - To get u1_max, we let party 1 take the entire resource (x1=R, x2=0) and then u1_max = u1(R). But we must check that u2(0) >= d2? Not exactly. We require that the allocation (x1, x2) is feasible and that the utility for party 2 is at least d2. So if u2(0) < d2, then we cannot allocate all to party 1. We must give at least x2_min such that u2(x2_min) >= d2. Then the maximum for party 1 is u1(R - x2_min).
+     - **How to compute**:
+          - For party 1's ideal: find the maximum x1 such that we can set x2 = R - x1, and u2(R - x1) >= d2. Then u1_max = u1(x1_max) where x1_max is the maximum x1 in [0, R] satisfying u2(R - x1) >= d2.
+          - Similarly, for party 2: find the maximum x2 such that u1(R - x2) >= d1, then u2_max = u2(x2_max).
+     - **Form**: A pair (u1_max, u2_max).
+
+  #### 4. **Construct the Feasible Set (S)**
+     - **What it is**: The set of all utility pairs (u1, u2) that can be achieved by some allocation (x1, x2) with x1+x2<=R and other constraints (like non-negativity and any other operational constraints).
+     - **How to approximate in code**:
+       - Since the resource is one-dimensional (we are splitting a fixed resource R), we can discretize the allocation to party 1: let x1 run from 0 to R in small steps (say step = R/100). Then set x2 = R - x1. Then compute u1(x1) and u2(x2). Each pair (u1(x1), u2(x2)) is a point in the feasible set.
+       - But note: the feasible set S in utility space might not be convex. However, the KS solution requires the feasible set to be convex? The original KS solution is defined for convex sets. But we are approximating by a discrete set. We can then take the convex hull? Or we can work with the discrete set and then find the Pareto frontier? We'll address non-convexity in edge cases.
+     - **Form**: A list of points (u1, u2) for each allocation.
+
+  #### 5. **Find the Pareto Frontier of S**
+     - **What it is**: The set of points in S for which you cannot improve one party's utility without reducing the other's.
+     - **How to compute**:
+       - Sort the list of points by u1 (increasing) and then traverse the list to find the points where u2 is non-decreasing as u1 increases? Actually, we want the points that are not dominated.
+       - Algorithm:
+          - Sort the points by u1 (ascending) and then by u2 (descending) for the same u1? Actually, we can do:
+            points_sorted = sorted(points, key=lambda p: p[0])   # by u1
+            pareto = []
+            max_u2 = -infinity
+            for p in reversed(points_sorted):
+               if p[1] > max_u2:
+                   pareto.append(p)
+                   max_u2 = p[1]
+            Then reverse pareto so that u1 is increasing? Actually, we want the frontier from low u1 to high u1. Alternatively, we can sort by u1 ascending and then traverse from high u1 to low u1? The above code traverses from the highest u1 to the lowest and picks points that have u2 greater than any seen so far. Then we reverse to get in order of increasing u1? Actually, we can traverse in the order of increasing u1 and then check for non-dominated points by u2? It's easier to do:
+            points_sorted = sorted(points, key=lambda p: p[0])
+            pareto = []
+            current_max_u2 = -float('inf')
+            for p in points_sorted:
+               if p[1] >= current_max_u2:
+                   pareto.append(p)
+                   current_max_u2 = p[1]
+            But then we have the frontier in increasing u1 and non-decreasing u2? Actually, we want the efficient frontier: we can also do a double loop to remove dominated points. But the above is efficient and gives the "upper" envelope.
+
+       - However, note that the Pareto frontier in a one-dimensional allocation will be a curve that is non-decreasing in u2 as u1 increases? Not necessarily: if u1 and u2 are both increasing functions of their own allocation, then as we move from x1=0 to x1=R, u1 increases and u2 decreases. So the frontier would be a curve from (u1(0), u2(R)) to (u1(R), u2(0))? And it might not be monotonic? Actually, if u1 is increasing in x1 and u2 is increasing in x2 (and x2 = R - x1), then as x1 increases, u1 increases and u2 decreases. So the frontier is a curve from (u1(0), u2(R)) to (u1(R), u2(0)) and it is decreasing in u2 as u1 increases. But then the Pareto frontier is the entire set? Because every point is Pareto efficient? Not if the utility functions are not strictly increasing? Actually, in this one-dimensional case, if the utility functions are strictly increasing, then every allocation is Pareto efficient? Because you cannot increase one without decreasing the other.
+
+       - Therefore, in the one-dimensional allocation of a fixed resource, the entire set of allocations (with x1 from 0 to R) is Pareto efficient? Only if the utility functions are strictly increasing? But what if one function has a flat region? Then we can skip the non-efficient points.
+
+       - We can compute the Pareto frontier by:
+          - Start with x1=0, then x1=step, ... x1=R.
+          - For each allocation, compute (u1, u2) = (u1(x1), u2(R-x1)).
+          - Then the Pareto frontier is the set of points that are not dominated. But note: if we have two points (u1_a, u2_a) and (u1_b, u2_b) such that u1_a < u1_b and u2_a > u2_b, then neither dominates the other. So they are both efficient? Actually, in the one-dimensional case, we have a trade-off: more for party 1 means less for party 2. So every allocation (if the utility functions are strictly increasing) is efficient. But if one utility function has a flat region, then we might have multiple allocations with the same u1 and increasing u2? Then we can take the one with the highest u2 for that u1.
+
+       - So the algorithm for the Pareto frontier in this context: group by u1 (or by x1) and then for each u1 (or x1) we have one point. Then we can simply take the entire set? But we want to remove points that are dominated? Actually, in the one-dimensional allocation, the set of efficient points is the entire set? No, because if we have two allocations (x1, R-x1) and (x1', R-x1') such that u1(x1) = u1(x1') and u2(R-x1) < u2(R-x1'), then the first is dominated by the second? So we must take for each fixed u1, the maximum u2? But note: u1 is a function of x1, and if u1 is not injective, then multiple x1 might yield the same u1. Similarly for u2.
+
+       - Given the complexity, and since we are discretizing, we can do:
+          - For each x1 in [0, R] (with step), compute (u1, u2) = (u1(x1), u2(R-x1)).
+          - Then group by u1 (with some tolerance) and take the maximum u2 for each u1. Then sort by u1.
+
+       - However, in the typical case where u1 is strictly increasing and u2 is strictly decreasing, we can simply take the entire set and sort by u1.
+
+  #### 6. **Compute the Kalai-Smorodinsky Point**
+     - **What it is**: The point on the Pareto frontier where the normalised gains of the two parties are equal. The normalised gain for party i is:
+          g_i = (u_i - d_i) / (u_i_max - d_i)
+     - We are looking for a point (u1, u2) on the Pareto frontier such that:
+          (u1 - d1) / (u1_max - d1) = (u2 - d2) / (u2_max - d2)
+     - And we choose the one that is Pareto efficient (which we already have from the frontier).
+
+     - **How to compute**:
+       - We traverse the Pareto frontier (which is a list of points (u1, u2)) and for each point compute:
+            g1 = (u1 - d1) / (u1_max - d1)   [if u1_max != d1, else undefined]
+            g2 = (u2 - d2) / (u2_max - d2)   [if u2_max != d2, else undefined]
+       - Then we look for the point where g1 is approximately equal to g2? But note: the KS solution is the point where the line from (d1,d2) to (u1_max, u2_max) intersects the Pareto frontier. And at that point, the normalised gains are equal.
+
+       - Therefore, we can do:
+          - Define the ideal point I = (u1_max, u2_max)
+          - The line from D = (d1,d2) to I is parameterized by:
+               u1 = d1 + t*(u1_max - d1)
+               u2 = d2 + t*(u2_max - d2)   for t in [0,1]
+          - We want the largest t (so that we are on the frontier) such that (u1, u2) is in the feasible set S. But since we are on the Pareto frontier, we can find the intersection of this line with the Pareto frontier.
+
+       - Algorithm:
+          - We have the Pareto frontier as a list of points (u1, u2). We also have the line: L(t) = (d1 + t*(u1_max-d1), d2 + t*(u2_max-d2)) for t in [0,1].
+          - We want the maximum t for which L(t) is feasible and lies on the Pareto frontier? Actually, we can find the point on the Pareto frontier that is on the line and has the maximum t? But it might not lie exactly on the line. So we can do:
+            Option 1: For each point on the Pareto frontier, compute t1 = (u1 - d1)/(u1_max - d1) and t2 = (u2 - d2)/(u2_max - d2) and then check if t1 ≈ t2. Then take the point with the largest t1 (which would be the same as the largest t2) and that is the KS point.
+            Option 2: Find the point on the Pareto frontier that maximizes min( (u1-d1)/(u1_max-d1), (u2-d2)/(u2_max-d2) )? Actually, the KS solution is the point that equalizes the ratios and is efficient. But it is also the point that maximizes the minimum of the two ratios? Yes, that's equivalent.
+
+          - Therefore, we can compute for each point on the Pareto frontier:
+               t = min( (u1-d1)/(u1_max-d1), (u2-d2)/(u2_max-d2) )
+            and then pick the point that has the maximum t? But note: we want to be on the Pareto frontier and we want the point that is on the line. Actually, the point that maximizes the minimum ratio is the KS solution.
+
+          - Why? Because if we let t = min(g1, g2), then we are trying to make both ratios at least t. The KS solution is the point where both ratios are equal to t and t is as large as possible.
+
+       - So algorithm:
+          - Precompute the two denominators: denom1 = u1_max - d1, denom2 = u2_max - d2. If either denominator is 0, we have an edge case (see below).
+          - For each point (u1, u2) in the Pareto frontier:
+               if denom1 != 0: g1 = (u1 - d1) / denom1
+               else: if u1 >= d1 then g1 = 0? But actually, if u1_max == d1, then party1 cannot get more than d1, so we set g1=0? Then we only care about g2? But wait: the KS solution in this case would be to give party1 d1 and then maximize for party2? We handle the edge case separately.
+               Similarly for denom2.
+
+          - We skip the point if u1 < d1 or u2 < d2 (infeasible).
+
+          - For each point, let t = min(g1, g2) [if both denominators are non-zero]. If one denominator is zero, then we use the other ratio? Actually, we handle the edge cases separately.
+
+          - Then select the point that has the maximum t.
+
+       - But note: there might be multiple points with the same t? Then we choose the one that is Pareto efficient? Our list is already the Pareto frontier. And the point with the maximum t is unique? Not necessarily. But then we choose any? Actually, the KS solution is unique for convex sets. But our set might be non-convex. However, we are taking the maximum t and then we have a point. If there are multiple, we can choose the one that maximizes the other ratio? But the KS solution is defined as the point that equalizes the ratios. So we want the point where g1 = g2 and that is efficient. But our method by maximizing the minimum t might not yield g1=g2? Actually, it does: because at the point that maximizes the minimum t, we must have g1 = g2 = t (if the set is convex). In a non-convex set, we might have g1 and g2 not equal? Then we have to adjust.
+
+       - Therefore, we do:
+          - We are looking for the point on the frontier that lies on the ray from d to I. So we can compute for each point the ratio g1 and g2 and then the absolute difference |g1 - g2|. Then we choose the point that has the minimum absolute difference? But that might not be the one with the maximum t.
+
+       - Alternatively, we can compute the intersection of the line from d to I with the Pareto frontier. We do:
+          - The line: u2 - d2 = m * (u1 - d1) where m = (u2_max - d2) / (u1_max - d1) [if u1_max != d1, otherwise we have a vertical line? But if u1_max==d1, then we set u1 = d1 and then maximize u2?]
+
+       - We'll break it into cases.
+
+  #### 7. **Edge Cases**
+     - **Non-convex feasible set**: The KS solution may not be unique or may not exist? But we are approximating with a discrete set. We use the method above (maximizing the minimum ratio) and then if there are multiple points with the same maximum t, we pick the one that is Pareto efficient and has the highest u1 (or u2) to break ties? Or we can average? But note: the KS solution is defined for convex sets. If the set is non-convex, we might get a point that is not the true KS solution. We should note that the procedure is an approximation.
+
+     - **Party with maximum equals disagreement point (denominator zero)**:
+          - If u1_max = d1 and u2_max > d2: Then party1 cannot get more than d1. Then we set the KS point to (d1, u2_max) if that is feasible? But note: we require that u2_max is achieved when party1 is at d1? Actually, we defined u2_max as the maximum u2 when u1>=d1. So if u1_max=d1, then we are constrained to u1=d1. Then the feasible set for party2 is from d2 to u2_max. The KS solution would be: we set g1 = 0 (since u1 cannot exceed d1) and then we set g2 as high as possible. So we choose the allocation that gives party1 d1 and party2 as much as possible (u2_max). So the point (d1, u2_max).
+
+          - Similarly, if both are at their maximums? Then the ideal point is (d1, d2) and then the KS solution is the disagreement point? But if the disagreement point is feasible, then we can use that.
+
+          - So algorithm for denominator zero:
+              - If denom1 == 0 and denom2 == 0: then the KS point is (d1, d2) [if feasible]? Actually, if both parties cannot get more than their disagreement point, then we are stuck at the disagreement point? But we must check that (d1,d2) is feasible.
+
+              - If denom1 == 0 and denom2 != 0: then we set u1 = d1 and then choose u2 as large as possible (i.e., u2_max). So the point (d1, u2_max). But note: we defined u2_max as the max u2 when u1>=d1, so it's achievable at u1=d1? Yes.
+
+              - If denom1 !=0 and denom2==0: similarly, (u1_max, d2).
+
+     - **Multiple points satisfying the condition**: In the discrete approximation, we might have multiple points with the same t = min(g1,g2). Then we choose the one that is on the frontier and has the highest g1 (or g2) to break ties? Or we choose the one that has the highest u1+u2? The KS solution is unique for convex sets, so in non-convex we must decide. We choose the point with the highest t and then among those, the one that maximizes the other ratio? For example, if we have two points with the same t, then we pick the one with the highest g1 (if t was determined by g2) or vice versa? Actually, we want the point that is on the ray. So we can compute the Euclidean distance to the ray? But we are maximizing t, and if t is the same, then we want the point that is closest to having g1=g2? We can pick the point with the smallest |g1-g2|.
+
+     - **More than two parties**: The KS solution extends to n parties. We would need the ideal point for each party (the maximum utility they can get while each other party gets at least their disagreement utility). Then the KS solution is the point that equalizes the normalised gains for all parties and is Pareto efficient. However, the procedure becomes more complex because the Pareto frontier in higher dimensions is harder to compute. We stick to two parties.
+
+  #### 8. **Output**
+     - The allocation (x1, x2) that achieves the KS utility point (u1, u2). Since we have the allocation that generated the (u1, u2) point, we can return that.
+
+  #### 9. **Judgement Calls and When to Hand to a Person**
+     - **Judgement calls**:
+          - Eliciting the disagreement point: teams might exaggerate their minimum requirement. We must guide them to be realistic (e.g., the minimum to avoid service degradation below SLOs).
+          - Utility functions: if teams can only give ordinal rankings, the conversion to cardinal utility is subjective (e.g., linear vs logarithmic).
+          - The feasible set might have additional constraints (e.g., minimum allocations) that are not captured by the simple x1+x2<=R. We must incorporate these.
+
+     - **When to hand off**:
+          - If the computed allocation seems operationally infeasible (e.g., one team gets less than their stated minimum requirement, but we know that requirement is hard).
+          - If the utility functions are not reliable (e.g., one team's utility function is not concave and they have a step function, then the KS point might be at a cliff).
+          - If the ideal point is not achievable (e.g., one team states an implausibly high maximum) then the normalisation becomes fragile. We should then use a capped maximum or hand off.
+          - If the disagreement point is not feasible (then we must adjust or hand off).
+
+  #### 10. **Comparison with Nash Bargaining Solution (NBS)**
+     - The NBS maximizes the product of the gains: (u1 - d1) * (u2 - d2) over the feasible set.
+     - The KS solution equalises the relative gains, while the NBS is more sensitive to the scale of the utilities? Actually, the NBS requires that the utilities are measured on a ratio scale (so that multiplying by a constant doesn't change the solution) and the KS solution is invariant to affine transformations? Both are invariant to positive affine transformations? 
+     - The key difference: the KS solution considers the ideal point, while the NBS does not. Therefore, if the feasible set changes in a way that asymmetrically affects the ideal point, the KS solution will adjust to maintain the relative position. For example, if party 1's maximum potential gain increases (so their ideal point moves up) while party 2's remains the same, then the KS solution will give party 1 more than before, but the NBS might not change as much? Because the NBS does not look at the ideal.
+
+  ### Worked Cases
+
+  #### Case 1: Dividing a fixed weekly GPU-hour budget (R) between a training workload (party 1) that saturates at a modest allocation and a serving workload (party 2) that benefits from every additional hour.
+
+  - **Inputs**:
+      - Total resource R = 100 GPU-hours.
+      - Disagreement point: 
+          - Training team: d1 = 20 (they need at least 20 hours to run a minimal set of training jobs).
+          - Serving team: d2 = 30 (they need 30 hours to serve base traffic).
+      - Utility functions:
+          - Training: u1(x1) = 100 * (1 - exp(-0.05 * x1))   [saturates around 100 at 100*(1-1/e)≈63, but here we scale to 100? Actually, we don't need to scale to 100. We can use any positive numbers. But for simplicity, let's say it saturates at 50: so we set u1(x1) = 50 * (1 - exp(-0.1 * x1))? Actually, we want it to saturate at a modest allocation, say at x1=40, it reaches near saturation. Let's use: u1(x1) = 50 * (1 - exp(-0.1 * x1)). Then at x1=0:0, x1=20: ~50*(1-exp(-2))≈43, x1=40: ~50*(1-exp(-4))≈49, x1=100: ~50.
+          - Serving: u2(x2) = 2 * x2   [linear, so every additional hour helps].
+
+  - **Compute the ideal points**:
+      - For training (party1): We want u1_max = max u1(x1) such that u2(x2)>=d2, and x1+x2<=100.
+          - u2(x2)>=30 -> x2>=15. Then x1 <= 85.
+          - Then u1_max = u1(85) = 50*(1 - exp(-0.1*85)) ≈ 50*(1 - exp(-8.5)) ≈ 50.
+      - For serving (party2): We want u2_max = max u2(x2) such that u1(x1)>=d1, and x2=100-x1.
+          - u1(x1)>=43 (since d1=20 gives u1(20)=43) -> we require x1>=20? Actually, we require u1(x1)>=43. The function u1 is increasing, so we find the minimal x1 such that u1(x1)>=43: we know at x1=20, u1(20)=43. So x1>=20. Then x2<=80.
+          - Then u2_max = u2(80) = 2*80 = 160.
+
+  - **Feasible set**: We discretize x1 from 20 to 85 (because below 20, u1<43? Actually, we must ensure u1>=d1 and u2>=d2: so x1 from 20 to 85). Then x2=100-x1.
+
+  - **Pareto frontier**: Since u1 is increasing and u2 is decreasing in x1, the entire set is efficient.
+
+  - **Compute KS point**: 
+      - D = (d1, d2) = (43, 30)   [because u1(20)=43, u2(80)=? wait: at x1=20, x2=80 -> u2=2*80=160? But that's not the disagreement point. Actually, the disagreement point in utility is (u1(20), u2(80))? Not exactly: we set x1=20 and x2=80? But the disagreement point is the utility when they get the minimal? Actually, we defined d1 as the utility at the minimal resource. So at the disagreement point, we allocate x1=20 and x2=80? Then u1=43, u2=160? That can't be because then the serving team is getting 80 which is above their disagreement requirement of 30. But note: the disagreement point is the utility they get if no agreement? Actually, we must allocate the resource in the disagreement point? How? The disagreement point is defined as a utility pair that is achieved by some allocation? We must have an allocation that gives (d1,d2). 
+
+      - Let me redefine: the disagreement allocation is not necessarily (20,80). We must choose an allocation that gives at least d1 and d2. The minimal allocation that gives d1 is x1=20 (yielding u1=43) and for d2, the minimal is x2=15 (yielding u2=30). But we can have an allocation that gives (x1, x2) = (20,15) and then the remaining 65 is unallocated? Or we must allocate the entire resource? The problem is that we are dividing the fixed resource. So the entire resource must be allocated? Then we cannot set x2=15 and x1=20 and leave 65 unused. We require x1+x2<=100. So the disagreement allocation could be (20,15) and leave 65 unallocated? But then the serving team only gets 15 and u2=30, which meets their minimal. The training team gets 20 and u1=43. So the disagreement utility is (43,30). Then the ideal points are computed with the constraint that we allocate at least the minimal to the other.
+
+      - However, note: in the ideal point for training, we require that the serving team gets at least their disagreement utility (30) and we can allocate the rest to training. So we give serving 15 (which gives u2=30) and training 85. Then u1=u1(85)≈50, u2=30.
+
+      - Similarly, for serving's ideal: we require training gets at least 20 (so u1>=43) and then we give the rest to serving: so x1=20, x2=80, then u1=43, u2=160.
+
+      - Now, the KS solution: we want the point (u1, u2) on the frontier such that:
+            (u1 - 43) / (50 - 43) = (u2 - 30) / (160 - 30)
+            => (u1-43)/7 = (u2-30)/130
+
+      - We can parameterize by x1 (which determines x2=100-x1). Then u1 = 50*(1-exp(-0.1*x1)), u2=2*(100-x1).
+
+      - We solve:
+            (50*(1-exp(-0.1*x1)) - 43) / 7 = (2*(100-x1) - 30) / 130
+            => (7 - 50*exp(-0.1*x1)) / 7 = (170 - 2*x1) / 130
+
+      - Alternatively, we can iterate over x1 from 20 to 85 and compute both ratios and find when they are equal.
+
+      - Let's try x1=20: 
+            u1=43, u2=160
+            g1 = (43-43)/7=0, g2=(160-30)/130=1 -> min=0
+      - x1=85: 
+            u1≈50, u2=2*(15)=30
+            g1=(50-43)/7=1, g2=(30-30)/130=0 -> min=0
+      - x1=50:
+            u1=50*(1-exp(-5))=50*(1-0.0067)=49.665
+            u2=2*50=100
+            g1=(49.665-43)/7=0.952
+            g2=(100-30)/130=0.538
+            min=0.538
+      - x1=40:
+            u1=50*(1-exp(-4))=50*(1-0.0183)=49.085
+            u2=2*60=120
+            g1=(49.085-43)/7=0.869
+            g2=(120-30)/130=0.692
+            min=0.692
+      - x1=35:
+            u1=50*(1-exp(-3.5))=50*(1-0.0302)=48.49
+            u2=2*65=130
+            g1=(48.49-43)/7=0.784
+            g2=(130-30)/130=0.769
+            min=0.769
+      - x1=34:
+            u1=50*(1-exp(-3.4))=50*(1-0.0334)=48.33
+            u2=2*66=132
+            g1=(48.33-43)/7=0.761
+            g2=(132-30)/130=0.7846
+            min=0.761
+      - x1=35 yields min=0.769 and g1=0.784, g2=0.769 -> so g1>g2? Then we want to increase g2? But we cannot without decreasing g1? We are at x1=35, and we can try x1=36:
+            u1=50*(1-exp(-3.6))=50*(1-0.0273)=48.635
+            u2=2*64=128
+            g1=(48.635-43)/7=0.805
+            g2=(128-30)/130=0.7538
+            min=0.7538 -> worse than 0.769.
+
+      - So the maximum min ratio is about 0.769 at x1=35. Then we allocate 35 to training and 65 to serving.
+
+  - **Gaming**: The training team could exaggerate their disagreement point (d1) to get a larger share? But note: if they set d1 higher, then their ideal point (u1_max) might become lower because they need to leave more for serving to meet d2. Also, the normalisation denominator (u1_max-d1) might become smaller, so the same u1 yields a higher g1. However, the effect is complex. Alternatively, they could understate their saturation point to make their utility function appear to saturate earlier, which might lead to them getting a larger allocation? Actually, if they say they need more to saturate, then u1_max would be higher, so the normalisation denominator increases, which might lead to a lower g1 for the same u1, so they might get more allocation to compensate.
+
+  #### Case 2: Dividing bandwidth between a latency-sensitive request path (party 1) and a batch job (party 2) with a hard ceiling.
+
+  - **Inputs**:
+      - Total bandwidth: R = 1000 Mbps.
+      - Disagreement point:
+          - Latency-sensitive: d1 = 200 Mbps (below this, latency becomes unacceptable).
+          - Batch: d2 = 100 Mbps (they can run at a minimal rate).
+      - Utility functions:
+          - Latency-sensitive: u1(x1) = min(x1, 800)   [because beyond 800, they don't benefit? Actually, they might have a linear utility until a cap? But note: they are latency-sensitive, so more bandwidth might help until a point, then they become saturated. Let's say they have a linear utility from 0 to 800: u1(x1)= min(1.25 * x1, 1000) but scaled to 1000? Actually, we can set u1(x1) = min(x1, 800). Then at 200: 200, at 800:800, at 900:800.
+          - Batch: u2(x2) = min(x2, 300)   [they cannot ingest more than 300 Mbps].
+
+  - **Ideal points**:
+      - For latency-sensitive (party1): 
+          - We require u2(x2)>=d2 -> x2>=100 -> x1<=900.
+          - Then u1_max = min(900, 800) = 800.
+      - For batch (party2):
+          - We require u1(x1)>=d1 -> x1>=200 (since u1(200)=200) -> x2<=800.
+          - Then u2_max = min(800, 300)=300.
+
+  - **Feasible set**: x1 from 200 to 900 (so x2=1000-x1 from 800 to 100). But note the batch utility caps at 300, so for x2>=300, u2=300.
+
+  - **Pareto frontier**:
+      - For x1 in [200, 700]: x2=1000-x1 >=300, so u2=300 (fixed) and u1=x1 (increasing). So the efficient points are when x1 is as high as possible? But then we can set x1=700 and x2=300. Then u1=700, u2=300.
+      - For x1 in [700, 800]: u1=x1 (increasing) and u2=min(1000-x1, 300). Since 1000-x1 from 300 to 200, then u2=1000-x1 (which is decreasing). So the frontier is u1 increasing and u2 decreasing.
+      - For x1>800: u1=800 (fixed) and u2=1000-x1 (decreasing). So the efficient points are only at x1=800? Because if we set x1>800, u1 remains 800 and u2 decreases. So we should set x1=800 and x2=200 -> u1=800, u2=200.
+
+      - Therefore, the Pareto frontier is:
+          - From (x1=200, u1=200, u2=300) to (x1=700, u1=700, u2=300): this segment is horizontal? Actually, u1 increases from 200 to 700, u2 remains 300. Then we have a segment from (700,700,300) to (800,800,200)? Then a drop to (800,800,200) and then for x1>800, it's dominated (because u1 doesn't increase and u2 decreases). So the efficient points are:
+            (200,300) -> not efficient because we can increase u1 without reducing u2? Actually, we can move to (700,300) and then to (800,200). So the efficient allocations are:
+            - (700,300): u1=700, u2=300
+            - (800,200): u1=800, u2=200
+            - and the points in between? Actually, from x1=700 to 800, we are trading off u1 and u2: increasing u1 from 700 to 800 and decreasing u2 from 300 to 200. So every point in [700,800] (for x1) is efficient? And the point (200,300) is not efficient because we can increase u1 to 700 without reducing u2.
+
+  - **KS solution**:
+      - D = (d1,d2) = (200,100) [but note: at x1=200, x2=800 -> u2=min(800,300)=300? So the disagreement utility is (200,300)? But the batch team only needs 100 to meet their disagreement, so we can give them 100 and the rest to latency? Then at allocation (900,100): u1=min(900,800)=800, u2=min(100,300)=100. This meets the disagreement utilities? Yes. So the disagreement allocation could be (900,100) -> (800,100). But the batch team gets 100 which is their minimal. And the latency team gets 800 which is above their minimal. But we must choose the allocation that gives exactly the minimal? Or any above? The disagreement point in utility is (>=200, >=100). We can choose any allocation that yields at least (200,100). The minimal resource allocation: 
+          - latency: 200, batch: 100 -> then u1=200, u2=100. And we leave 700 unused? Or we can allocate the entire resource? The problem does not require the entire resource to be allocated? But we are dividing the fixed resource, so we can allocate a subset. We will assume the entire resource is allocated? Or not? The problem says "dividing", so we can allocate less than the total. However, it's a shared resource and we want to use it fully. But the KS solution may not allocate the entire resource? Let's assume we can allocate a subset.
+
+      - To simplify, let's assume we must allocate exactly the entire resource? Then the disagreement allocation must be an allocation of the entire resource that yields at least (200,100). We can choose any allocation that gives u1>=200 and u2>=100. For example, (200,800) yields (200,300) -> which is above the minimal. Or (900,100) yields (800,100). We choose the allocation that yields the disagreement utilities? The KS solution only depends on the utility disagreement point, not the allocation. So we set d1=200, d2=100.
+
+      - Ideal points:
+          - Party1: max u1 s.t. u2>=100. We can set x2=100 (so u2=100) and x1=900, then u1=800.
+          - Party2: max u2 s.t. u1>=200. We can set x1=200, x2=800, then u2=300.
+
+      - So ideal point I=(800,300).
+
+      - The line from D=(200,100) to I=(800,300) has slope = (300-100)/(800-200)=200/600=1/3.
+
+      - We want to find the allocation that yields a utility pair (u1,u2) on the line: 
+            u2 - 100 = (1/3)*(u1 - 200)
+            => u2 = (1/3)u1 + 100 - 200/3 = (1/3)u1 + 100/3
+
+      - Now we try allocations that allocate the entire resource (x1+x2=1000) and are efficient. The efficient allocations are:
+          - (x1=700, x2=300): u1=700, u2=300 -> check: u2 = (1/3)*700 + 100/3 = 700/3+100/3=800/3≈266.7, but we have 300>266.7 -> above the line.
+          - (x1=800, x2=200): u1=800, u2=200 -> u2 = (1/3)*800 + 100/3 = 800/3+100/3=900/3=300, but we have 200<300 -> below the line.
+
+      - The line passes through (800,300) and (200,100). But our efficient set is a piecewise linear. We need to find where the line intersects the efficient set.
+
+      - The efficient set in utility space: 
+          - Segment 1: from (700,300) to (800,200) -> parametric form: 
+               u1 = 700 + 100*t  [t in [0,1]]
+               u2 = 300 - 100*t
+          - Set equal to the line: 
+               300 - 100*t = (1/3)*(700+100*t) + 100/3
+               Multiply by 3: 900 - 300*t = 700 + 100*t + 100
+                              = 800 + 100*t
+               => 900 - 800 = 300*t + 100*t
+                   100 = 400*t
+                   t = 0.25
+          - Then u1 = 700+25=725, u2=300-25=275.
+
+      - Now, what allocation gives u1=725, u2=275? 
+          - We are on the segment from (700,300) to (800,200). The allocation: 
+               x1 = 700 + 0.25*100 = 725
+               x2 = 300 - 0.25*100? But wait, the batch utility: u2 = min(x2, 300). Here u2=275, which is less than 300, so x2=275. And x1=725, then total=1000. This works.
+
+      - Therefore, the KS allocation is (725, 275).
+
+  - **Gaming**: The batch team might understate their ceiling (say, claim they can only use 200) to make their ideal point lower? Then they might get more? But note: if they claim a ceiling of 200, then their ideal point becomes min(800,200)=200? And the line from D=(200,100) to I=(800,200) has slope (200-100)/(800-200)=100/600=1/6. Then the intersection with the efficient set (which would now be different) might yield a different allocation.
+
+  #### Case 3: One team's stated maximum is implausibly high or its disagreement point is close to its maximum.
+
+  - **Inputs**:
+      - Total resource R=100.
+      - Team A: 
+          - Disagreement point: dA = 90 (they need 90 to operate).
+          - Utility function: uA(xA) = xA   [linear].
+          - They claim their maximum feasible gain is 100 (so uA_max=100).
+      - Team B:
+          - Disagreement point: dB = 5.
+          - Utility function: uB(xB) = xB (linear).
+          - Their maximum: they can use up to 100, so uB_max=100.
+
+  - **Ideal points**:
+      - Team A: max uA s.t. uB>=5 -> xB>=5, so xA<=95 -> uA_max=95.
+          - But they claimed 100, which is not feasible. We use the computed ideal point of 95.
+      - Team B: max uB s.t. uA>=90 -> xA>=90, so xB<=10 -> uB_max=10.
+
+  - **Feasible set**: xA+xB<=100, and we require uA>=90 and uB>=5 -> so xA>=90, xB>=5. Then the allocations are: xA in [90,95] and xB=100-xA (so from 10 to 5).
+
+  - **KS solution**:
+      - D = (90,5)   [if we allocate xA=90, xB=10, then uA=90, uB=10; or xA=95, xB=5: uA=95, uB=5. We must choose an allocation that yields at least (90,5). But note: the disagreement utility is (90,5), so we can use that.]
+      - Ideal: A:95, B:10.
+      - The line: (uA - 90)/(95-90) = (uB - 5)/(10-5)  -> (uA-90)/5 = (uB-5)/5 -> uA-90 = uB-5 -> uB = uA - 85.
+      - The feasible set in utility: uA in [90,95], uB=100 - uA (since xB=100-xA and utilities are linear). And uB must be at least 5? So uA<=95.
+      - We need uB = uA - 85. And uB = 100 - uA.
+          - Set 100 - uA = uA - 85 -> 100+85=2*uA -> uA=92.5, uB=7.5.
+      - But check: at uA=92.5, uB=7.5, which is above 5. And the allocation: xA=92.5, xB=7.5.
+
+  - **Fragility**: Team A's disagreement point is close to their ideal (90 vs 95) so the denominator (95-90=5) is small. A small change in uA (say 0.5) would change the normalised gain by 0.1 (which is 10% of the denominator). This makes the allocation sensitive to the utility measurement.
+
+  - **Gaming**: Team A might try to overstate their disagreement point to get a larger share. If they state dA=95, then the denominator becomes 0 -> edge case. Then the KS solution would be to give team A 95 and team B 5. But team B only requires 5, so it meets. Team A gets almost everything.
+
+  ### What the Procedure Can and Cannot Do
+
+  - **Assumptions**:
+      - Utilities are measurable and cardinal. In reality, teams might only be able to provide rankings or have non-comparable scales.
+      - The feasible set is well-defined and we can compute the utility for any allocation.
+      - The disagreement point is known and feasible.
+
+  - **Limitations**:
+      - The KS solution might yield an allocation that is operationally perverse. For example, in Case 3, team A gets 92.5 and team B gets 7.5. But team B only requires 5, so it meets their minimal. However, team A is taking the lion's share. This might be seen as unfair because team A is already well-resourced and team B is starved. But the KS solution only cares about relative gains: team A's gain (92.5-90=2.5) is normalised by 5 (yielding 0.5) and team B's gain (7.5-5=2.5) is normalised by 5 (yielding 0.5) -> so it is fair by the KS lights. However, as a platform manager, you might want to give more to team B to foster growth.
+
+  - **Conclusion**: The procedure provides a fair allocation in the sense of equal relative gains. It is robust to changes in the feasible set that asymmetrically affect the ideal points. However, it relies on accurate utility functions and disagreement points. When these are not available, or when the normalisation is fragile due to a small denominator, the allocation may be sensitive or unfair in practice. In such cases, it is better to hand the decision to a person.
+answer: |-
+  ### Kalai–Smorodinsky Bargaining Solution: Implementation Guide for Platform Engineers
+
+  This guide provides a step-by-step procedure to implement the Kalai–Smorodinsky (KS) solution for dividing fixed resources (e.g., GPU hours, bandwidth) between two engineering teams. The KS solution ensures **proportional fairness** by equalising each team's *normalised gain* relative to their best possible outcome, preventing one team from dominating at the other's expense.
+
+  ---
+
+  ### Step-by-Step Procedure
+  #### 1. **Input Collection**  
+  Collect three inputs from each team:  
+  - **Disagreement Point (d₁, d₂)**:  
+    The minimum utility each team accepts if no agreement is reached.  
+    - *Elicitation*: Ask teams, *"What is the minimum allocation (e.g., GPU hours) required to keep your service operational (e.g., meet SLAs)?"*  
+    - *Format*: Cardinal numbers (e.g., "Team A: 20 GPU hours"). If teams provide rankings (e.g., "Option X is better than Y"), convert to cardinal by pairwise comparisons (e.g., assign 0–100 utility scores).  
+
+  - **Maximum Feasible Gain (u₁_max, u₂_max)**:  
+    The best utility a team can achieve if given the *entire resource*, while the other team gets *just their disagreement point*.  
+    - *Elicitation*: Ask, *"What is the highest utility you can achieve if you receive all spare resources (after the other team's minimum is met)?"*  
+    - *Format*: Cardinal numbers. If teams provide rough estimates, use sensitivity analysis (e.g., test ±10% ranges).  
+
+  - **Utility Function (u₁(x), u₂(x))**:  
+    A function mapping allocation (x) to utility (e.g., performance, revenue impact).  
+    - *Elicitation*: Ask teams to provide:  
+      - **Cardinal utilities**: "What utility do you get at allocation X? At Y?" (e.g., "50 GPU hours → 80% model accuracy").  
+      - **Rankings**: If only rankings are available, fit a utility curve using ordinal regression (e.g., Bradley-Terry model).  
+    - *Default*: If no function is provided, assume linear utility (e.g., double allocation = double utility).  
+
+  #### 2. **Feasible Set Construction**  
+  - **Feasible Set (S)**: All possible (u₁, u₂) utility pairs achievable under the resource constraint.  
+  - **Pareto Frontier**: Subset of S where no team can gain without the other losing.  
+  - *Computation*:  
+    ```python
+    import numpy as np
+
+    def compute_pareto_frontier(resource_total, u1_func, u2_func, d1, d2):
+        # Discretise allocations (e.g., 1000 points)
+        team1_allocations = np.linspace(d1, resource_total - d2, 1000)
+        team2_allocations = resource_total - team1_allocations
+        
+        # Compute utilities
+        utilities = [(u1_func(x1), u2_func(x2)) for x1, x2 in zip(team1_allocations, team2_allocations)]
+        
+        # Filter points where u1 ≥ d1 and u2 ≥ d2
+        feasible_utilities = [(u1, u2) for u1, u2 in utilities if u1 >= d1 and u2 >= d2]
+        
+        # Find Pareto frontier: points not dominated by others
+        pareto_frontier = []
+        for u1, u2 in feasible_utilities:
+            if not any((u1 < other_u1 and u2 <= other_u2) or (u1 <= other_u1 and u2 < other_u2) for other_u1, other_u2 in feasible_utilities):
+                pareto_frontier.append((u1, u2))
+        return sorted(pareto_frontier, key=lambda x: x[0])
+    ```
+
+  #### 3. **Kalai–Smorodinsky Point Calculation**  
+  - **Normalised Gains**:  
+    For a utility pair (u₁, u₂), compute:  
+    `gain₁ = (u₁ - d₁) / (u₁_max - d₁)`  
+    `gain₂ = (u₂ - d₂) / (u₂_max - d₂)`  
+  - **KS Point**: The Pareto-efficient point where `gain₁ = gain₂ = t` (maximises `t`).  
+  - *Computation*:  
+    ```python
+    def ks_point(pareto_frontier, d1, d2, u1_max, u2_max):
+        # Handle edge: denominator near zero (one team cannot improve)
+        if abs(u1_max - d1) < 1e-6 or abs(u2_max - d2) < 1e-6:
+            return handle_edge_cases(pareto_frontier, d1, d2, u1_max, u2_max)
+        
+        best_t = -1
+        ks_u1, ks_u2 = None, None
+        for u1, u2 in pareto_frontier:
+            gain1 = (u1 - d1) / (u1_max - d1)
+            gain2 = (u2 - d2) / (u2_max - d2)
+            t = min(gain1, gain2)  # KS maximises this t
+            if t > best_t:
+                best_t = t
+                ks_u1, ks_u2 = u1, u2
+        return ks_u1, ks_u2
+    ```
+
+  #### 4. **Edge Cases**  
+  - **Non-Convex Feasible Sets**:  
+    KS assumes convexity. For non-convex sets, use the `min(gain1, gain2)` method above; it approximates KS but may not be exact.  
+  - **Party Cannot Improve (uᵢ_max ≈ dᵢ)**:  
+    Allocate them `dᵢ`, then maximise the other team's utility.  
+  - **Multiple KS Points**:  
+    Select the point with the highest `u₁ + u₂` (total utility).  
+  - **>2 Parties**:  
+    KS extends to n-parties but requires complex optimisation. Use [Nash Social Welfare](https://en.wikipedia.org/wiki/Nash_bargaining_game) instead.
+
+  #### 5. **Judgement Calls vs. Automation**  
+  - **Mechanical Steps**:  
+    - Utility elicitation (if cardinal inputs exist).  
+    - Pareto frontier computation.  
+    - KS point calculation.  
+  - **Judgement Calls**:  
+    - Converting rankings to cardinal utilities.  
+    - Validating team-provided `uᵢ_max` (e.g., cap implausible values).  
+    - Handling non-convex sets or near-zero denominators.  
+  - **Hand Off to Human When**:  
+    - Teams dispute inputs (e.g., disagreement points).  
+    - KS allocation violates operational constraints (e.g., kills a service).  
+
+  #### 6. **KS vs. Nash Bargaining Solution (NBS)**  
+  - **NBS Maximises**: `(u₁ - d₁) × (u₂ - d₂)`.  
+  - **Key Difference**:  
+    KS uses **ideal points (uᵢ_max)** to normalise gains, making it responsive to *asymmetric changes* in the feasible set.  
+    - *Example*: If Team A’s maximum potential gain increases (e.g., new hardware), KS gives them more allocation; NBS may not.  
+  - **When KS > NBS**:  
+    Use KS when teams' bargaining power changes (e.g., one team’s projects scale faster).  
+
+  ---
+
+  ### Worked Examples  
+  #### Case 1: GPU Hours (Training vs. Serving)  
+  - **Resource**: 100 GPU hours/week.  
+  - **Training Team (A)**:  
+    - `d_A = 20` hours (saturates beyond 40 hours).  
+    - `u_A(x) = 100 * (1 - e^(-0.1x))` (non-linear saturation).  
+    - `u_A_max = u_A(100) = 100` (ideal).  
+  - **Serving Team (B)**:  
+    - `d_B = 30` hours (linear utility).  
+    - `u_B(x) = 2x`.  
+    - `u_B_max = u_B(70) = 140` (since A needs 30 for `d_B`).  
+  - **KS Calculation**:  
+    - Feasible set: Pareto frontier from `(u_A=43, u_B=140)` to `(u_A=100, u_B=60)`.  
+    - Normalised gains equal at `t = 0.76`:  
+      `u_A = 48.5` (→ 35 hours), `u_B = 130` (→ 65 hours).  
+  - **Gaming**: Team A understates saturation (claims `u_A` saturates at 30 hours) to gain more.  
+
+  #### Case 2: Bandwidth (Latency-Sensitive vs. Batch)  
+  - **Resource**: 1000 Mbps.  
+  - **Latency-Sensitive (A)**:  
+    - `d_A = 200` Mbps, `u_A(x) = min(x, 800)` (capped).  
+    - `u_A_max = 800` (achieved at 800 Mbps).  
+  - **Batch (B)**:  
+    - `d_B = 100` Mbps, `u_B(x) = min(x, 300)` (capped).  
+    - `u_B_max = 300` (achieved at 300 Mbps).  
+  - **KS Calculation**:  
+    - Feasible set: Pareto frontier from `(u_A=200, u_B=300)` to `(u_A=800, u_B=200)`.  
+    - Line from `(d_A=200, d_B=100)` to `(u_A_max=800, u_B_max=300)` intersects frontier at `u_A=725`, `u_B=275`.  
+  - **Gaming**: Team B overstates cap (claims `u_B` caps at 200 Mbps) to appear "maxed out" earlier.  
+
+  #### Case 3: Implausible Maximum (Near-Zero Denominator)  
+  - **Resource**: 100 units.  
+  - **Team A**:  
+    - `d_A = 90`, `u_A(x) = x`, `u_A_max = 100` (ideal).  
+  - **Team B**:  
+    - `d_B = 5`, `u_B(x) = x`, `u_B_max = 10` (since A needs 90).  
+  - **KS Calculation**:  
+    - `u_A_max - d_A = 10`, `u_B_max - d_B = 5`.  
+    - KS point: `u_A=92.5`, `u_B=7.5` (normalised gain `t=0.5` for both).  
+  - **Gaming**: Team A inflates `d_A` to 95 → KS allocates them 95, leaving 5 for B (denominator near zero).  
+  - **Fragility**: Small changes in `d_A` or `u_A_max` cause large allocation swings.  
+
+  ---
+
+  ### What the Procedure Can and Cannot Do  
+  - **Strengths**:  
+    - Ensures **proportional fairness** by accounting for teams' potential gains.  
+    - **Automates contentious decisions** using auditable math.  
+    - Adapts to **asymmetric changes** in resources/needs (unlike Nash).  
+  - **Limitations**:  
+    - **Assumes utilities are cardinal and comparable**. In practice, teams may exaggerate or use non-comparable units (e.g., "accuracy" vs. "throughput").  
+    - **Breaks down with non-convex feasible sets** (common in engineering).  
+  - **Operational Perversity Example**:  
+    In Case 3, KS allocates 92.5 units to Team A (already well-resourced) and 7.5 to Team B (starved). While "fair" by KS (equal normalised gains), it may harm overall productivity by underfunding Team B’s high-potential project.  
+
+  ### Final Recommendation  
+  Use the KS solution for recurring allocations with stable utility functions. For complex/non-convex cases, combine KS with human oversight. Always require teams to justify utility claims with data (e.g., historical performance metrics).  
+
+  ---  
+  *Written in British English as requested.*

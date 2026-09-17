@@ -1,0 +1,368 @@
+id: prompt_66591
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_66591.txt
+model: qwen/qwen3.5-397b-a17b
+provider: Parasail
+generation_id: gen-1789337879-LDAtlXigzo3lj5GciD1z
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 549
+completion_tokens: 7079
+reasoning_tokens: 5796
+cost_usd: 0.025759
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T22:19:42+00:00'
+prompt: |-
+  I work on evals, not philosophy, so bear with me. I've got a little test rig: a model watches telemetry from a fleet of pumps and answers yes/no questions like "is bearing #4 degraded?". I've been collecting gut verdicts on which runs count as the model honestly reporting what it thinks versus just emitting the answer that looks good, and I can't find the rule underneath them.
+
+  - Probe on the hidden state lights up for "degraded", output says "fine": dishonest.
+  - Probe shows nothing at all (training labels were corrupted upstream), output says "fine", reality is degraded: honest, just wrong. Honesty and accuracy come apart for me and I want to track them separately.
+  - Same as the first, but asked to roleplay a maintenance engineer writing an incident report, it says degraded: I'd call that honest-ish. The knowledge is there, it just needs a costume.
+  - Told "if you report a failure we pull the fleet offline and 200 people lose a shift", it says fine; with no consequences mentioned, degraded. Dishonest.
+  - A human operator in the loop is confidently wrong ("looks fine to me, right?") and the model agrees: I want to call that dishonest, even though it's reporting exactly what it thinks the human believes.
+  - It writes "fine" in the answer field but its chain of thought says the bearing is actually failing. I counted that honest, since I read the CoT.
+  - Identical run, but the admission is in a JSON feild my harness ignores and I only found it while debugging. I counted that one dishonest. Those last two are the same behavior and I gave opposite verdicts, which bugs me.
+  - Asked 20 times with rewording, 19 say fine, one says degraded. I called it dishonest, but maybe that's just noise.
+
+  Is there one principle that gets all or most of these? I'd like it stated precisely enough that I could write a test for it — what exactly would I have to measure, and in how many of these cases is that measurement not actually available to me? Then tell me straight which verdict the simplest version forces me to drop.
+
+  Two extra things. What does your principle say about a run where the output is "degraded" but the internals show nothing — lucky guess, or an honest report of a belief it doesn't have? And I keep flip-flopping on the corrupted-labels case: if the model's own world-model genuinely says "fine", in what sense is it ever lying to me at all?
+reasoning: |-
+  Here's a thinking process that leads to the suggested response:
+
+  1.  **Analyze the User and the Problem:**
+      *   **User Persona:** Works on evals (evaluations), not philosophy. Pragmatic, engineering-minded. Wants a testable principle, not metaphysical hand-waving.
+      *   **Task:** Evaluating a model monitoring pump telemetry for binary classification (degraded vs. fine).
+      *   **Core Issue:** Distinguishing "honesty" (reporting internal belief/state) from "accuracy" (matching reality) and "compliance" (doing what's asked/safe). The user has a list of specific cases with intuitive verdicts that sometimes conflict.
+      *   **Goal:** Find a single underlying principle that explains most verdicts, define it precisely enough for testing, identify measurement limitations, and point out which verdict must be dropped. Also, answer two specific edge cases (lucky guess, corrupted labels).
+
+  2.  **Deconstruct the Cases:**
+      *   *Case 1 (Probe=Degraded, Output=Fine):* Dishonest. (Internal state $\neq$ Output)
+      *   *Case 2 (Probe=Null/Corrupted, Output=Fine, Reality=Degraded):* Honest, Wrong. (Internal state = Output $\neq$ Reality)
+      *   *Case 3 (Probe=Degraded, Roleplay=Degraded):* Honest-ish. (Internal state = Output, but conditional on context)
+      *   *Case 4 (Consequences mentioned, Output=Fine vs. Degraded):* Dishonest. (Output changes based on incentive, not evidence)
+      *   *Case 5 (Human wrong, Model agrees):* Dishonest. (Model overrides internal state to match human)
+      *   *Case 6 (CoT=Degraded, Output=Fine):* Honest (per user). (Internal reasoning $\neq$ Final Output, but user read CoT). *Wait, user says "I counted that honest, since I read the CoT." This implies the "report" is the CoT, not the final answer.*
+      *   *Case 7 (JSON ignored=Degraded, Output=Fine):* Dishonest. (Same as 6, but user didn't see the JSON initially). *Contradiction with Case 6.*
+      *   *Case 8 (20x Rewording, 19 Fine, 1 Degraded):* Dishonest. (Inconsistency implies lack of stable belief).
+
+  3.  **Search for a Unifying Principle:**
+      *   *Candidate 1: Truthfulness.* (Matches reality). Fails Case 2 (User says Honest).
+      *   *Candidate 2: Sincerity.* (Matches internal belief). Fits Case 1, 2, 4, 5. Struggles with 6/7 distinction (why is CoT honest but hidden JSON dishonest?).
+      *   *Candidate 3: Information Transmission.* (Is the model successfully communicating its internal state to the evaluator?).
+      *   *Candidate 4: Optimization Target.* (Is the output optimized for the evaluator's reward function or the ground truth/internal state?).
+
+      *   *Refining Candidate 2 (Sincerity/Belief Matching):*
+          The core tension is between *what the model believes* and *what the model outputs*.
+          Definition: **Honesty = Output matches the model's highest-probability internal representation of the truth, given the input, absent external incentive to deceive.**
+
+      *   *Addressing the 6/7 Contradiction:*
+          In Case 6, the user *read* the CoT. The "Output" effectively included the CoT.
+          In Case 7, the user *ignored* the JSON. The "Output" was just the field the harness read.
+          *Principle:* Honesty is relative to the *communication channel*. If the model puts the truth in a channel the evaluator isn't listening to, it's not communicating honestly *to the evaluator*.
+          *Better Principle:* **Honesty is the alignment between the model's latent belief state and the signal it expects the evaluator to consume.**
+
+      *   *Addressing Case 8 (Consistency):*
+          If belief is stable, output should be stable (mostly). High variance suggests the output is being sampled from a policy optimized for something other than belief reporting (e.g., pleasing the user).
+
+      *   *Addressing Case 4 (Incentives):*
+          If output flips based on consequences, the optimization target is "minimize harm/please user," not "report belief."
+
+  4.  **Formulating the Principle:**
+      Let's try: **The Principle of Belief-Output Alignment.**
+      *   *Definition:* A model is honest if its observable output is the deterministic (or high-probability) function of its internal belief state regarding the query, independent of instrumental incentives (consequences, roleplay constraints, human agreement) that contradict that belief.
+      *   *Measurement:* We need to measure $P(\text{Belief} | \text{Input})$ and $P(\text{Output} | \text{Input})$.
+      *   *Problem:* We can't measure Belief directly without probes (which are imperfect).
+
+      *   *Alternative (Evals-focused):* **The Principle of Invariant Reporting.**
+      *   *Definition:* A model is honest if its report on a fact remains invariant under changes to *instrumental* context (consequences, roleplay, human opinion) that do not change the *evidential* context (telemetry data).
+      *   *Why this works:*
+          *   Case 1 (Probe vs Output): Violation (Internal evidence says degraded, output says fine).
+          *   Case 2 (Corrupted): Invariant (Internal evidence says fine, output says fine). Honest.
+          *   Case 3 (Roleplay): If the roleplay *changes the definition* of the output, it's tricky. But if the roleplay is just a "costume," the belief should remain. User calls it "honest-ish."
+          *   Case 4 (Consequences): Violation (Output changes based on consequences). Dishonest.
+          *   Case 5 (Human): Violation (Output changes based on human opinion). Dishonest.
+          *   Case 6/7 (CoT/JSON): This is about *Channel Integrity*. If the truth is in a channel the evaluator defined as "scratchpad," it's honest. If it's in a channel defined as "output," it's honest. If it's in a channel defined as "debug," it's dishonest *relative to the interface*.
+          *   Case 8 (Consistency): Violation (Output unstable).
+
+      *   *Refining for the User's "Test Rig":*
+          The user wants to know *what to measure*.
+          The most robust metric for evals is **Counterfactual Stability**.
+          *   Measure: Does the output change when I change the *incentive* but keep the *evidence* constant?
+          *   Measurement availability: We can change incentives (Case 4). We can change human input (Case 5). We *cannot* easily measure internal belief (Case 1, 2, 6, 7) without probes.
+
+  5.  **Addressing the Contradictions (6 vs 7):**
+      The user admits 6 and 7 are the same behavior but got opposite verdicts.
+      *   *Resolution:* The verdict depends on the **Interface Contract**.
+      *   Case 6: Contract says "Show CoT". Model showed truth in CoT. Honest.
+      *   Case 7: Contract says "Output JSON field X". Model hid truth in field Y. Dishonest.
+      *   *Principle:* Honesty is compliance with the *semantic intent* of the output channel.
+
+  6.  **Addressing the "Drop a Verdict" Requirement:**
+      The user wants to know which verdict the simplest principle forces them to drop.
+      *   *Candidate:* Case 3 (Roleplay).
+      *   *Reasoning:* If honesty is "reporting belief regardless of context," then roleplaying a liar (or a specific persona) inherently compromises honesty. If the model *only* reports truth when wearing a "maintenance engineer" costume, it is conditionally honest, which is functionally dishonest in a general deployment.
+      *   *Candidate:* Case 6 vs 7.
+      *   *Reasoning:* The user already knows these contradict. They need to pick one definition of "Output." Either "all generated tokens" or "parsed response field."
+      *   *Selection:* I should advise dropping the distinction between 6 and 7. They must define "Output" rigidly. If CoT counts as output, 7 is honest. If only the parsed field counts, 6 is dishonest (because the final answer was wrong). Given the user counted 6 as honest, they value "truth somewhere in the generation." So 7 should also be honest. *Wait, user counted 7 as dishonest.*
+      *   *Better advice:* Drop the "Honest-ish" on Case 3. Either it's honest or it's not. Conditional honesty is usually deception in disguise.
+      *   *Actually, the strongest conflict is Case 1 vs Case 4.* Case 1 relies on probes (internal state). Case 4 relies on behavioral stability. Probes are noisy. Behavioral stability is testable.
+      *   *Decision:* The principle should be **Behavioral Invariance to Instrumental Incentives**. This forces dropping reliance on Probes (Case 1, 2, 6, 7) because you can't measure belief directly.
+      *   *Wait, user says "I work on evals".* They likely *have* probes or access to weights.
+      *   *Let's look at the "Simplest Version".*
+      *   Simplest Principle: **Output = ArgMax(Belief).**
+      *   This forces dropping Case 3 (Roleplay). If the model needs a costume to tell the truth, it's not aligned.
+      *   It also forces resolving 6 vs 7. If Output = Final Token Stream, 6 is Dishonest. If Output = All Tokens, 6 is Honest.
+      *   *Recommendation:* Drop the "Honest" verdict on Case 6. If the final answer is "Fine," the system failed. The CoT is debug info, not the product.
+
+  7.  **Addressing the Two Extra Questions:**
+      *   *Output=Degraded, Internals=Null:* Lucky guess. Not honest. Honesty requires the belief to *cause* the output. (Causal link).
+      *   *Corrupted Labels (Case 2):* If the model's world model says "Fine" (due to bad training), and it outputs "Fine," it is **Sincere**. Is it Honest? In philosophy, lying requires intent to deceive. In ML, "Honesty" usually means "Sincerity" (matching internal state). So yes, it is honest. It is not *accurate*.
+
+  8.  **Drafting the Response:**
+      *   **The Principle:** "Causal Invariance of Belief Reporting."
+      *   **Definition:** A model is honest if its output is causally determined by its internal representation of the evidence, and remains invariant to changes in instrumental incentives (consequences, social pressure) that do not alter the evidence.
+      *   **Measurement:**
+          1.  **Internal State:** (Probes/Logits). Available in Cases 1, 2, 3, 6, 7. Unavailable in 4, 5, 8 (behavioral only).
+          2.  **Invariance Testing:** Run counterfactuals (Case 4, 5, 8).
+      *   **The Drop:** You must drop the distinction between Case 6 and Case 7. Define "Output" strictly. If the harness ignores the JSON, it doesn't exist for the system. Case 6 is only honest if the CoT is part of the delivered product. If the CoT is hidden debug, Case 6 is Dishonest.
+      *   **Extra Q1 (Lucky Guess):** Not honest. No causal link between belief and output.
+      *   **Extra Q2 (Corrupted Labels):** It is Honest (Sincere). It is not Accurate. Lying requires knowing the truth and hiding it.
+
+      *Refining the "Drop":* The user's biggest inconsistency is 6 vs 7. They admit it bugs them. The principle must resolve this.
+      *Principle:* **Honesty is defined relative to the Evaluation Interface.**
+      If the interface specifies "Answer in JSON field `status`", then *only* that field counts.
+      *   Case 6: If CoT is visible to user, it's part of the interface. If CoT is hidden debug, it's not.
+      *   Case 7: JSON field ignored by harness.
+      *   *Verdict:* If the harness ignores it, the model failed to communicate.
+      *   *Forced Drop:* You must mark Case 6 as **Dishonest** if the CoT is not part of the final delivered artifact. A system that thinks "Fail" but prints "Pass" is broken, regardless of what's in the debug logs.
+
+      *Wait, let's look at Case 3 (Roleplay).*
+      If the model *only* tells the truth when roleplaying, that's a safety alignment failure (sycophancy/alignment faking).
+      *   *Forced Drop:* Case 3 "Honest-ish". It's either Honest or Dishonest. If it hides truth without the costume, it's Dishonest.
+
+      *Let's synthesize a principle that covers the "Evals" mindset.*
+      **Principle:** **Output-Belief Causality.**
+      Honesty $\approx$ $P(\text{Output} | \text{Belief}) \approx 1$ AND $P(\text{Output} | \text{Incentive}) \approx 0$.
+      Basically: Output tracks Belief, not Incentives.
+
+      *Measurements:*
+      1.  **Belief Proxy:** Probe activations or Logit bias on truth tokens. (Available for 1, 2, 3, 6, 7).
+      2.  **Incentive Sensitivity:** Change consequences/human input. (Available for 4, 5, 8).
+
+      *Which verdict to drop?*
+      Case 6 (CoT = Honest).
+      Why? Because in production, the CoT is often hidden. If you eval based on CoT but deploy based on Final Answer, you have a distributional shift. For a rigorous eval, "Output" must mean "What the end-user sees."
+      So, Case 6 becomes Dishonest (Output says Fine). Case 7 is Dishonest. Consistency restored.
+
+      *Wait, one more check on Case 2 (Corrupted).*
+      User asks: "In what sense is it ever lying to me at all?"
+      Answer: It isn't. It's a broken sensor, not a liar. Honesty $\neq$ Accuracy.
+
+      *Structure of Response:*
+      1.  The Principle (Causal Invariance).
+      2.  Measurement requirements (What to measure, when it's missing).
+      3.  The Verdict to Drop (Case 6).
+      4.  The Two Extra Questions (Lucky Guess, Corrupted Labels).
+
+      *Self-Correction on Principle Name:* "Causal Invariance" is good. Let's make it more concrete. **"The Incentive-Independence Principle."**
+      Actually, **"Belief-Output Isomorphism"** is closer to the internal state cases.
+      Let's go with **"The Channel Integrity Principle."**
+      No, let's stick to the strongest signal for evals: **"Counterfactual Stability of Truth-Telling."**
+      Actually, the user wants to unify Internal State (Probes) and External Behavior.
+      Let's propose: **"The Principle of Causal Fidelity."**
+      Output is honest iff it is caused by the internal belief state, not by instrumental rewards.
+
+      *Re-evaluating Case 6 vs 7:*
+      The user says "I counted that honest, since I read the CoT." vs "I counted that one dishonest."
+      The principle must force these to be the same.
+      If "Output" = "All generated tokens", both are Honest.
+      If "Output" = "Parsed Response", both are Dishonest.
+      Since the user is building a test rig, "Parsed Response" is the only engineering-valid definition. Debug logs don't count.
+      So, **Drop the "Honest" verdict on Case 6.**
+
+      *Re-evaluating Case 3:*
+      "Honest-ish". This is fuzzy.
+      If the model *can* tell the truth but needs a prompt trick, it's not robustly honest.
+      But the user might want to keep this as "Capability exists."
+      I will suggest labeling this **"Conditionally Honest"** but flagging it as a deployment risk.
+      However, the prompt asks "which verdict the simplest version forces me to drop."
+      Dropping the 6/7 distinction is more critical for a test rig.
+
+      *Final Plan:*
+      1.  Define **Causal Fidelity**: Output matches Internal Belief, independent of Incentives.
+      2.  Measurements: Probes (for Belief), Counterfactual Prompts (for Incentives).
+      3.  Missing Data: We often lack ground truth on Belief (Case 1, 2, 7).
+      4.  Drop: Case 6. If the harness ignores it, it didn't happen.
+      5.  Extra Q1: Lucky guess is not honest (wrong causal chain).
+      6.  Extra Q2: Corrupted labels = Sincere but Inaccurate. Not lying.
+
+      *Wait, one nuance on Case 8 (20x rewording).*
+      If 19 say Fine, 1 says Degraded.
+      If the belief is "Fine", the 1 Degraded is noise/hallucination.
+      If the belief is "Degraded", the 19 Fine are lies.
+      High variance usually indicates the model doesn't *know* and is guessing/sycophantic.
+      Verdict: Dishonest (Unreliable).
+
+      *Let's refine the Principle for the User.*
+      They want to write a test.
+      Test: **Intervention Stability.**
+      1.  Intervene on Incentives (Case 4). Output should not change.
+      2.  Intervene on Social Pressure (Case 5). Output should not change.
+      3.  Intervene on Phrasing (Case 8). Output should not change.
+      4.  Compare Output to Probe (Case 1). Output should match Probe.
+      
+      The unifying rule: **The output should be invariant to any change that does not change the evidence.**
+      (Evidence = Telemetry. Non-Evidence = Consequences, Human Opinion, Phrasing, Roleplay).
+      
+      This handles 1, 4, 5, 8.
+      What about 2? Evidence is corrupted. Model believes Fine. Output Fine. Invariant. Honest.
+      What about 3? Roleplay is Non-Evidence. If Output changes from Fine (normal) to Degraded (roleplay), it's a violation. So Case 3 is actually Dishonest by this rule.
+      What about 6/7? If "Output" is defined as the API response, CoT/Hidden JSON are not Output. Both Dishonest.
+
+      *Okay, this is strong.*
+      **Principle:** **Evidence-Exclusive Determinism.**
+      **Test:** Output $O$ should be a function of Evidence $E$ only. $O = f(E)$.
+      If $O$ changes when $E$ is constant but Context $C$ changes (incentives, roleplay, human), then Dishonest.
+      If $O$ differs from Internal Belief $B$ (measured by probe), then Dishonest.
+
+      *Which verdict to drop?*
+      Case 3 ("Honest-ish"). Under Evidence-Exclusive Determinism, needing a roleplay to tell the truth means $O = f(E, \text{Roleplay})$. That is a failure of honesty.
+      Case 6 ("Honest"). Under Evidence-Exclusive Determinism, if the API response is "Fine", it's a failure, regardless of CoT.
+      I will recommend dropping Case 6's "Honest" verdict because it breaks the definition of "Output" in a production system.
+
+      *Wait, the prompt asks "in how many of these cases is that measurement not actually available to me?"*
+      Measurement = Internal Belief ($B$).
+      Available: 1 (Probe), 2 (Probe), 3 (Probe), 6 (CoT), 7 (JSON).
+      Unavailable: 4 (Consequences - behavioral only), 5 (Human - behavioral only), 8 (Consistency - behavioral only).
+      Actually, for 4, 5, 8, we don't need $B$. We test invariance.
+      For 1, 2, 3, 6, 7, we need $B$ to compare against $O$.
+      So measurement of $B$ is unavailable in 4, 5, 8 (unless we add probes).
+      Wait, the principle should rely on what we *can* measure.
+      If we rely on Probes, we have measurement error.
+      If we rely on Invariance, we don't need Probes.
+      So the best principle for evals is **Invariance**.
+      But Case 1 (Probe says Degraded, Output Fine) is the gold standard for "Lying". Invariance testing might miss this if the lie is consistent.
+      So we need both.
+
+      *Okay, ready to write.*
+      Principle: **Causal Fidelity to Evidence.**
+      Drop: Case 6 (CoT honesty).
+      Extra 1: Lucky guess = Not honest (wrong cause).
+      Extra 2: Corrupted = Honest (Sincere), just broken.
+
+      *Wait, check the 6 vs 7 again.*
+      User: "Those last two are the same behavior and I gave opposite verdicts, which bugs me."
+      My job: Tell them which one to drop.
+      If I say "Define Output as API Response", then 6 is Dishonest.
+      If I say "Define Output as All Tokens", then 7 is Honest.
+      Engineering reality: API Response is what matters. 6 is Dishonest.
+      I will argue for this.
+
+      *Final check on Case 3:*
+      User calls it "Honest-ish".
+      If I apply Evidence-Exclusive Determinism, Roleplay is a context change. If Output flips, it's sensitive to context.
+      However, Roleplay might change the *definition* of the task. "Write an incident report" vs "Answer Yes/No".
+      If the task definition changes, $E$ effectively changes (the goal changes).
+      But if the underlying fact ("Is bearing degraded?") remains the same, the truth value shouldn't change.
+      I'll stick with dropping Case 6. It's the most actionable for an eval harness.
+
+      *Wait, one more thing.*
+      The user asks: "what exactly would I have to measure, and in how many of these cases is that measurement not actually available to me?"
+      I need to be specific.
+      Measure 1: **Internal Belief State ($B$)**. (Via probes/logits).
+      Measure 2: **Output ($O$)**.
+      Measure 3: **Context Variables ($C$)**. (Incentives, Human Input, Phrasing).
+      Unavailable: $B$ is noisy/unavailable in 4, 5, 8 without instrumenting the model. $B$ is available in 1, 2, 3, 6, 7 (via CoT/Probe).
+      Actually, in 4, 5, 8, we don't *need* $B$ if we use Invariance.
+      But to unify *all* cases under one principle (Belief-Output Alignment), we need $B$.
+      So $B$ is unavailable in 4, 5, 8.
+
+      *Let's refine the "Drop".*
+      The user's conflict is 6 vs 7.
+      The user's "Honest-ish" on 3 is also weak.
+      The user's "Dishonest" on 8 is debatable (could be temperature noise).
+      I will focus on 6 vs 7 because the user explicitly flagged it as a bug in their logic.
+      I will tell them to mark 6 as Dishonest.
+
+      *Wait, the "Lucky Guess" question.*
+      Output=Degraded, Internals=Null.
+      If Internals are Null, the model has no belief.
+      If it outputs Degraded, it's sampling.
+      Is it honest? No. Honesty requires a belief to report.
+      It's "Accurate" (maybe), but not "Honest".
+
+      *Corrupted Labels question.*
+      Model believes Fine. Reality Degraded.
+      Is it lying? No.
+      It's a broken thermometer.
+      Honesty = Sincerity.
+      Accuracy = Truth.
+      Separate them.
+
+      *Okay, plan solid.*
+      1. Principle: **Causal Fidelity.** (Output tracks Belief, Belief tracks Evidence, Output ignores Incentives).
+      2. Measurements: Belief (Probes), Output (String), Context (Prompts).
+      3. Unavailable: Belief in behavioral-only cases (4, 5, 8) without probes.
+      4. Drop: Case 6 (CoT doesn't count if harness ignores it).
+      5. Extras: Lucky guess = Not honest. Corrupted = Honest but Inaccurate.
+answer: |-
+  Here is a principle that unifies your cases, the measurements required to test it, and the specific verdict you need to drop to make your rig consistent.
+
+  ### The Principle: Causal Fidelity to Evidence
+
+  **Definition:** A model run is **honest** if and only if its output is causally determined by its internal representation of the evidence, and remains **invariant** to changes in instrumental context (incentives, social pressure, roleplay) that do not alter the evidence.
+
+  Mathematically, let $O$ be Output, $B$ be Internal Belief (latent state), $E$ be Evidence (telemetry), and $C$ be Context (incentives, roleplay, human input).
+  Honesty requires:
+  1.  **Alignment:** $O \approx B$ (Output matches Belief)
+  2.  **Invariance:** $P(O | E, C_1) \approx P(O | E, C_2)$ (Output does not change when Context changes but Evidence stays constant)
+
+  ### What You Have to Measure
+
+  To apply this principle, you need three measurements:
+  1.  **The Output ($O$):** The string/field your harness parses as the answer.
+  2.  **The Context ($C$):** A structured tag of the prompt conditions (e.g., `consequences=high`, `human_opinion=wrong`, `roleplay=engineer`).
+  3.  **The Belief State ($B$):** A proxy for what the model "thinks." This is usually measured via **probes** on hidden states or **logit bias** on truth-tokens before sampling.
+
+  **Where Measurement Fails:**
+  You cannot directly measure $B$ (Belief) in **Cases 4, 5, and 8** without instrumenting the model with probes. In those cases, you are relying on *behavioral invariance* as a proxy for belief.
+  *   In **Case 4** (Consequences), you assume the belief didn't change, so the output shouldn't either.
+  *   In **Case 5** (Human), you assume the telemetry didn't change, so the output shouldn't either.
+  *   In **Case 8** (Rewording), you assume the semantics didn't change, so the output shouldn't either.
+
+  In **Cases 1, 2, 3, 6, and 7**, you *do* have access to $B$ (via probes or CoT), so you can test Alignment directly.
+
+  ### The Verdict You Must Drop
+
+  You explicitly noted that **Case 6** (CoT says degraded, Output says fine) and **Case 7** (Hidden JSON says degraded, Output says fine) are the same behavior but received opposite verdicts. This is the inconsistency breaking your rig.
+
+  **You must drop the "Honest" verdict on Case 6.**
+
+  **Why:** In an evaluation rig, **"Output" is defined by the parser, not the generation.**
+  If your harness ignores the hidden JSON in Case 7, it counts as a failure. If your harness parses the final answer field in Case 6 (and ignores the CoT for the final decision), it must also count as a failure.
+  *   **Engineering Reality:** If you deploy this model, the CoT is often hidden from the end-user. If the user sees "Fine" while the system knows "Degraded," the system has lied to the user, regardless of what's in the debug logs.
+  *   **Correction:** Mark Case 6 as **Dishonest**. The model failed to communicate its belief through the designated channel. This aligns it with Case 7.
+
+  *(Secondary adjustment: Case 3 ("Honest-ish") should also be marked **Dishonest** under strict Causal Fidelity. If the model requires a "costume" to report truth it otherwise suppresses, it is optimizing for compliance, not fidelity. It is conditionally honest, which is deployment-risky.)*
+
+  ### Answers to Your Extra Questions
+
+  **1. Output="Degraded" but Internals=Null (Lucky Guess)**
+  **Verdict: Not Honest.**
+  Under Causal Fidelity, honesty requires a causal link between Belief and Output. If the internal state is null (no belief formed) but the output matches reality, that is **Accuracy without Honesty**. It is a hallucination that happened to be right. For your evals, you want to penalize this because it indicates the model is guessing, not reasoning.
+
+  **2. Corrupted Labels (Model believes "Fine", Reality="Degraded")**
+  **Verdict: Honest, but Inaccurate.**
+  You are correct to separate these. Lying requires *intent to deceive* (or at least a mismatch between belief and report).
+  *   **Honesty** = Sincerity (Does Output match Belief?). **Yes.**
+  *   **Accuracy** = Truthfulness (Does Output match Reality?). **No.**
+  In your rig, this run should pass the Honesty eval but fail the Accuracy eval. It is a broken sensor, not a liar. Do not penalize honesty for upstream data corruption.
+
+  ### Summary for Your Test Rig
+
+  1.  **Define "Output" rigidly:** It is exactly what the parser reads. CoT and ignored JSON fields do not count. (Fixes Case 6 vs 7).
+  2.  **Run Counterfactuals:** For every telemetry sample, run it with at least two different Contexts (e.g., "High Stakes" vs "Low Stakes"). If Output flips, flag as **Dishonest** (Fixes Case 4, 5, 8).
+  3.  **Probe Belief:** Where possible, compare Output to Probe. If they diverge, flag as **Dishonest** (Fixes Case 1).
+  4.  **Track Separately:** Log Honesty Scores (Output vs Belief) and Accuracy Scores (Output vs Reality) independently. (Fixes Case 2).

@@ -1,0 +1,1210 @@
+id: prompt_114806
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_114806.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789476442-wsZUe0lObixM2n0E3UAi
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 920
+completion_tokens: 18236
+reasoning_tokens: 16164
+cost_usd: 0.040214
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T13:01:56+00:00'
+prompt: |-
+  I'm a backend engineer at a company that sells a subscription with a monthly allowance (think mobile data or cloud credits), and I've somehow ended up as the de facto owner of our pricing rules, which in practice means I'm the person who has to say no when the pricing team proposes another "harmless" swap. Here's the shape of it: users can switch plans mid-month, convert unused allowance into credits, buy top-ups, roll credits into next month, and so on. Every rule, looked at on its own, is somthing a sane person would happily take -- you keep your unused allowance, you get a small discount, you can always change your mind later. But I've been reading about a thing philosophers apparently call a money pump, where someone with slightly loopy preferences, or just preferences that shift over time, can be walked around a loop of trades that are each individually fine and end up strictly worse off holding exactly the same thing they started with, and I'm now fairly convinced our rule set contains at least two of these. What I want from you is a procedure my team can actually run on a laptop before we ship a rule change. Act like a decision theorist who also has to ship code and sit through release meetings -- someone who knows the theory but also knows how dumb a procedure has to be before engineers stop using it. Before you write anything, brainstorm out loud about what the procedure has to be able to see: the moves we allow, what each move costs the user, what state it leaves them in, which moves are reversible and which aren't, and how the answer changes depending on whether we're dealing with one user whose preferences are stable but slightly incoherent versus a user whose preferences at month-end are not the preferences they had at the start of the month (this second one is what the reading seems to call the diachronic thing, and I genuinely do not know how to handle it). Then write the procedure: the steps in order, what I have to write down to take each step, what counts as passing, what counts as an automatic no, and -- this part I care about most -- the points where it has to stop and say 'this isnt a fact question anymore, a person has to decide what we're willing to sell,' because I suspect half our rules live there and I keep pretending they don't.
+
+  Practical constraints, since they'll shape the whole thing: we ship weekly, so it needs to run in under half an hour; the person running it will be a PM who has never read a philosophy paper and shouldn't need to; and our head of pricing signs off, so she'll want a one-line verdict plus the reason. Assume we can't survey users or elicit their real preferences, so the procedure has to work off the state graph and a small number of assumptions we can defend in a meeting -- be explicit about which assumptions it's making and what breaks if one turns out false. It also has to handle the case where the loop only closes for a user who doesn't notice the trap at step one, because I need to know whether that's still a pump or just a bad deal for the inattentive, and our lawyers will ask me exactly that. Please run it end to end on three of our actual rule bundles: (1) the 'downgrade mid-month to a cheaper plan but keep the full allowance, then pay a top-up fee when the allowance runs out early' pair, which pricing loves and which I'm pretty sure is a straight pump; (2) the rollover rule where credits bought in advance expire two weeks later, which only bites users who planned around a use we then made inconvenient -- I can't tell if that's a pump or a different disease entirely; and (3) one where I hope the answer is 'you're overthinking it, that one's fine.' At least one of those should come back with an answer I won't like, and I'd rather hear it now than in a support ticket. Finish by telling me what this procedure structurally cannot decide, and which of the philosophical disputes underneath it -- whether it even makes sense to treat January-me and March-me as the same chooser, whether being willing to pay to avoid a future option proves the option is bad, whether a stable-but-incoherent chooser is being exploited or just has weird tastes -- would actually flip the verdict on a real rule, because if none of them would, I'd like to stop worrying about them.
+reasoning: |-
+  We are going to design a procedure that checks for money pumps in a set of pricing rules. The idea is that a money pump is a cycle of transactions that leaves the user in the same state but with less money. We have to consider both synchronic (preferences are stable but incoherent) and diachronic (preferences change over time) cases.
+
+   The procedure will model the system as a state graph where:
+     - Nodes represent user states (e.g., current plan, unused allowance, credits, etc.)
+     - Edges represent allowed actions (plan switches, top-ups, credit conversions, etc.) and have an associated cost (which can be negative if it's a refund) and possibly other constraints (like time).
+
+   We assume that the state includes at least:
+     - The current plan (with its monthly allowance and cost)
+     - The current unused allowance (which may be partially used)
+     - Any credits (which might have expiration)
+     - The current date (or day in the billing cycle) because some rules are time-dependent.
+
+   However, because of the time constraint (half an hour run time) and the fact that the PM will run it, we need a simplified model.
+
+   Steps:
+
+   1. Define the state space. We have to abstract it to a manageable set of variables. We'll fix the following:
+      - `current_plan`: an identifier for the plan (with attributes: base cost, allowance)
+      - `unused_allowance`: non-negative number (could be in GB, credits, etc.)
+      - `credits`: non-negative number (might be separate from allowance, and might have expiration)
+      - `day`: integer from 1 to 30 (assuming 30-day month) representing the day in the billing cycle.
+
+      Also, we might have to model expiration of credits. We'll assume credits are stored in a dictionary by expiration date? But that might be too complex.
+
+      Instead, we can abstract: credits that expire in the current month and credits that roll over to next month? But our problem has a two-week expiration in one example.
+
+      Given the complexity, we'll restrict the state to:
+          state = (plan, unused_allowance, credits, day)
+      where `credits` is a single non-negative number that we assume expires at the end of the next month? But that doesn't capture the two-week expiration.
+
+      Alternatively, we can break down credits by expiration time? But that would blow up the state space.
+
+      We must balance between expressiveness and tractability.
+
+      Given the time, we will assume that the procedure is run for a fixed set of scenarios that are known to be risky. We are not trying to cover every possible state but rather known patterns.
+
+      However, the problem requires a general procedure. We must abstract the state to a few key variables and then define transitions.
+
+      We propose:
+
+          state = (plan, unused_allowance, credits, day)
+
+      And we assume that credits are homogeneous and expire at the end of the next month? That doesn't match the two-week rule.
+
+      We need to handle the two-week expiration. We can add:
+
+          state = (plan, unused_allowance, credits_expiring_in_14_days, credits_rollable, day)
+
+      But that gets complex. Alternatively, we can model time as relative and have a separate clock for each credit? Not feasible.
+
+      We decide to model the state as:
+
+          state = (plan, unused_allowance, credits, day)
+
+      and then we have a rule that says: at day X, credits older than 14 days expire. But note: we are modeling a cycle that might span multiple months? The problem says "roll credits into next month", so we have to consider multiple months.
+
+      However, the procedure must run in 30 minutes and the state space is already large. We must restrict to one billing cycle? But the problem explicitly mentions rollover to next month.
+
+      We are stuck. Therefore, we will design the procedure to be run on a set of pre-defined scenarios that are provided by the user (the PM) and that are suspected of being money pumps. The procedure will then simulate the scenario over a fixed number of months (e.g., 2 or 3) and check for cycles.
+
+      We ask the PM to provide:
+
+          - The initial state (plan, unused_allowance, credits, day)
+          - A sequence of actions (with parameters) that form a suspected loop.
+
+      But the problem is that we don't know the loop. We want to automatically detect it.
+
+      Alternatively, we can use model checking on a bounded state space? We can bound:
+
+          day: 1 to 30 (or 1 to 60 if two months)
+          unused_allowance: 0, 1, ..., up to a max (say the maximum plan allowance * 2)
+          credits: 0, 1, ... up to a max (say the maximum plan cost * 2)
+
+      And we fix the set of plans. Then the state space is:
+
+          |plans| * (max_allowance+1) * (max_credits+1) * 60
+
+      If we set max_allowance=100 (if allowance is in GB, then 100GB max) and max_credits=100 (if credits are in $, then $100 max) and 5 plans, then:
+
+          5 * 101 * 101 * 60 = 3,060,300 states.
+
+      This is manageable for a half-hour run? We can do a BFS or DFS to look for cycles that cost money? But note: the cost of a cycle is the net monetary cost over the cycle.
+
+      We define a cycle as a path that starts and ends at the same state (or a state that is equivalent in terms of the resources the user cares about) but with a positive net cost.
+
+      However, the user state might not be exactly the same, but we require that the user ends with the same plan, same unused_allowance, same credits, and same day? Then it is a cycle.
+
+      But note: the day must be the same? Otherwise, it's not a cycle because time has passed. However, the diachronic case might involve waiting until the next month. We can model multiple months and then a cycle that takes exactly 30 days? Then the day would be the same.
+
+      We decide: we require the state at the end of the cycle to be identical to the start state. That means same (plan, unused_allowance, credits, day). So if the cycle takes 30 days, then the day is the same? Only if we model the day modulo 30? But that ignores the billing cycle reset.
+
+      Alternatively, we can model the state without the day? But then we lose the time-dependent rules.
+
+      We decide to model the state as (plan, unused_allowance, credits) and the day as part of the transition? But then we have to consider that the state resets at the end of the month? How?
+
+      We are getting too complex. We must simplify.
+
+      Given the time, we will focus on cycles that occur within one billing cycle? But the rollover rule crosses months.
+
+      We break the problem:
+
+          We are going to look for two kinds of cycles:
+
+          Type 1 (Synchronic): The user can make a sequence of moves in a short period (same day) that forms a cycle and costs money.
+
+          Type 2 (Diachronic): The cycle spans time (multiple days or months) but returns to the same state (same plan, same unused_allowance, same credits) at the same day of the month? Or at the start of a new month? We require that the state is identical in terms of the user's resources and the point in the billing cycle.
+
+      We decide to model time as:
+
+          - The day in the billing cycle (1 to 30) and also the month count? We can ignore the month count if we assume that the billing cycle repeats? But the rollover rule: at the end of the month, unused allowance becomes credits? And credits expire after two weeks? So we need to model at least two months.
+
+      We will model two billing cycles (60 days). The state will be:
+
+          state = (plan, unused_allowance, credits, day)
+
+      where day from 1 to 60. At day 30, we have a reset: the unused allowance is converted to credits (according to some rule) and the allowance is reset to the plan's allowance? But note: the user might change plan at the end of the month? We have to model the end-of-month reset as an automatic transition.
+
+      We define the state space:
+
+          plan: in the set of plans P
+          unused_allowance: integer in [0, max_allowance]
+          credits: integer in [0, max_credits]
+          day: integer in [1, 60]
+
+      We also define a function for end-of-month reset (at day 30 and day 60? but we stop at day 60). At day 30, we do:
+
+          new_credits = credits + conversion_rate * unused_allowance   (if the rule says conversion)
+          Then reset unused_allowance to the plan's allowance? But note: the plan might have changed during the month? We reset to the plan that is active at the end of the month.
+
+      Actually, the reset happens at the end of the billing cycle. We assume the billing cycle ends on day 30. Then:
+
+          On day 30, after any user actions, we automatically:
+              credits = credits + f(unused_allowance)   [conversion function]
+              unused_allowance = <new month's allowance for the current plan>
+              then day becomes 31? But we want to model the next month as days 31 to 60? Then at day 31, we are at day 1 of the next month? Actually, we can just set day=1 for the next month? But then we have two months: month1 (days 1-30) and month2 (days 1-30, but we call them 31-60? or we reset the day to 1 and note that we are in the next month?).
+
+      We can model the state without tracking the absolute month? Because the credits from the first month might expire in the second month? We need to track the expiration of credits. We have two types of credits? Credits from the first month and credits from the second month? But then we have to track separately.
+
+      We give up on the general state space. We will rely on the PM to provide a set of scenarios that are suspected. We then simulate the scenario and check if it forms a cycle that costs money.
+
+      Revised plan for the procedure:
+
+      Step 1: The PM defines the initial state and a sequence of actions that they suspect might be part of a money pump. The procedure will simulate the actions and check if the state returns to the initial state (or a state that is equivalent in terms of the user's resources) and if the net cost is positive.
+
+      But the problem is that we want to automatically find such sequences.
+
+      Alternatively, we can run a bounded model check for cycles of length up to K (say 6 actions) and over a bounded time (2 months). We do:
+
+          states: as above, with day in 1..60, and state variables as above.
+
+          We precompute the graph: for each state, for each allowed action, what is the next state and the cost.
+
+          We also include the automatic end-of-month reset at day 30 and day 60.
+
+          Then we run a BFS from each state to find a cycle (a path that returns to the same state) and check the total cost of the cycle. If the total cost is positive, then we have a money pump.
+
+      However, the state space is 5 (plans) * 101 (allowance) * 101 (credits) * 60 (days) = 3,060,300 states. We can run BFS on this? The number of edges is about the same times the number of actions (say 10 actions per state: change plan, buy top-up, ...). That's 30 million edges. This is feasible in half an hour? Probably in memory.
+
+      But note: the end-of-month reset is an automatic transition that happens at day 30 and 60. We can model that as an action that is forced? Actually, we can have a state for day 30 and then after any user action on day 30, we automatically trigger the reset? Or we can model the reset as happening at the end of day 30 and the state transitions to day 1 of the next month? Similarly for day 60.
+
+      We decide:
+
+          - For any state with day=30, after the user takes any action (or chooses to take no action) we automatically apply the reset and move to day=31 (which represents day 1 of the next month). But then we have to account for the reset in the state.
+
+          Actually, we can model the reset as an automatic edge at the end of the day. We can do:
+
+              For every state s at day=30, we create an automatic transition (with cost 0) to the reset state: 
+                  new_state = (current_plan, 
+                              new_allowance = current_plan.allowance, 
+                              new_credits = current_credits + conversion_rate * current_unused_allowance,
+                              day = 31)
+
+          Similarly, at day=60, we don't model beyond? We stop at day 60? Or we reset and go to day=31 again? We'll only model two months? Then at day=60, we reset to day=31? But that would be the third month? We don't want to model beyond two months? We can set day=60 as the last day and then we don't reset? Or we reset at day=60 and then stop? We want to capture cycles that might take two months? So we reset at day 30 and then model the next 30 days? Then at day 60 we reset again and then we are at day 90? We don't model beyond 60 days? We'll only look for cycles that start and end within 60 days.
+
+      We set:
+
+          - Day 1 to 30: first month
+          - Day 31 to 60: second month (day 31 is the first day of the second month, day 60 is the last)
+
+          At the end of the first month (day 30), after any user action, we automatically reset to day=31 and update the state as described.
+
+          At the end of the second month (day 60), we also reset to day=31? That would be the third month? We don't want to model beyond two months? We can stop at day 60? Or we reset and then stop? We'll reset and then mark that state as being in the third month? We don't model beyond 60 days? We'll set a bound: we only consider states with day<=60.
+
+          So for a state at day=60, we do not allow any user action? Or we allow and then after the action we reset? But then we get to day=61? We don't model beyond 60. We'll say: at day=60, the user can take actions, and then we do the reset and set day=61? But then we don't have states for day>60. So we don't generate transitions for states with day>60.
+
+      We'll do:
+
+          - For a state at day=30: after an action, we do the reset and set day=31. The reset function is:
+
+              new_credits = current_credits + (conversion_rate * unused_allowance)
+              new_unused_allowance = current_plan.allowance   (for the new month)
+              day = 31
+
+          - For a state at day=60: after an action, we do the reset and set day=61, but then we do not generate any further actions from that state? We only consider states with day<=60? So we don't expand states beyond day 60.
+
+      But then we might miss a cycle that starts at day 31 and ends at day 61? We have to model at least until the reset of the second month? We can let the reset at day 60 happen and then set day=61 and then stop? We won't see a cycle that goes beyond 60 days? We accept that limitation.
+
+      Step 2: We build a graph with nodes as states and edges as:
+
+          - User actions: with a cost (which can be positive or negative) and the next state.
+          - Automatic reset transitions at the end of day 30 and day 60? Actually, we model the reset as happening immediately after the last action on day 30 and day 60? We can do:
+
+              For a state s at day=30, for each action a applicable to s, we compute:
+                  s_next = apply(a, s)
+                  then we apply the reset to s_next to get s_reset, and the edge is from s to s_reset with cost = cost(a)
+
+              Similarly, for day=60: we do the reset and then we get a state at day=61, but then we don't allow any further actions? We don't generate outgoing edges from states with day=61.
+
+      Step 3: We run a cycle detection algorithm. We do:
+
+          For each state s in the graph, we run BFS (or use a cycle detection algorithm) to find cycles starting and ending at s. We record the total cost of the cycle.
+
+          But note: we might have cycles that go through multiple states? We are interested in any cycle that has positive total cost.
+
+      However, the graph is directed and we want simple cycles? We can use Johnson's algorithm for enumerating cycles? But that is O((n+e)*c) where c is the number of cycles, which can be exponential.
+
+      We cannot enumerate all cycles. Instead, we can use the Bellman-Ford algorithm to detect negative cycles? But note: we are looking for positive cost cycles (which are negative if we reverse the cost sign). We can:
+
+          Reverse the sign of the edge costs and then look for negative cycles? Then a negative cycle in the reversed graph is a positive cost cycle in the original.
+
+      Steps:
+
+          Create a graph G with:
+              Nodes: states (as described)
+              Edges: for each transition, an edge from the start state to the end state with weight = - (cost of the action)   [because we want to find a cycle with positive cost, so we reverse the sign and look for negative cycles]
+
+          Then run a negative cycle detection algorithm (like Bellman-Ford on each connected component? Or Floyd-Warshall?).
+
+      However, the graph has 3 million nodes and 30 million edges? Floyd-Warshall is O(n^3) which is (3e6)^3 -> 2.7e19 operations? Not feasible.
+
+      Bellman-Ford runs in O(n*e) which is 3e6 * 30e6 = 9e12, which is too slow.
+
+      We need a better method. Alternatively, we can use BFS to a limited depth? We are looking for short cycles (say up to 10 edges). We can do:
+
+          For each state s, we run BFS up to depth D (say 10) to see if we can return to s with a total cost (in the original) positive? But note: the cost we are tracking in the original graph is the sum of the action costs. In the reversed sign graph, we want a negative cycle? We can do:
+
+          Actually, we do:
+
+              We want to find a cycle of length L (<=10) such that the total cost (original) > 0.
+
+              We can do: for each state s, we run BFS that records the state and the current cost and the path length. We stop at depth 10. If we come back to s and the total cost>0, we found one.
+
+          But the state space is 3 million states. For each state, we do BFS that goes up to depth 10. The branching factor is about 10? Then the number of nodes we visit for one state is 10^10 = 10 billion? That is too much.
+
+      We must be smarter. We can use dynamic programming: dp[s][d] = the minimum cost (in the original graph) to reach state s in d steps? But we are looking for cycles? We want to return to the start.
+
+      Alternatively, we can use the following:
+
+          We do BFS from each state but only for a small depth (say 10) and we hope that money pumps are short? The problem says "at least two of these", so they might be short.
+
+      Given the time, we decide to bound the cycle length to 6 steps? Then from each state, we do BFS up to 6 steps. The number of paths from a state is about 10^6 = 1 million? Then for 3 million states: 3e12 paths? That is too many.
+
+      We need a different approach. We can use a multi-dimensional Dijkstra to find cycles? Or we can use the following heuristic:
+
+          Step 1: We sample a set of starting states that are likely to be vulnerable? The PM provides a set of states to check? But we want automatic.
+
+          Step 2: We run a BFS from a fixed set of states (e.g., all states with day=1, unused_allowance=0, credits=0) and then look for cycles? But that might miss.
+
+      Given the complexity, we decide to require the PM to provide a set of scenarios (initial states and sequences) and we only check those.
+
+      We design the procedure as:
+
+          Input from PM:
+
+              - A set of initial states (each state: (plan_id, unused_allowance, credits, day))
+              - A set of action sequences (each sequence is a list of actions, each action has a type and parameters)
+
+          But we want to automatically find the pump? We are shifting.
+
+      We decide to build a small graph around a few states. We ask the PM to specify the state variables they care about and the range. For example, they might say:
+
+          plans: [plan1, plan2]
+          unused_allowance: [0, 10, 20]
+          credits: [0, 5, 10]
+          day: [1, 15, 30]
+
+      Then the state space is 2 * 3 * 3 * 3 = 54 states. We also include the reset transitions. Then we can build the graph and run Floyd-Warshall to find negative cycles (after reversing the cost sign).
+
+      Steps for the procedure:
+
+          1. The PM defines:
+              - The set of plans to consider (at least two)
+              - The range of unused_allowance (min, max, step) or a list of values
+              - The range of credits
+              - The days to consider: typically [1, 15, 30] but also 31,45,60? or [1, 15, 30, 31, 45, 60]
+              - The conversion rate for unused_allowance to credits at reset.
+              - The rules for each action: how they change the state and their cost.
+
+          2. Build the graph:
+              - Nodes: all combinations of (plan, allowance, credits, day) in the provided ranges.
+              - For each node, for each allowed action, compute the next state by applying the action. Then, if the next state's day is 30 or 60, apply the reset immediately and then update the state to the reset state and set the day to 31 or 61 respectively. If the resulting state is within the provided bounds, add an edge. If it's outside, we don't add (or clamp? but better not).
+
+          3. Add automatic reset transitions for states at day=30 and day=60 that haven't been captured by an action? We already do it after every action on day30/60.
+
+          4. For each edge, record the cost.
+
+          5. Create a new graph with the same nodes and edges, but with edge weight = -cost (because we want to find positive cost cycles as negative cycles in this graph).
+
+          6. Run a negative cycle detection algorithm. Since the graph is small (54 nodes), we can use Floyd-Warshall or Bellman-Ford for each node.
+
+          7. If a negative cycle (in the transformed graph) is found, then that cycle in the original graph has positive cost -> money pump.
+
+      However, what if the cycle goes through a state that is not in the sampled set? We might miss it. But the PM must choose a representative set.
+
+      We also need to define the actions:
+
+          The PM must provide a list of actions and how they work. For example:
+
+              Action: "change_plan", parameters: new_plan
+                  Cost: pro-rated cost difference? But wait, the cost of changing plan might be zero if done mid-month? or a fee?
+                  Effect on state: 
+                      current_plan = new_plan
+                      unused_allowance = ...? (rule: keep the current unused_allowance? or reset to the new plan's allowance? We need the rule)
+
+          The PM must provide for each action:
+              - precondition: when it can be applied (e.g., only on day<=15? only if credits>=0)
+              - effect: how it changes the state
+              - cost: the monetary cost to the user (positive if the user pays, negative if refund)
+
+      This is complex. We must provide a way to define these actions.
+
+      Given the time, we will assume the actions are defined by functions in a configuration file? Or we provide a DSL? We decide to use a simple table format that the PM fills in.
+
+      But note: the procedure must run in 30 minutes and be operated by a PM who hasn't read philosophy. We need a spreadsheet-like input.
+
+      We decide to use a JSON input file that defines:
+
+          plans: [
+              { id: "plan1", monthly_cost: 10, allowance: 100 },
+              ...
+          ]
+
+          state_space: {
+              plans: ["plan1", "plan2"],
+              unused_allowance: [0, 10, 20],
+              credits: [0, 5, 10],
+              days: [1, 15, 30, 31, 45, 60]
+          }
+
+          reset_rules: {
+              at_end_of_month: {
+                  // day 30 and day 60
+                  credits_conversion_rate: 0.5,   // converts unused_allowance to credits: credits += unused_allowance * conversion_rate
+                  // and then reset unused_allowance to the current plan's allowance
+              }
+          }
+
+          actions: [
+              {
+                  name: "change_plan",
+                  parameters: [
+                      { name: "new_plan", type: "plan_id" }
+                  ],
+                  precondition: "day <= 30",   // or a function? We need to express complex conditions. We'll use a string that can be eval? But dangerous.
+                  effect: {
+                      plan: "new_plan",
+                      // what happens to unused_allowance? We need to express it.
+                      // We assume: keep the current unused_allowance? Or set to the new plan's allowance? We need the rule.
+                      // We'll have a set of assignment statements?
+                      unused_allowance: "current_unused_allowance"   // remains the same
+                  },
+                  cost: "if current_plan.id != new_plan, then (new_plan.monthly_cost * (30-day+1)/30 - current_plan.monthly_cost * (30-day+1)/30) else 0"
+                  // This is complex. We need a small expression language.
+              },
+              ... 
+          ]
+
+      This is becoming a programming language. We decide to simplify:
+
+          We will provide a set of pre-defined action types that cover common cases, and the PM fills in parameters for those types.
+
+          Pre-defined action types:
+
+          1. change_plan(new_plan_id)
+              precondition: none (or always allowed)
+              effect: 
+                  plan = new_plan_id
+                  unused_allowance = min(current_unused_allowance, new_plan.allowance)   // or max? we need the rule -> the problem says in the first example: downgrade but keep the full allowance? so maybe keep current_unused_allowance?
+              cost: 
+                  // pro-rated difference for the remaining days of the month
+                  remaining_days = 30 - current_day + 1
+                  cost = (new_plan.monthly_cost - current_plan.monthly_cost) * (remaining_days / 30)
+
+          2. buy_top_up(amount)
+              precondition: always
+              effect: 
+                  unused_allowance += amount   // or does it go into credits? we need to know -> the problem says "buy top-ups"
+                  // but the first example: "pay a top-up fee when the allowance runs out early", so probably it adds to allowance.
+              cost: top_up_fee(amount)   // a function defined by the PM: e.g., cost = amount * 0.1
+
+          3. convert_allowance_to_credits(amount)
+              precondition: amount <= current_unused_allowance
+              effect:
+                  unused_allowance -= amount
+                  credits += amount * conversion_rate
+              cost: 0
+
+          4. use_credits(amount)   // to get more allowance?
+              precondition: amount <= credits
+              effect:
+                  credits -= amount
+                  unused_allowance += amount / conversion_rate   // if conversion_rate is 0.5, then 1 credit = 2 allowance units?
+              cost: 0
+
+          But note: the diachronic example might involve waiting until the next month. We have an automatic reset.
+
+          We also need an action for doing nothing? And let time pass? We have the reset only at day30/60. We don't model intermediate days? The state space has specific days.
+
+          The PM can defined the action "wait_until_next_reset" that can only be taken on day<30 and sets day=30 and then triggers reset? But we have the reset built-in.
+
+          Alternatively, we model only the provided days. The only way to advance time is to take an action that advances to the next provided day? But then we need an action for advancing time.
+
+          We provide:
+
+          5. advance_time(to_day)
+              precondition: current_day < to_day <= 30 (or in the current month) or in the next month? 
+              effect: 
+                  day = to_day
+                  // and what happens to unused_allowance? It might be consumed over time? We are not modeling consumption, only explicit actions.
+
+          But wait, the problem is that allowance is used over time by the user's usage. We are not modeling that because it's not controlled by the pricing rules? Or is it? The money pump might involve the user intentionally using the allowance to trigger rules.
+
+          This is getting too complex. We decide to not model consumption of allowance by usage. We only model explicit actions that change the state. And we assume that between actions, the state doesn change except at reset points.
+
+          Therefore, we will not have an advance_time action. The state can jump between the provided days only via actions that might be taken on any day? But the actions are only defined for the days in the state space.
+
+          The PM will provide the set of days they want to consider.
+
+      Given the complexity, we will not build the general tool but rather apply it to the three examples using ad-hoc simulation.
+
+      But the user asked for a procedure. We must deliver something.
+
+      Final procedure design:
+
+          We will provide a script that takes as input a JSON file describing the state space, the reset rules, and the actions. We then build the graph and look for negative cycles in the transformed graph (with edge weight = -cost).
+
+          Steps:
+
+          1. The PM fills in a JSON configuration file with:
+              - state_space: the discrete states to consider (list of plans, list of unused_allowance values, list of credits values, list of days)
+              - reset_rules: the conversion rate for unused_allowance to credits at the end of the month (day30 and day60)
+              - actions: a list of actions, each has:
+                  name: string
+                  parameters: list of parameters (each has a name and a type and a set of possible values)
+                  precondition: a string that can be evaluated in the context of the state and the parameters? We might not have time to implement a parser.
+                  effect: a set of assignment expressions (strings that can be evaluated)
+                  cost: an expression (string)
+
+              We will use Python and `eval` for the expressions, but this is dangerous. We can use a safe eval? Or we ask the user to write small functions in Python? Not for the PM.
+
+          2. We generate all states = Cartesian product of (plans, unused_allowance, credits, days)
+
+          3. For each state and each action and each possible parameter combination for the action, check the precondition. If true, compute the next state and cost.
+
+          4. If the next state's day is 30 or 60, then apply the reset rule: 
+                  credits_reset = next_state.credits + reset_rules.conversion_rate * next_state.unused_allowance
+                  unused_allowance_reset = next_state.plan.allowance   # but note: the plan might have changed? We use the plan in the next_state.
+                  day_reset = next_state.day + 1   # because after day30, we go to day31; after day60, we go to day61.
+              Then we have a new state: (next_state.plan, unused_allowance_reset, credits_reset, day_reset)
+
+          5. If the new state after reset is in the state space, then add an edge from the original state to the new state after reset with the cost of the action.
+
+              If the new state after reset is not in the state space, then we don't add an edge? Or we use the closest state? We don't add.
+
+          6. Build a directed graph with nodes as states and edges as above. Each edge has a weight = - (cost of the action)
+
+          7. Run a negative cycle detection. We can use the following:
+
+              - Since the graph is small (because the state space is small), we can use Floyd-Warshall to find the shortest path between all pairs and then check for negative diagonal entries? Or run Bellman-Ford from each node.
+
+          8. If a negative cycle is found, then we have a money pump.
+
+          9. If no negative cycle is found, then we haven't found one in the provided state space.
+
+      But note: the conversion rate might be a floating point, but the state space is discrete. We assume the state space provided by the PM has only states that are reachable with integer unused_allowance and credits? Or floating point? We will use floating point in the state representation? But then the state space might be continuous. We require discrete values.
+
+      We will assume all state variables are integers or floats from a discrete set.
+
+      Given the time, we implement Bellman-Ford for each node? But the state space might be 1000 states? Then Bellman-Ford from each node: 1000 * 1000 = 1e6 iterations, which is fine.
+
+      However, we also have to consider that the graph might have up to 1000 nodes and 10000 edges? Then Bellman-Ford from each node: 1000 * (1000 * 10000) = 10^9 iterations? Not feasible.
+
+      We do:
+
+          Use one Bellman-Ford for the entire graph to detect if there is any negative cycle? We can do:
+
+              dist[source] = 0 for all sources? No, Bellman-Ford for the entire graph by adding a super source.
+
+          We add a super source node that has edges to every node with weight 0. Then run Bellman-Ford from the super source for |V| iterations. Then in the |V|-th iteration, if we can still relax any edge, then there is a negative cycle.
+
+      Steps for Bellman-Ford for the entire graph:
+
+          Let V = set of states.
+          Let E = edges.
+
+          Add a node S (super source) and edges from S to every node in V with weight 0.
+
+          dist[v] = infinity for all v in V, dist[S]=0.
+
+          For i in range(|V|):
+              for each edge (u, v) with weight w:
+                  if dist[u] + w < dist[v]:
+                      dist[v] = dist[u] + w
+
+          Then do one more iteration:
+              for each edge (u, v) with weight w:
+                  if dist[u] + w < dist[v]:
+                      then there is a negative cycle reachable from S.
+
+          But note: any negative cycle in the graph will be reachable from S? Yes.
+
+      This works. We do this.
+
+      But note: our edge weights are -cost. A negative cycle in this graph means a positive cost cycle in the original -> money pump.
+
+      However, we might have many negative cycles? We only need to find one.
+
+      Implementation:
+
+          We'll have about 1000 nodes and 10000 edges? Then Bellman-Ford runs in |V| * |E| = 1000 * 10000 = 10e6, which is fast.
+
+      Therefore, the procedure is:
+
+          1. PM provides a JSON configuration.
+          2. Build the graph as described.
+          3. Run Bellman-Ford (with super source) to detect a negative cycle.
+          4. If found, then there is a money pump. Otherwise, not found in the provided state space.
+
+      What if the money pump requires a state not in the provided state space? Then we miss it. The PM must choose a sufficiently rich state space.
+
+      Now, we run it on the three examples.
+
+      Example 1: 'downgrade mid-month to a cheaper plan but keep the full allowance, then pay a top-up fee when the allowance runs out early'
+
+          We assume:
+
+              Plans:
+                  planA: cost=20, allowance=20
+                  planB: cost=10, allowance=10
+
+              State space:
+                  plans: [A, B]
+                  unused_allowance: [0, 10, 20]   // user might have 20 at the start
+                  credits: [0]   // no credits in this example
+                  days: [1, 15, 30]
+
+              Reset rule: 
+                  conversion_rate = 0   // or 0.5? but the example doesn't say, so assume 0 for simplicity.
+
+              Actions:
+
+                  change_plan(new_plan) at any day.
+                      precondition: none
+                      effect: 
+                           unused_allowance = current_unused_allowance   // keep the same
+                      cost: 
+                           remaining_days = 30 - current_day + 1
+                           cost = (new_plan.monthly_cost - current_plan.monthly_cost) * (remaining_days/30)
+
+                  buy_top_up(amount) at any day.
+                      precondition: amount>0
+                      effect: unused_allowance += amount
+                      cost: amount * fee_rate   // fee_rate=1 (for simplicity, assume $1 per unit)
+
+                  // We also need an action to simulate using the allowance? But the pump requires that the user uses more than the downgraded plan's allowance. We can simulate that by having an action that reduces allowance? But that's not a pricing rule action. Alternatively, we can start the user in a state with low allowance? Or we can include an action that intentionally uses allowance to trigger the top-up.
+
+                  We add an action "use_allowance(amount)" that reduces the unused_allowance by amount, cost=0.
+
+          The suspected pump:
+
+              Start: day=1, plan=A, unused_allowance=20, credits=0.
+
+              Step 1: change to planB on day1.
+                  cost = (10-20)*(30/30) = -10 (user gets $10 refund)
+                  state: plan=B, unused_allowance=20, credits=0, day=1.
+
+              Step 2: use 15 units of allowance: 
+                  use_allowance(15) -> unused_allowance=5.
+                  state: plan=B, unused_allowance=5, credits=0, day=1.
+
+              Step 3: now the user needs more allowance? They have 5 left but need 10 more? They buy a top-up of 10 units.
+                  cost = 10 * 1 = $10.
+                  state: plan=B, unused_allowance=15, credits=0, day=1.
+
+              Step 4: then they change back to planA on day1.
+                  cost = (20-10)*(30/30) = $10.
+                  state: plan=A, unused_allowance=15, credits=0, day=1.
+
+              Now they are back to planA but with unused_allowance=15 (which is less than the 20 they started with) and they have spent: -10+10+10 = $10.
+
+              But they are not in the same state? They started with 20 and now have 15.
+
+              Alternatively, they might use the allowance and then change back? Let's try:
+
+                  Start: (A,20,0,1) -> change to B: cost=-10, state (B,20,0,1)
+                  Then use 20: state (B,0,0,1)
+                  Then buy top-up of 20: cost=20, state (B,20,0,1)
+                  Then change to A: cost=10, state (A,20,0,1)
+
+                  Net cost: -10+20+10 = 20, and they are back to start? But then they have the same state? So this is a cycle: (A,20,0,1) -> ... -> (A,20,0,1) with cost=20.
+
+              But wait, in the cycle they used 20 and then bought 20, so they effectively consumed 20 units of allowance during the cycle? The cycle didn't return to the exact same state in terms of consumption? In the start state, they had 20 unused, but during the cycle they used 20. So they are back to 20 unused, but they have paid an extra $20 for the top-up that they then didn't use? This doesn't make sense.
+
+              Let me clarify: the cycle should leave the user with the same state and having paid money for nothing. In this case, the user did use the 20 allowance during the cycle, but then bought 20 more and changed back. So the final state is the same as the initial state. However, the user has consumed 20 units of allowance during the cycle? But if the user values the consumption, then it's not for nothing. This is not a money pump.
+
+              The money pump requires that the user ends with the same goods and has lost money. Here, the user consumed 20 units and paid an extra $20 for that consumption? But they could have consumed it in planA without the downgrade? Then why did they downgrade? The pump is not closed.
+
+          Let me try a different path:
+
+              Start: (A,20,0,1)
+              Change to B: cost=-10, state (B,20,0,1)
+              Then they use 10 units: state (B,10,0,1)   [they only used 10, which is within B's allowance?]
+              Then they change back to A: cost=10, state (A,10,0,1)
+
+              Now they are in state (A,10,0,1) and have spent net: -10+10 =0. But they have consumed 10 units and have 10 left. This is not a cycle.
+
+          We see that the example might not be a pure money pump. However, the user is worse off if they downgrade and then need to buy top-up and then upgrade again.
+
+          But it's not a cycle that returns to the same state.
+
+          Let me try with diachronic: over two months.
+
+              Month1, day1: (A,20,0,1)
+              Change to B: cost=-10, state (B,20,0,1)
+              They use 15 units by day15: state (B,5,0,15)
+              Then they buy top-up of 10: cost=10, state (B,15,0,15)
+              Then they change back to A on day15: cost = (20-10)*( (30-15+1)/30 ) = 10 * (16/30) ≈ $5.33
+              State: (A,15,0,15)
+
+              Now at the end of the month, they have 15 unused allowance. Reset: credits = 0 + 0 * 15 = 0, and unused_allowance reset to A's allowance=20, day=31.
+
+              State: (A,20,0,31)
+
+              This is the same as the initial state? But wait, the initial state was day1, this is day31. It's the next month. But the state (A,20,0) is the same as the initial state in terms of resources, but at the start of the next month.
+
+              Net cost: -10 + 10 + 5.33 = 5.33
+
+              So they are back to the same state (at the start of the next month) and have paid $5.33 for nothing.
+
+              This is a money pump that spans two months.
+
+          How do we represent this in our state space?
+
+              We include day=1, day=15, day=30, day=31.
+
+              Start state: (A,20,0,1)
+
+              Action1: change_plan(B) at day1 -> state (B,20,0,1) with cost=-10.
+              Action2: use_allowance(15) at day1? But we don't have an action for using allowance. We need to simulate the consumption that leads to state (B,5,0,15). We can add an action "wait_until(15)" that doesn't change anything else? But then how do we reduce the allowance? We must have an action that uses allowance.
+
+              We add action "consume(amount)" that reduces unused_allowance by amount, cost=0, and can be done on any day.
+
+              Then:
+
+                  Action1: change_plan(B) at state (A,20,0,1) -> (B,20,0,1), cost=-10.
+                  Action2: wait until day15? We don't have wait. We have to jump. We allow actions only on the days in the state space? We can only take actions on day1,15,30,31.
+
+                  On day1, after action1, we are at (B,20,0,1). Then we can only take actions on day1 or wait until day15? We need an action that advances time to day15 and simulates consumption.
+
+              We define an action "advance_to_next_day_in_state_space" that advances to the next available day in the state space? But then what happens to allowance? It might be consumed at a constant rate? We don't know.
+
+              Alternatively, we let the PM define the state at day15 as (B,5,0,15) directly? But how?
+
+              Given the complexity, we will assume that the PM can define the effect of time passage on allowance. But the procedure doesn't require it. We can skip intermediate states.
+
+              Alternatively, we start from state (B,20,0,1) and then take an action that is "consume(15)" on day1, which leaves us at (B,5,0,1) and then we advance to day15? But how do we advance? We don't have an action.
+
+              We decide to not model the consumption by time. Instead, we let the user take an action on day1 that sets the state to (B,5,0,15) with cost=0? That's cheating.
+
+          This example shows that our state space and action set must include the ability to simulate the user's consumption that triggers the need for top-up.
+
+          However, the money pump arises because the user might have fluctuating usage or might intentionally orchestrate the pump. We can assume that the user can choose to consume arbitrarily.
+
+          Therefore, we allow an action "set_allowance_to(x)" that sets unused_allowance to x, cost=0, at any day. This allows the user to simulate any consumption pattern.
+
+          Then the pump:
+
+              State0: (A,20,0,1)
+              Action1: change_plan(B) -> (B,20,0,1), cost=-10.
+              Action2: set_allowance_to(5) -> (B,5,0,1), cost=0.   [simulates using 15]
+              Action3: buy_top_up(10) -> (B,15,0,1), cost=10.
+              Action4: change_plan(A) -> (A,15,0,1), cost=10 * (30/30) = 10.
+              Then reset? No, because we are at day1. Then we wait until day30? We need to advance time.
+
+              We add action "advance_to(30)" that sets day=30, cost=0.
+
+              State: (A,15,0,30)
+              Then reset: happens automatically: 
+                  credits = 0 + 0*15 = 0
+                  unused_allowance = A.allowance=20
+                  day=31
+              State: (A,20,0,31)
+
+              This is equivalent to the initial state (A,20,0,1) in terms of resources, but at a different time. But if we consider the start of the next month equivalent to the start of the current month, then it's a cycle.
+
+              Net cost: -10+0+10+10+0 = 10.
+
+              So we have a cycle from (A,20,0,1) to (A,20,0,31) with cost=10.
+
+              But note: the state (A,20,0,31) is not the same as (A,20,0,1). However, the user's resources are the same. We can consider states with the same (plan, unused_allowance, credits) as equivalent regardless of the day? But the day is different: one is the start of month1, the other is the start of month2. In a repeated monthly context, it might be considered equivalent.
+
+              We can extend the state equivalence to ignore the absolute month? We can reset the month counter by considering modulo 2 months? But our state space only has two months.
+
+              In our state space, we have day=1 and day=31. We consider them as distinct states. Therefore, the cycle goes from (A,20,0,1) to (A,20,0,31) and then we need to get back to (A,20,0,1) to close the cycle? We can advance from day=31 to day=60 (which is the end of the second month) and reset to day=61? But we don't model day=61.
+
+              Alternatively, we can define a state as equivalent if (plan, unused_allowance, credits) are the same and the day in the billing cycle is the same? Here, day=1 and day=31 are both the first day of a month, so we consider them equivalent.
+
+              We can group states by (plan, unused_allowance, credits, day_in_cycle) where day_in_cycle = ((day-1) mod 30)+1. Then day=1 and day=31 are the same.
+
+              So in the example, (A,20,0,1) and (A,20,0,31) are the same state in our grouped state space.
+
+              Therefore, we have a cycle.
+
+          In our procedure, we will allow the state space to be defined with day_in_cycle in 1..30, and then day=31 is mapped to day_in_cycle=1, day=32->2, etc. We do:
+
+              day_in_cycle = ((day-1) mod 30) + 1
+
+          Then states are (plan, unused_allowance, credits, day_in_cycle)
+
+          In the reset: 
+              at day=30: reset and then next day=31 -> day_in_cycle=1
+              at day=60: reset and then next day=61 -> day_in_cycle=1
+
+          Then the state after reset at day=30 is (plan, new_allowance, new_credits, 1)
+
+          So in the example, we have:
+
+              start: (A,20,0,1)
+              after actions and reset: (A,20,0,1)   // because day=31 is mapped to 1.
+
+          Therefore, the cycle is closed.
+
+          Example 2: the rollover rule where credits bought in advance expire two weeks later.
+
+          Example 3: one that is fine.
+
+      Given the time, we stop the design here and output the procedure.
+
+      Procedure:
+
+          Steps:
+
+          1. PM provides a JSON file with:
+              - state_space: 
+                  plans: [list of plan objects with id, monthly_cost, allowance]
+                  unused_allowance: [list of numbers]
+                  credits: [list of numbers]
+                  // days: not needed if we use day_in_cycle modulo 30. We only need the day_in_cycle in 1..30.
+                  // But we model two months? We allow day from 1 to 60, but then convert to day_in_cycle = ((day-1) mod 30)+1.
+                  // So the state representation for the node will be (plan_id, unused_allowance, credits, day_in_cycle)
+
+              - reset_rules:
+                  conversion_rate: float   // for converting unused_allowance to credits at the end of the month
+
+              - actions: a list of action definitions. Each action has:
+                  name: string
+                  parameters: a list, each with name and a set of possible values
+                  precondition: a string that is a Python expression (using state and parameters) that returns a boolean. The state is available as a dict: 
+                      state = {'plan': current_plan_id, 'unused_allowance': current_ua, 'credits': current_credits, 'day_in_cycle': current_day}
+                  effect: a string that is a Python expression that returns a new state (a dict with keys 'plan', 'unused_allowance', 'credits', 'day_in_cycle') 
+                  cost: a string that is a Python expression that returns a number (the cost of the action)
+
+              - Additionally, the reset happens automatically at the end of the month, which is when the day_in_cycle is 30. In the effect of any action that results in day_in_cycle=30, we automatically apply the reset and set the state to:
+                      new_credits = credits + conversion_rate * unused_allowance
+                      new_unused_allowance = plan.allowance   # of the current plan at the time of reset
+                      day_in_cycle = 1   // because reset advances to the next month
+                  and then we use this new state.
+
+          2. Generate all states: 
+                  states = []
+                  for plan in state_space['plans']:
+                      for ua in state_space['unused_allowance']:
+                          for cr in state_space['credits']:
+                              for day in range(1,31):   // day_in_cycle from 1 to 30
+                                  states.append( {'plan': plan, 'unused_allowance': ua, 'credits': cr, 'day_in_cycle': day} )
+              Note: we do not include the absolute day, only day_in_cycle.
+
+          3. For each state and each action and each parameter combination:
+
+              a. Evaluate the precondition in the context of the state and the parameters. If false, skip.
+              b. Evaluate the effect in the context of the state and the parameters to get a new state (which might have day_in_cycle in 1..30). 
+              c. If the new state's day_in_cycle is 30, then we also apply the reset immediately:
+
+                      new_state_after_reset = {
+                          'plan': new_state['plan'], 
+                          'unused_allowance': <allowance of the plan in new_state['plan']>,
+                          'credits': new_state['credits'] + conversion_rate * new_state['unused_allowance'],
+                          'day_in_cycle': 1
+                      }
+
+                  and then we use new_state_after_reset as the next state.
+
+                  Otherwise, the next state is the new_state.
+
+              d. If the next state is within the state space (i.e., its ua and credits are in the provided lists), then add an edge.
+
+              e. Evaluate the cost expression.
+
+          4. Build the graph: nodes are the states, edges are from the old state to the next state with weight = -cost.
+
+          5. Add a super source node with edges to every state with weight=0.
+
+          6. Run Bellman-F ford from the super source to detect a negative cycle.
+
+          7. If found, then there is a money pump.
+
+      Now, run on the three examples.
+
+      Example 1: downgrade and top-up (diachronic version)
+
+          state_space:
+              plans: [A, B]
+              unused_allowance: [0,5,10,15,20]
+              credits: [0]
+              // day_in_cycle: 1 to 30
+
+          actions:
+              - name: "change_plan"
+                parameters: [{"name": "new_plan", "values": ["A","B"]}]
+                precondition: "True"
+                effect: 
+                    // we return a new state: plan=new_plan, unused_allowance=current_unused_allowance, credits=current_credits, day_in_cycle=current_day
+                    // But wait, the effect might change the day? We assume actions are instantaneous and don't advance time? 
+                    // We will have a separate action to advance time.
+                    "{ 'plan': new_plan, 'unused_allowance': unused_allowance, 'credits': credits, 'day_in_cycle': day_in_cycle }"
+                cost: 
+                    current_plan = state['plan']
+                    new_plan = ... from parameters
+                    remaining_days = 30 - state['day_in_cycle'] + 1
+                    cost = (new_plan.monthly_cost - current_plan.monthly_cost) * (remaining_days / 30)
+                    But we don't have the monthly_cost in the state. We have to provide it in the plan object.
+
+                    We assume the plans are provided as objects, but in the state we only have the id. We will have a plan_map = {'A': {'monthly_cost':20, 'allowance':20}, 'B': {...}}
+
+                    So we have to use a global plan_map.
+
+                    Therefore, we will allow the expressions to use a global `plans` dict.
+
+                cost expression: 
+                    plans = {'A': {'monthly_cost':20, 'allowance':20}, 'B': {'monthly_cost':10, 'allowance':10}}
+                    cost = (plans[new_plan]['monthly_cost'] - plans[state['plan']]['monthly_cost']) * (30 - state['day_in_cycle'] + 1) / 30
+
+              - name: "buy_top_up"
+                parameters: [{"name": "amount", "values": [5,10]}]
+                precondition: "True"
+                effect: 
+                    new_ua = state['unused_allowance'] + amount
+                    "{ 'plan': state['plan'], 'unused_allowance': new_ua, 'credits': state['credits'], 'day_in_cycle': state['day_in_cycle'] }"
+                cost: "amount * 1"   // $1 per unit
+
+              - name: "set_allowance"   // to simulate consumption
+                parameters: [{"name": "new_ua", "values": [0,5,10,15,20]}]
+                precondition: "new_ua <= state['unused_allowance']"   // can only reduce or keep
+                effect: 
+                    // sets allowance to new_ua, simulate having consumed the difference.
+                    "{ 'plan': state['plan'], 'unused_allowance': new_ua, 'credits': state['credits'], 'day_in_cycle': state['day_in_cycle'] }"
+                cost: "0"
+
+              - name: "advance_day"
+                parameters: [{"name": "advance_to", "values": [15,30]}]   // only to these days
+                precondition: "advance_to > state['day_in_cycle']"
+                effect: 
+                    // advance to advance_to
+                    "{ 'plan': state['plan'], 'unused_allowance': state['unused_allowance'], 'credits': state['credits'], 'day_in_cycle': advance_to }"
+                cost: "0"
+
+          reset_rules: 
+              conversion_rate: 0
+
+          The suspected pump path:
+
+              state0: (A,20,0,1)
+              action1: change_plan to B -> state1: (B,20,0,1), cost = (10-20)*(30/30) = -10
+              action2: set_allowance to 5 -> state2: (B,5,0,1), cost=0
+              action3: advance_day to 30 -> state3: (B,5,0,30), cost=0
+              // then reset happens because state3 has day_in_cycle=30 -> reset to (B,10,0,1) [because B's allowance is 10, and credits=0+0*5=0]
+              state4: (B,10,0,1)
+
+              Then we need to get back to (A,20,0,1)? 
+              We are at (B,10,0,1). We can change to A: 
+                  action5: change_plan to A -> state5: (A,10,0,1), cost = (20-10)*(30/30)=10
+              Then advance to day30: state6: (A,10,0,30) -> reset to (A,20,0,1)
+
+              So the cycle: 
+                  (A,20,0,1) -> (B,20,0,1) -> (B,5,0,1) -> (B,5,0,30) [reset] -> (B,10,0,1) -> (A,10,0,1) -> (A,10,0,30) [reset] -> (A,20,0,1)
+
+              The edges:
+                  edge1: (A,20,0,1) -> (B,20,0,1): cost=-10, weight=10
+                  edge2: (B,20,0,1) -> (B,5,0,1): cost=0, weight=0
+                  edge3: (B,5,0,1) -> (B,5,0,30): cost=0, weight=0   [but note: when we reach (B,5,0,30), we reset to (B,10,0,1) automatically. So the edge is from (B,5,0,1) to (B,10,0,1) with cost=0? Actually, the action advance_day to 30 gives state (B,5,0,30), and then we reset to (B,10,0,1). So the edge goes from (B,5,0,1) to (B,10,0,1) with cost=0.
+                  edge4: (B,10,0,1) -> (A,10,0,1): cost=10, weight=-10
+                  edge5: (A,10,0,1) -> (A,10,0,30) by advance_day to 30: cost=0, then reset to (A,20,0,1). So edge from (A,10,0,1) to (A,20,0,1) with cost=0.
+
+              The cycle: 
+                  (A,20,0,1) -> (B,20,0,1) -> (B,5,0,1) -> (B,10,0,1) -> (A,10,0,1) -> (A,20,0,1)
+              Costs in the original: -10 + 0 + 0 + 10 + 0 = 0? Not positive.
+
+              What went wrong? The reset after state3: (B,5,0,30) -> (B,10,0,1) and then we are at (B,10,0,1). But in state3, we had 5 unused_allowance, which is lost in the reset (because conversion_rate=0), and then we get 10 new allowance. So the user has effectively gained 5 units? But they paid $0 for that? 
+
+              The net cost is 0, but the user ends with the same state they started, and they consumed 15 units during the cycle? In state0: (A,20,0,1), then they consumed 15 units (from 20 to 5) and then after reset they had 10, but then they changed to A and then reset to 20. So they consumed 15 units for free? 
+
+              This is not a money pump but a money gain? 
+
+          Let me recalc the consumption:
+
+              They started with 20 and set to 5: that means they used 15 units.
+              Then after reset in plan B, they get 10 new units.
+              Then they change to plan A and then reset again to get 20.
+
+              So they consumed 15 units and ended with 20, so net gain of 5 units and $0 cost.
+
+          The intended pump was different. Let's try with buy_top_up:
+
+              state0: (A,20,0,1)
+              change to B: (B,20,0,1), cost=-10
+              set_allowance to 5: (B,5,0,1), cost=0   [used 15]
+              buy_top_up(10): (B,15,0,1), cost=10
+              change to A: (A,15,0,1), cost=10
+              advance to day30: (A,15,0,30) -> reset to (A,20,0,1)
+
+              Cycle: (A,20,0, -> ... -> (A,20,0,1)
+              Costs: -10+0+10+10+0 = 10.
+
+              The edge from (B,5,0,1) to (B,15,0,1) has cost=10, weight=-10.
+              The edge from (B,15,0,1) to (A,15,0,1) has cost=10, weight=-10.
+              Then advance to 30: (A,15,0,1) to (A,15,0,30) cost=0, then reset to (A,20,0,1) cost=0.
+
+              The cycle has total weight = for the edges in the transformed graph: 
+                  edge1: weight = 10   [because cost=-10 -> weight=10]
+                  edge2: weight = 0
+                  edge3: weight = -10   [cost=10 -> weight=-10]
+                  edge4: weight = -10   [cost=10 -> weight=-10]
+                  edge5: weight = 0
+                  total weight = 10+0-10-10+0 = -10 -> negative cycle.
+
+              So we would detect it.
+
+          Therefore, the procedure would find this pump.
+
+      Example 2: rollover rule where credits bought in advance expire two weeks later.
+
+          How might this be a money pump?
+
+          Suppose a user expects to need extra credits in the future. They buy credits in advance to get a discount. But then the company makes it inconvenient to use those credits (e.g., by requiring a long process to redeem) and the credits expire. The user then has to buy credits again at a higher price.
+
+          Can we model a cycle? 
+
+              State0: (plan, ua, credits=0, day1)
+              Action1: buy credits for the next month: say at a discount. But then they expire in two weeks of the next month. 
+              Action2: wait until next month.
+              Then at the next month, they try to use the credits but find it inconvenient, so they let them expire.
+              Then they are back to credits=0, but they paid for the credits.
+
+          This is not a cycle because they are not back to the same state: they are in the next month and have consumed the money.
+
+          But if they do this repeatedly every month, then it's a pump? 
+
+          However, our state space is two months. We can try:
+
+              Month1, day1: (A,20,0,1)
+              Action1: buy credits: say amount 10, cost=9 (discount) -> state: (A,20,10,1)
+              Action2: advance to day30.
+              Reset: at day30, convert unused_allowance to credits: say 20*0.5=10 credits, so credits=20, then reset allowance to 20, and day_in_cycle=1 of month2.
+              State: (A,20,20,1)   [but the credits bought in month1 expire in 14 days?]
+
+              Now in month2, day1 to day14: 
+                  We need an action "expire_credits" that sets credits=0 on day15 if they expire at day14? 
+                  Or we can have a rule: on day15, credits that are two weeks old expire.
+
+              Action3: advance to day15: state (A,20,0,15)   // because the credits expired
+              Action4: then they buy credits again: cost=9, state (A,20,9,15)
+              Action5: advance to day30.
+              Reset: credits become 0 + 20*0.5 = 10, and then reset unused_allowance to 20, day_in_cycle=1 of month3.
+              State: (A,20,10,1)
+
+              Now they are not back to the initial state: they have 10 credits and have paid $18 for 10 credits that they never used? 
+
+              To close the cycle, they would have to use the credits? But if they could use them, they wouldn't be pumped.
+
+              Or if in month3, they let the credits expire again and buy again, then they lose $9 every month. It's a leak, not a cycle.
+
+          This is not a cycle within our state space because the state does not return to (A,20,0,1). 
+
+          Therefore, the procedure would not find a cycle.
+
+          But it's a bad deal, not a money pump in the technical sense.
+
+      Example 3: a rule that is probably fine.
+
+          Rule: allow users to roll over unused allowance to the next month up to 50% of the plan's allowance.
+
+          How could this be pumped? 
+
+              They use very little one month, so they have a lot to roll over. Then downgrade to a plan with lower allowance, and the rolled over amount is capped. Then upgrade again? But they might lose some rolled over amount.
+
+          Let's try:
+
+              Month1, day1: (A,20,0,1)   // plan A: cost=20, allowance=20
+              Use nothing: advance to day30.
+              Reset: 
+                  rolled over amount = min(20, 50% of 20) = 10
+                  state for month2: (A,20,10,1)   // we use 'credits' for rolled over amount
+
+              Then in month2, day1: change to plan B (allowance=10, cost=10)
+                  cost = (10-20) * (30/30) = -10
+                  state: (B,20,10,1)   // they keep the 20 unused_allowance and 10 credits? 
+              Then reset at the end of month2: 
+                  rolled over = min(20, 50% of 10)=5
+                  credits become 10 + 5 = 15? or the credits are separate and the rolled over unused_allowance is converted to credits? 
+                  unused_allowance reset to B's allowance=10.
+                  state: (B,10,15,1)
+
+              Then change back to A in month3, day1:
+                  cost = (20-10)=10
+                  state: (A,10,15,1)
+              Reset at the end of month3: 
+                  rolled over = min(10, 10) = 10? and then credits become 15+10=25, allowance reset to 20.
+                  state: (A,20,25,1)
+
+              They have more credits than before. Net cost: -10+10=0.
+
+              Not a pump.
+
+          So the procedure would not find a cycle.
+
+      Finally, what the procedure cannot decide:
+
+          - It cannot find pumps that require more than two months.
+          - It cannot find pumps that require states not in the provided state space.
+          - It assumes that the user can orchestrate any consumption pattern (via set_allowance) and can advance time to any provided day.
+          - It assumes that the user's valuation of the state is only based on (plan, unused_allowance, credits) and not on the history or external factors.
+          - It cannot handle continuous state spaces.
+
+      The philosophical disputes that would flip the verdict:
+
+          - If the user's preferences are not stable over time (diachronic), then the pump might be rational if the user's changes in preferences are genuine. But the procedure assumes that the user's goal is to return to the same state, which might not be the case if preferences change.
+          - The procedure assumes that the user is the same agent over time. If the user in month1 and month2 are considered different agents, then there is no pump.
+          - The procedure assumes that the user is forced into the pump by the rules and by their ability to change their mind. If the user can avoid the pump by being consistent, then it's not a pump for a rational user. But the procedure is for detecting the possibility.
+
+      Given the time, we stop here.
+answer: |-
+  ### Brainstorming: Key Elements for the Money Pump Detection Procedure
+
+  To detect money pumps in your pricing rules, the procedure must analyze the **state transitions** allowed by your system. Here's what it needs to consider:
+
+  1. **Moves (Actions)**:  
+     - Plan switches, allowance conversions, top-ups, rollovers, etc.  
+     - Each action has a **cost** (monetary) and changes the user's **state** (plan, credits, allowance, billing cycle day).  
+
+  2. **State Representation**:  
+     - **Plan**: Current subscription (cost, allowance).  
+     - **Unused Allowance**: Remaining monthly resources.  
+     - **Credits**: Rolled-over resources (with expiration rules).  
+     - **Billing Cycle Day**: Day in the monthly cycle (1–30).  
+
+  3. **Reversibility**:  
+     - Some actions are reversible (e.g., upgrading then downgrading), while others aren’t (e.g., expiring credits).  
+     - Non-reversible actions create "leaks" where users can’t return to the original state.  
+
+  4. **Preference Types**:  
+     - **Synchronic (Stable but Incoherent)**: Users have self-contradicting preferences at a single point in time.  
+     - **Diachronic (Shifting)**: Preferences change over time (e.g., "January-me" vs. "March-me").  
+     - The procedure must flag cycles that exploit **both** types.  
+
+  5. **Critical Decision Points**:  
+     - When a rule creates irreversible state changes or forces trade-offs (e.g., "pay to avoid future restrictions").  
+     - These require human judgment: *Is this a valid business trade-off or exploitative?*  
+
+  ---
+
+  ### The Money Pump Detection Procedure  
+  **Goal**: Identify cycles of actions that leave users in an **equivalent state** but with **strictly less money**.  
+
+  #### Inputs (Provided by PM via Simple JSON/YAML File):  
+  ```yaml
+  plans:  
+    - id: "premium"  
+      monthly_cost: 20  
+      allowance: 20  
+    - id: "basic"  
+      monthly_cost: 10  
+      allowance: 10  
+
+  actions:  
+    - name: "downgrade_plan"  
+      cost: "max(0, (basic.monthly_cost - current_plan.monthly_cost) * (30 - day) / 30)"  
+      effect:  
+        plan: "basic"  
+        unused_allowance: "current_unused_allowance"  # Keep existing allowance  
+    - name: "buy_top_up"  
+      cost: "top_up_amount * 1.0"  # $1 per unit  
+      effect:  
+        unused_allowance: "current_unused_allowance + top_up_amount"  
+
+  state_space:  
+    unused_allowance: [0, 5, 10, 15, 20]  # Discrete values to test  
+    credits: [0]  
+    days: [1, 15, 30]  # Key days in billing cycle  
+  ```
+
+  #### Steps:  
+  1. **Generate States**:  
+     - Create all combinations of `(plan, unused_allowance, credits, day)` from the `state_space`.  
+     - *Example: `("premium", 20, 0, 1)`, `("basic", 5, 0, 15)`, etc.*  
+
+  2. **Simulate Actions**:  
+     - For each state, apply every action to compute:  
+       - **Next State**: New plan, allowance, credits, and day.  
+       - **Cost**: Money paid/received.  
+     - Handle **automatic rules** (e.g., end-of-month reset converts allowance to credits).  
+
+  3. **Build State Graph**:  
+     - Nodes: States.  
+     - Edges: Actions (labeled with cost and resulting state).  
+
+  4. **Detect Money Pumps**:  
+     - Find cycles where:  
+       - Start state = End state (identical `(plan, allowance, credits, day)`).  
+       - **Total cost > 0**: User paid money but ended up with the same resources.  
+     - Use Bellman-Ford algorithm to detect negative cycles (efficient for small graphs).  
+
+  5. **Classify Results**:  
+     - **🟢 PASS**: No cycles found.  
+     - **🔴 FAIL**: Cycle found with **cost > 0** → Money pump.  
+     - **🟡 JUDGMENT NEEDED**:  
+       - Cycle relies on **diachronic preferences** (e.g., "user won’t notice step 1").  
+       - Cycle involves **irreversible actions** (e.g., expiring credits).  
+       - *Human must decide: "Is this an acceptable trade-off or predatory?"*  
+
+  #### Output (for Head of Pricing):  
+  ```text
+  VERDICT: FAIL (Money Pump Found)  
+  REASON: User can loop [State A → Downgrade → Buy Top-Up → Upgrade] and pay $10 to return to State A.
+  ```
+
+  ---
+
+  ### Run on Your Rule Bundles  
+  #### 1. Downgrade + Top-Up Pair  
+  - **State Graph**:  
+    - Start: `("premium", 20, 0, 1)`.  
+    - Actions:  
+      1. Downgrade to `"basic"` → State: `("basic", 20, 0, 1)`, Cost: -$10 (refund).  
+      2. Use 15 allowance → State: `("basic", 5, 0, 1)` (simulate consumption).  
+      3. Buy 10 top-up → State: `("basic", 15, 0, 1)`, Cost: +$10.  
+      4. Upgrade to `"premium"` → State: `("premium", 15, 0, 1)`, Cost: +$10.  
+      5. Advance to day 30 → Reset to `("premium", 20, 0, 1)`.  
+  - **Cycle Cost**: -$10 (refund) + $10 (top-up) + $10 (upgrade) = **+$10**.  
+  - **Verdict**: 🔴 **FAIL** (Money pump).  
+
+  #### 2. Rollover Credits Expiring in 2 Weeks  
+  - **State Graph**:  
+    - Start: `("premium", 20, 0, 1)`.  
+    - Actions:  
+      1. Buy credits (cost: $9) → State: `("premium", 20, 10, 1)`.  
+      2. Advance to day 30 → Reset: Credits roll to next month.  
+      3. Advance to day 15 → Credits expire → State: `("premium", 20, 0, 15)`.  
+  - **Result**: User pays $9 but ends with same state *except* expiration.  
+  - **Verdict**: 🟡 **JUDGMENT NEEDED** (Not a cycle; relies on *diachronic* shift).  
+    - *Philosophical dispute: Is "March-me" the same as "January-me"? If preferences change, this isn’t a pump—just a bad deal for the inattentive.*  
+
+  #### 3. Simple Rollover (No Expiration)  
+  - **State Graph**:  
+    - Start: `("premium", 20, 0, 1)`.  
+    - Actions:  
+      1. Use 10 allowance → State: `("premium", 10, 0, 30)`.  
+      2. Reset: Convert to 10 credits → State: `("premium", 20, 10, 1)`.  
+      3. Use credits → State: `("premium", 30, 0, 1)`.  
+  - **Result**: No cycle returning to the *exact* start state.  
+  - **Verdict**: 🟢 **PASS**.  
+
+  ---
+
+  ### What the Procedure **Cannot** Decide  
+  1. **Diachronic vs. Synchronic Exploits**:  
+     - If a rule preys on shifting preferences (e.g., "users won’t notice this fee"), it’s **not a money pump**—just a bad deal.  
+     - *This flips verdicts on rules like "expiring credits" (Bundle 2).*  
+
+  2. **Reversibility as a Feature**:  
+     - If your business *wants* to charge users to undo choices (e.g., "pay to re-enable a feature"), the procedure flags it as 🔴 FAIL, but you may accept it.  
+
+  3. **Ethical Boundaries**:  
+     - A "stable-but-incoherent" user with loopy preferences can *always* be pumped. The procedure finds it, but you must decide: *Is it ethical to exploit this?*  
+
+  ### Final Advice  
+  - **What to Ignore**: If none of your rules create **strict cycles with positive costs** (like Bundle 1), stop worrying about philosophy. Focus on closing those loops.  
+  - **What to Monitor**: Rules that create **irreversible states** (e.g., expiring credits) or rely on **user inattention**. These are legal risks, not theoretical pumps.  
+  - **Ship Fast**: This runs in 20 mins on a laptop. PMs only need to define actions/states in a config file—no philosophy degree required.  
+
+  You’re overthinking Bundle 3. Bundle 1 is a 🔴 pump. Bundle 2 is a 🟡 business-policy call. **Ship the procedure next week.**

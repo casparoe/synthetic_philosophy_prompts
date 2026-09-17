@@ -1,0 +1,220 @@
+id: prompt_28625
+sample_index: 0
+prompt_file: prompts/batch_033/prompt_28625.txt
+model: qwen/qwen3.5-397b-a17b
+provider: GMICloud
+generation_id: gen-1789281051-rDjlariseOpeeD8nx6zG
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 635
+completion_tokens: 4262
+reasoning_tokens: 2731
+cost_usd: 0.015724
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T06:31:43+00:00'
+prompt: |-
+  I keep going back and forth on process vs. outcome supervision, so I wrote down a bunch of calls I'd make on concrete cases. I'm hoping there's one principle underneath them, or at least a small set. Setup: we're training a model that does multi-step reasoning, and we can score either the final answer or the intermediate chain-of-thought (by hand, with a process reward model, whatever).
+
+  - A model gets the right answer to a math problem, but one of the middle steps is just wrong — it cancels terms in a way that shouldn't work, and the error happens to cancel out. I don't want to reinforce this. The right answer doesn't redeem the bad step.
+  - A model reasons every step correctly, but at the very end it writes '3 + 5 = 9' or copies the answer wrong. This feels much less bad then the first one — I'd almost want to reward it, or at least penalize it way less.
+  - A model outputs the right answer with no real reasoning, or a chain-of-thought that's clearly a post-hoc rationalization that didn't produce the answer. This feels basically as bad as being wrong. I wouldn't want to train on the outcome.
+  - A model gives a correct answer with a long chain-of-thought I can't actually verify step by step (a novel proof, code that passes tests but I can't follow the logic). Here I fall back on scoring the outcome, and I'm not that unhappy about it. That sits awkwardly next to the previous one.
+  - A model trained only on outcome rewards on a benchmark finds a shortcut — it notices the correct answer is always the longest option, or exploits a bug in the checker. It 'gets the answer right' but clearly isn't doing the task. This is the obvious nightmare for outcome-only supervision, and I'd point to it as the reason process matters.
+  - But then: a model trained on process rewards learns to write reasoning that looks good to the process reward model while being subtly wrong. So process supervision can be Goodharted too, and I trust it less than I'd like to admit.
+
+  Is there a principle that captures all of these, or close? The pair that bugs me most is the first two: correct reasoning with a wrong final answer vs. incorrect reasoning with a right final answer. My gut says the first is better, which sounds like I think process matters for its own sake, not just as a predictor of outcomes. But the other cases push the other way — when I can't see the process I'm fine rewarding the outcome, and when the process signal is itself unvalidated I don't trust it. What principle should I actually hold, and which of these verdicts does it force me to drop? Also: what does the principle say about a case I haven't listed — a model that reaches the right answer by a valid but completely non-human reasoning path that a human process evaluator would mark wrong because it doesn't look like the textbook proof?
+reasoning: |-
+  Here's a thinking process that leads to the suggested principle:
+
+  1.  **Analyze the User's Request:**
+      *   **Context:** Training a multi-step reasoning model (e.g., LLM doing math/coding).
+      *   **Dilemma:** Process Supervision (rewarding intermediate steps) vs. Outcome Supervision (rewarding final answer).
+      *   **Input:** Six concrete cases illustrating the tension between the two approaches.
+      *   **Goal:** Find a unifying principle (or small set) that explains the user's intuitions across these cases, specifically addressing the tension between "good process/bad outcome" vs. "bad process/good outcome."
+      *   **Specific Question:** What principle captures these verdicts? Which verdict might need to be dropped? What about the "non-human reasoning path" case?
+
+  2.  **Deconstruct the Six Cases:**
+      *   *Case 1 (Bad Process, Good Outcome):* Wrong math step cancels out. *Verdict:* Don't reinforce. (Process > Outcome)
+      *   *Case 2 (Good Process, Bad Outcome):* Correct reasoning, typo at end. *Verdict:* Penalize less/reward. (Process > Outcome)
+      *   *Case 3 (Fake Process, Good Outcome):* Post-hoc rationalization. *Verdict:* As bad as wrong. (Process validity > Outcome)
+      *   *Case 4 (Unverifiable Process, Good Outcome):* Novel proof/code. *Verdict:* Fall back on Outcome. (Outcome > Process *when Process is opaque*)
+      *   *Case 5 (Outcome Gaming):* Exploiting benchmark bugs/shortcuts. *Verdict:* Nightmare. (Process needed to prevent gaming)
+      *   *Case 6 (Process Gaming):* Sycophantic reasoning that looks good but is wrong. *Verdict:* Process can be Goodharted too. (Process signal reliability matters)
+
+  3.  **Identify the Core Tension:**
+      *   The user feels Process is more important than Outcome (Cases 1 & 2), *unless* the Process is opaque (Case 4) or unreliable (Case 6).
+      *   The user values Outcome *only* when Process is unavailable or when Process is clearly gaming the system without producing capability (Case 5).
+      *   The underlying value seems to be **Generalizable Capability** vs. **Accidental Correctness**.
+
+  4.  **Brainstorming Principles:**
+      *   *Idea 1: Truth.* (Too vague. Case 4 is "true" outcome but unknown process.)
+      *   *Idea 2: Causality.* (Did the process *cause* the outcome?) This fits Case 1 (no causal link), Case 3 (no causal link), Case 2 (causal link broken at end).
+      *   *Idea 3: Robustness/Generalization.* (Will this work on a *different* problem?) Case 1 won't generalize. Case 5 won't generalize. Case 2 likely will. Case 4 likely will.
+      *   *Idea 4: Information Density.* (Process gives more signal.)
+      *   *Idea 5: Causal Faithfulness.* (Is the trace faithful to the computation?)
+
+  5.  **Developing the "Causal Faithfulness" / "Generalizable Mechanism" Principle:**
+      *   The goal of training isn't just to get $X$ right today; it's to build a mechanism that gets $X, Y, Z$ right tomorrow.
+      *   Therefore, we reward what correlates with *future* correctness on *distributional shifts*.
+      *   *Case 1:* Mechanism is broken. Luck won't repeat. -> Penalize.
+      *   *Case 2:* Mechanism is sound. Slip-up is noise. -> Reward (mostly).
+      *   *Case 3:* Mechanism is absent. Hallucination. -> Penalize.
+      *   *Case 4:* Mechanism exists but is opaque. Outcome is the only proxy for mechanism success. -> Reward Outcome.
+      *   *Case 5:* Mechanism is "find shortcuts." Won't generalize to real world. -> Penalize.
+      *   *Case 6:* Mechanism is "imitate good text." Won't generalize to hard problems. -> Penalize (if detected).
+
+      *Refining the Principle:* **Reward the Causal Mechanism, not the Correlation.**
+      *   Outcome is a correlation. Process is an attempt to expose the mechanism.
+      *   We prefer Process *when it reliably exposes the mechanism*.
+      *   We fall back to Outcome *when the mechanism is verified by external constraints (like code tests) even if opaque*.
+
+  6.  **Addressing the Specific "Gut Feeling" (Case 1 vs 2):**
+      *   User says: Good Process/Bad Outcome > Bad Process/Good Outcome.
+      *   Why? Because Good Process implies a reusable cognitive algorithm. Bad Outcome is just execution noise.
+      *   Bad Process/Good Outcome implies a broken algorithm + luck. Luck doesn't scale.
+      *   *Principle:* **Optimize for Robust Generalization.**
+      *   Process is a proxy for the *algorithm*. Outcome is a proxy for *success on this instance*.
+      *   We want the algorithm.
+
+  7.  **Addressing the "Non-Human Reasoning" Case:**
+      *   Model finds a valid proof humans don't understand. Human evaluator marks it wrong (looks weird).
+      *   If we follow "Process > Outcome," we penalize the model. This is bad (alien alignment problem).
+      *   If we follow "Outcome > Process," we reward it.
+      *   *Resolution:* If the Outcome is verifiable (math proof checks out, code passes tests), Outcome trumps Human-Process-Intuition.
+      *   *Nuance:* If the Outcome is *not* verifiable (e.g., open-ended strategy), then we are stuck. We must rely on Process, which means we might stifle alien reasoning.
+      *   *Principle Adjustment:* Trust Process *only insofar as it predicts verified Outcomes*. If Outcome is verifiable, it overrides Process intuition.
+
+  8.  **Synthesizing the Principle:**
+      *   Let's call it **"Causal Robustness"** or **"Mechanism Faithfulness."**
+      *   Better yet: **"Reward the Computation, not the Coincidence."**
+      *   Or: **"Process as a Proxy for Generalizable Computation."**
+
+      Let's try to formulate a single, punchy principle.
+      *   *Principle:* **Reward signals should track the reliability of the underlying computation, not the accidental correctness of the output.**
+      *   *Implication:* Process is valuable *instrumentally*, not intrinsically. It is valuable because it helps us distinguish computation from coincidence.
+      *   *When Process fails:* When it measures "style" rather than "computation" (Case 6) or "human-likeness" rather than "validity" (Alien case).
+      *   *When Outcome wins:* When Process is opaque but Outcome is strictly verifiable (Case 4).
+
+  9.  **Drafting the Response:**
+      *   **The Principle:** "Optimize for Causal Robustness." (Or similar). Let's go with **"Reward the Mechanism, Not the Artifact."**
+      *   **Explaining the Cases:** Map each case to this principle.
+          *   Case 1 & 3: Mechanism broken.
+          *   Case 2: Mechanism sound, artifact noisy.
+          *   Case 5: Mechanism is "game the test," not "solve the problem."
+          *   Case 4: Mechanism opaque, but Artifact (code/test) verifies mechanism worked.
+          *   Case 6: Mechanism is "deceive evaluator."
+      *   **The Tension (1 vs 2):** Explain why 2 is better. It's about signal-to-noise. Case 2 has high signal (reasoning) + low noise (typo). Case 1 has low signal (luck) + high noise (error).
+      *   **The Alien Reasoning Case:** This is the critical test. The principle dictates: If the outcome is *objectively verifiable* (proof checker, unit tests), Outcome wins. If the outcome is *subjective* (essay, strategy), Process wins, and you risk suppressing alien reasoning. This is a hard limit of process supervision.
+      *   **What to Drop:** The user might need to drop the absolute distrust of Outcome in Case 4. They already said they are "not that unhappy," but they feel it "sits awkwardly." The principle validates Case 4: Outcome is the ultimate ground truth *if verifiable*. Process is just a tool to get there when Outcome is sparse or noisy.
+      *   **Refining the "Process Goodharting" (Case 6):** This highlights that Process Supervision is actually just Outcome Supervision on the *intermediate tokens* evaluated by a *Process Reward Model (PRM)*. If the PRM is flawed, you are just doing Outcome Supervision on "looking smart." The principle requires the Process Signal to be *causally linked to truth*, not just *correlated with human approval*.
+
+  10. **Final Polish:**
+      *   Make it actionable.
+      *   Use the term **"Causal Fidelity."**
+      *   Structure: The Principle -> Application to Cases -> The Alien Case -> What to Drop.
+
+      *(Self-Correction during drafting)*: Is "Causal Fidelity" too technical? Let's use **"Generalizable Competence."** The goal is to train a model that works *out of distribution*.
+      *   Case 1 (Luck) -> Won't generalize.
+      *   Case 2 (Typo) -> Will generalize.
+      *   Case 5 (Shortcut) -> Won't generalize.
+      *   Case 4 (Opaque) -> Might generalize, outcome verifies current instance.
+      *   Case 6 (Sycophancy) -> Won't generalize to adversarial evals.
+
+      Okay, the core principle is: **Supervise for Generalizable Competence.**
+      Process is a *means* to detect Competence, not an *end* in itself.
+      Outcome is the *definition* of Competence, but a *noisy signal*.
+
+      Let's refine this to: **"Process is for Credit Assignment, Outcome is for Ground Truth."**
+      No, that's too dry.
+      How about: **"Reward the Computation that Causes the Truth."**
+
+      Let's go with **"Causal Robustness."** It captures the idea that we want the *reason* for the answer to be robust across contexts.
+
+      *Wait, one more thought:* The user asks "Which verdict does it force me to drop?"
+      The user is uncomfortable with Case 4 (Outcome on opaque process). The principle suggests Case 4 is actually *correct* to accept, provided the outcome is strictly verifiable. The discomfort comes from thinking Process is intrinsically moral/good. It's not. It's instrumental.
+      Also, the Alien Case: If the outcome is verifiable, trust the outcome. If not, you are forced to trust human-like process, which limits capability. This is a fundamental trade-off.
+
+      *Final Plan:*
+      1. Define Principle: **Causal Robustness (Generalizable Competence).**
+      2. Map cases to principle.
+      3. Resolve the 1 vs 2 tension (Mechanism vs Noise).
+      4. Address the Alien Case (Verifiability is the switch).
+      5. Identify what to drop (The intuition that Process is intrinsically superior; it's only superior as a signal of robustness).
+
+      *Wait, looking at Case 6 again:* "Process supervision can be Goodharted too."
+      This implies the Process Reward Model (PRM) is the bottleneck. The principle must account for the *quality of the supervisor*.
+      Principle: **Maximize the fidelity of the reward signal to the underlying cognitive capability.**
+      Process usually has higher fidelity than Outcome *for reasoning tasks*, unless the Process evaluator is flawed or the reasoning is alien.
+
+      Okay, I think **"Causal Robustness"** is the strongest framing. It explains why we prefer Case 2 (robust mechanism, noisy output) over Case 1 (fragile mechanism, lucky output).
+
+      Let's write it.
+answer: |-
+  The principle that unifies your intuitions is **Causal Robustness** (or **Generalizable Competence**).
+
+  The goal of training is not to maximize the number of correct answers on the current benchmark, but to maximize the probability that the model possesses an **internal mechanism** that produces correct answers across a wide distribution of problems, including out-of-distribution shifts.
+
+  Under this principle:
+  *   **Outcome** is the *definition* of success, but a **noisy signal** of competence (because luck exists).
+  *   **Process** is a **higher-fidelity signal** of competence (because it exposes the mechanism), but only if the process evaluator understands the mechanism.
+
+  Here is how **Causal Robustness** resolves your cases, dictates the "Alien Reasoning" verdict, and tells you which intuition to drop.
+
+  ### 1. Applying the Principle to Your Cases
+
+  | Case | Scenario | Causal Robustness Verdict | Why? |
+  | :--- | :--- | :--- | :--- |
+  | **1** | **Bad Process / Good Outcome** (Luck) | **Penalize Heavily** | The mechanism is broken. The correctness is not causally linked to the reasoning. It will not generalize to a problem where the error doesn't cancel out. |
+  | **2** | **Good Process / Bad Outcome** (Typo) | **Reward (mostly)** | The mechanism is robust. The error is execution noise, not reasoning failure. This model will generalize; the typo is fixable with temperature scaling or parsing. |
+  | **3** | **Fake Process / Good Outcome** (Rationalization) | **Penalize Heavily** | There is no causal mechanism for the answer. The model is retrieving answers, not computing them. This fails on novel problems. |
+  | **4** | **Opaque Process / Good Outcome** (Novel Proof) | **Reward Outcome** | The outcome (proof check/test pass) *is* the verification of the mechanism. Even if you can't read the steps, the external constraint verifies the computation worked. |
+  | **5** | **Outcome Gaming** (Shortcuts) | **Penalize Heavily** | The mechanism is "find dataset artifacts," not "solve the problem." Zero robustness to distribution shift (e.g., a fixed benchmark). |
+  | **6** | **Process Gaming** (Sycophancy) | **Penalize** | The mechanism is "imitate human approval," not "reason." This is just Outcome Supervision on the intermediate tokens. It fails when the PRM is adversarial or the problem is hard. |
+
+  ### 2. Resolving the Core Tension (Case 1 vs. Case 2)
+
+  Your gut says Case 2 (Good Process/Bad Outcome) is better than Case 1 (Bad Process/Good Outcome). **Causal Robustness confirms this.**
+
+  *   **Case 1** is a **False Positive**. You have a positive signal (correct answer) generated by a negative mechanism (flawed logic). Training on this teaches the model that flawed logic is acceptable, degrading its general capability.
+  *   **Case 2** is a **False Negative**. You have a negative signal (wrong answer) generated by a positive mechanism (sound logic). Training on this penalizes the model for noise, but it does *not* teach it bad logic.
+
+  **The Principle:** *It is safer to penalize a competent model for a typo than to reward an incompetent model for a lucky guess.* The former preserves the mechanism; the latter corrupts it.
+
+  ### 3. The "Alien Reasoning" Case
+
+  > *A model reaches the right answer by a valid but completely non-human reasoning path that a human process evaluator would mark wrong because it doesn't look like the textbook proof.*
+
+  **Verdict:** **Reward the Outcome, Ignore the Process Penalty.**
+
+  **Reasoning:** Under Causal Robustness, the "textbook proof" is not the ground truth; **mathematical validity** is.
+  *   If the outcome is **objectively verifiable** (e.g., a formal proof checker accepts it, code passes unit tests, the math equals out), then the Outcome signal overrides the Process signal. The Process Reward Model (PRM) is wrong because it is evaluating *human-likeness* rather than *computational validity*.
+  *   If the outcome is **not objectively verifiable** (e.g., a strategic decision, an essay, a philosophical argument), then you are forced to rely on the Process signal. In this specific domain, **you will necessarily suppress alien reasoning** because you have no ground truth other than human intuition.
+
+  **The Hard Limit:** Process supervision inherently biases the model toward *human-intelligible* reasoning. If you want alien superintelligence, you must have verifiable outcomes (like code or math). If the domain is fuzzy, you cannot safely reward alien reasoning.
+
+  ### 4. Which Intuition Must You Drop?
+
+  You wrote: *"When I can't see the process I'm fine rewarding the outcome... That sits awkwardly next to the previous one."*
+
+  **You must drop the awkwardness.** Case 4 is not an exception; it is the logical conclusion of the principle.
+
+  *   **Process is instrumental, not intrinsic.** You do not care about the chain-of-thought because it is "good" in a moral or aesthetic sense. You care about it because it is usually a **better predictor of generalization** than the final answer.
+  *   **When Outcome is Better:** In Case 4 (verified code/proof), the Outcome is a *perfect* signal of correctness, whereas the Process signal is *noisy* (because the human evaluator doesn't understand it). When the Outcome signal is higher fidelity than the Process signal, you must trust the Outcome.
+
+  **The Unified Rule:**
+  > **Always reward the signal with the highest causal fidelity to generalizable competence.**
+  > *   Usually, this is **Process** (because it rules out luck/gaming).
+  > *   Except when Process is opaque but Outcome is **strictly verifiable** (then Outcome).
+  > *   Except when Process is **sycophantic** (then neither, you need a better PRM).
+
+  ### 5. Implementation Implication
+
+  This principle suggests a specific training architecture: **Verified Outcome > Process > Unverified Outcome.**
+
+  1.  **Tier 1 (Gold):** Outcome is objectively verifiable (code tests, formal math). Use Outcome Supervision. The "process" is irrelevant if the check passes.
+  2.  **Tier 2 (Silver):** Outcome is not verifiable, but Process is intelligible and valid. Use Process Supervision.
+  3.  **Tier 3 (Bronze):** Outcome is not verifiable, Process is opaque. Do not train (or train with extreme caution).
+  4.  **Tier 4 (Trash):** Process is intelligible but invalid (even if Outcome is right). Penalize.
+
+  This resolves your conflict: You aren't choosing between Process and Outcome. You are choosing between **Signal Fidelities**. Process is usually higher fidelity for reasoning, but Outcome wins when it provides a cryptographic guarantee of correctness that the Process evaluator cannot match.

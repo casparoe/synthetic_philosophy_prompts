@@ -1,0 +1,200 @@
+id: prompt_65106
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_65106.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789384740-BuIKcQlOmZPeZm12qAGK
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 303
+completion_tokens: 4813
+reasoning_tokens: 3808
+cost_usd: 0.010644
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T11:23:29+00:00'
+prompt: |-
+  I'm a backend engineer, no ML research background, and I got volunteered to build a drift monitor for the models we fine-tune in-house.
+
+  Design: after every fine-tune I run the old and new checkpoint over the same fixed probe set, pull the residual stream at layers 6, 14 and 22, and take cosine similarity per token, then average. If it drops below a threshold I page whoever's on call, on the theory that if the outputs are still right but the internals moved a lot, the model has probably found some new route to the right answer — the same-behavior-different-mechanism case that mechanistic anomaly detection is supposed to catch.
+
+  Two questions. (1) What threshold? I'm at 0.9. Weird datapoint: as a control I retrained the exact same config with a different seed and it scored 0.72 againt the original, so I've been treating 0.72 as my noise floor and anything under that as a genuine change. Is 0.9 too twitchy or not twitchy enough? (2) The one I actually can't work out — when my number moves, what is it that moved? What would have to be true for two models to count as running the same mechanism, such that a similarity score like mine could be evidence about it in either direction?
+
+  Oh and should I be comparing raw activations or layernormed ones?
+reasoning: |-
+  We are addressing two main questions from a backend engineer who has been tasked with building a drift monitor for fine-tuned models.
+
+  Question 1: Threshold for cosine similarity
+  - The engineer has set a threshold of 0.9 and observed that a retraining with a different seed yields 0.72. They treat 0.72 as a noise floor and anything below that as a genuine change.
+  - We must evaluate if 0.9 is an appropriate threshold.
+
+  Question 2: Interpretation of the similarity score and what it means for model mechanisms
+  - What constitutes the same mechanism? How can the similarity score provide evidence about the mechanisms?
+
+  Additional question: Should we compare raw activations or layernormed ones?
+
+  Let's break down:
+
+  1. **Threshold Selection**:
+     - The cosine similarity between two vectors ranges from -1 to 1. A value of 1 means identical, 0 means orthogonal, and -1 means opposite.
+     - The observed 0.72 between two models trained with the same configuration but different seeds is an important baseline. This indicates the inherent variability due to randomness in training.
+     - Setting a threshold at 0.9 is quite strict. It means that if the average cosine similarity drops below 0.9, an alert is triggered. However, note that the retraining with a different seed already gives 0.72, which is below 0.9. This suggests that the threshold of 0.9 might be too sensitive (twitchy) because even a retraining with a different seed (which is expected to have similar behavior) would trigger the alert.
+     - The engineer's approach of treating 0.72 as a noise floor (i.e., the minimum expected similarity due to randomness) and then setting a threshold above that (0.9) is a reasonable way to capture significant deviations. However, the gap between 0.72 and 0.9 is substantial. We must consider:
+          - What is the goal? If the goal is to catch any change that might be significant (even if it's just due to a different seed), then 0.9 might be too low because the seed change already causes a drop to 0.72. But if the goal is to catch changes that are beyond the expected randomness (i.e., beyond the 0.72 level), then the threshold should be set below 0.72, not at 0.9.
+     - Clarification: The engineer says they page when the score drops below 0.9, and they treat 0.72 as the noise floor. This implies that they are paging for scores between 0.72 and 0.9, which are above the noise floor (i.e., less change than the seed change) but below 0.9. This seems backwards.
+
+     Let me restate the observed data:
+          - Original vs. retrained (different seed): 0.72 -> This is the baseline for "no change in configuration, just randomness".
+          - They set the threshold at 0.9, meaning they page for any change that causes a similarity below 0.9.
+
+     However, the retrained model (which is expected to be functionally equivalent) already has a similarity of 0.72, which is below 0.9. So it would trigger the page. But the engineer says they treat 0.72 as the noise floor, meaning that they consider changes above 0.72 to be within expected randomness? Then why set the threshold at 0.9? It seems the threshold should be set below 0.72 to catch changes that are more severe than the expected randomness.
+
+     Proposed approach:
+          - Collect similarity scores from multiple retrainings (with different seeds) to get a distribution of the similarity scores for models that are expected to be equivalent (same architecture, same data, same hyperparameters, different seed).
+          - Then, set the threshold based on this distribution. For example, set the threshold at the 5th percentile of this distribution (if you want to catch the worst 5% of the changes) or set it at a fixed distance below the mean (e.g., mean minus 3 standard deviations). Alternatively, set the threshold at a value that is significantly lower than the typical values for retrainings.
+
+     Given the single data point of 0.72, we cannot be sure of the distribution. But it is likely that 0.72 is near the lower end. Therefore, a threshold of 0.72 might be too low because it would only catch changes that are worse than a seed change. But the goal is to catch changes that are not just due to randomness.
+
+     However, the engineer's stated theory is: "if the outputs are still right but the internals moved a lot, the model has probably found some new route to the right answer". This suggests that they are interested in changes that are beyond the expected randomness (i.e., beyond what a seed change would cause). Therefore, the threshold should be set below the typical seed-change similarity. But note: the seed-change similarity is 0.72, so if we set the threshold at 0.7, then we would only catch changes that are more severe than a seed change. However, the engineer set the threshold at 0.9, which is above 0.72, meaning they are catching changes that are less severe than a seed change? That doesn't align.
+
+     This leads to a confusion: the engineer says they treat 0.72 as the noise floor and anything under that as a genuine change. So by that logic, the threshold should be set at 0.72. Then why 0.9? It seems the engineer might be using the threshold in reverse: they want to catch when the similarity is too low (which is below 0.9) but then they have a separate idea that 0.72 is the noise floor. But 0.72 is already below 0.9, so it would trigger.
+
+     It appears that the threshold of 0.9 is too strict because it would flag even the expected variation from retraining (which is 0.72). Therefore, if we want to avoid false alarms for seed changes, the threshold must be set at or below 0.72.
+
+     Recommendation:
+          - Collect more data: run at least 5-10 retrainings with different seeds and compute the similarity scores. Then compute the mean and standard deviation.
+          - Set the threshold to a value that is, say, 3 standard deviations below the mean of the retraining similarities. Alternatively, set it to the minimum observed value in the retrainings (if you want to avoid false alarms) or a bit below that.
+
+     Without more data, a safe threshold might be 0.7 (if 0.72 is the only data point) or even 0.65 to allow for some variation. But note: the engineer's goal is to catch when the model has changed its internal mechanism. The seed change is an example of a change that does not alter the mechanism? Actually, a seed change might lead to a different mechanism that produces the same outputs? That's the same-behavior-different-mechanism case? But the engineer says that is exactly what they want to catch. So they might want to catch even seed changes? That seems odd because seed changes are expected and should not be alarming.
+
+     Clarification on the goal: The engineer wants to catch "mechanistic anomaly detection" for the case where the behavior is the same but the mechanism is different. However, in practice, we do not want to page for every retraining with a different seed because that is normal. Therefore, we must accept that some level of internal change is normal and set the threshold to catch changes that are beyond that normal variation.
+
+     So the threshold should be set below the typical variation from retraining. Hence, 0.9 is too high because it's above the 0.72 baseline. We should set the threshold below 0.72, for example 0.7, 0.65, or even lower.
+
+     However, note that the engineer has only one data point for retraining. It is possible that 0.72 is an outlier and typically the similarity is higher. Without more data, we cannot be sure.
+
+     Interim conclusion for threshold: 0.9 is too twitchy because it would trigger for a normal seed change (which is 0.72). The threshold should be set below the noise floor (as defined by the seed change) to catch only more severe changes. But the noise floor is 0.72, so set the threshold at 0.7 or lower? However, the engineer says they treat anything below 0.72 as genuine change. That seems to contradict the goal of not paging for seed changes. 
+
+     Let me re-read: "I've been treating 0.72 as my noise floor and anything under that as a genuine change". So if they set the threshold at 0.72, then the seed change (0.72) would be at the noise floor and not trigger. Only if the similarity is below 0.72 would they consider it a genuine change and page. That makes sense. But then why set the threshold at 0.9? The engineer says they page when it drops below 0.9. This is inconsistent.
+
+     Therefore, I suspect there is a misunderstanding in the setup. The engineer should set the threshold at 0.72 (or slightly above to be safe) to avoid false alarms from seed changes. Alternatively, they might have meant that they want to catch any change that is above the noise floor? But that doesn't align with the statement.
+
+     Revised plan:
+          - The threshold should be set to a value that is above the noise floor (i.e., above 0.72) if we want to catch changes that are less severe than a seed change? But that doesn't make sense because a seed change is the most minor change we expect.
+
+     Alternatively, the engineer might have intended to set the threshold at 0.9 relative to the original model, and then the seed change gives 0.72, which is below, so they get an alert. But they don't want to get an alert for seed changes? Then they should adjust the threshold to be below 0.72.
+
+     I think the engineer has the threshold set too high. They should lower it to avoid false alarms from retraining. Therefore, 0.9 is too twitchy.
+
+     Recommendation for threshold: 
+          - Without more data, set the threshold at 0.7 (below the 0.72 noise floor) to avoid false alarms from seed changes. Then, if the similarity drops below 0.7, page. But note: 0.72 is very close to 0.7, so we might still get false alarms. Alternatively, set it at 0.65 to be safe until more data is collected.
+
+          - However, the engineer might have a reason to believe that 0.72 is the absolute minimum for seed changes, but without multiple runs we don't know. So the best course is to run multiple retrainings and set the threshold at the 1st percentile (or 0.05 percentile) of the observed similarities for seed changes.
+
+  2. **Interpretation of the similarity score and what it means for the mechanism**:
+     - Cosine similarity of the residual stream at specific layers measures the alignment of the activation vectors for the same token in the two models.
+     - A high cosine similarity (close to 1) means that the two models are representing the token in a very similar way at that layer. This suggests that the mechanism up to that layer is similar.
+     - A low cosine similarity suggests that the representation of the token at that layer has changed. However, note that the model might have learned a different but equivalent representation (e.g., rotated in the activation space) that still leads to the same output. This could be due to:
+          - Invariance properties of the model (e.g., because of layer norm, the direction might matter more than the absolute scale, and a rotation might be compensated by later layers).
+          - The model might have learned a different algorithm that computes the same function.
+
+     - What would have to be true for two models to count as running the same mechanism? 
+          - The most straightforward case is when the weights are the same (or very similar). But even with the same weights, if the input is different the activations would be different? Not in this case because the probe set is fixed.
+          - For the same input, if the model is running the same mechanism, we expect the activations to be similar. However, note that there might be symmetries in the model (e.g., permutation of neurons in a layer, scaling) that lead to different activations but the same function.
+
+     - The cosine similarity in the residual stream is a direct measure of the activation vector at a specific point. If the cosine similarity is high, then the representation at that layer is aligned. This suggests that the model is using a similar representation at that layer. However, it does not guarantee that the entire mechanism is the same because the change might be in later layers.
+
+     - Conversely, if the cosine similarity is low, it means that the representation at that layer has changed. This could be due to:
+          - The model has learned a different feature representation at that layer.
+          - The model has restructured the computation in earlier layers.
+
+     - However, note that even if the internal representations are different, the model might still produce the same output. This is the scenario the engineer is concerned about: same behavior, different mechanism.
+
+     - Evidence about the mechanism:
+          - High similarity at all layers: strong evidence that the mechanism is the same.
+          - Low similarity at some layers: suggests that the mechanism has changed at that layer or earlier.
+          - But note: if the similarity is low at an early layer but recovers at a later layer, it might indicate that the model has learned a different feature extraction that is then mapped back to the same representation.
+
+     - The engineer is averaging the cosine similarity over tokens and then also over layers (layers 6,14,22). This might smooth out layer-specific effects. It might be more informative to look at each layer separately.
+
+  3. **Raw activations vs. layernormed ones**:
+     - The residual stream activations are often layer-normalized. LayerNorm changes the activations to have zero mean and unit variance. This normalization is part of the model's architecture and is applied before the next layer.
+     - When comparing activations across models, it is common to use the normalized activations because the raw activations might have different scales and offsets. The cosine similarity is invariant to scaling (because it's based on the angle) but not to offsets. However, LayerNorm removes the offset and scales the vector to unit norm. Therefore, after LayerNorm, the cosine similarity is equivalent to the dot product of the unit vectors.
+     - In the residual stream, the activation vectors are passed through LayerNorm at the beginning of the next layer. So if you are taking the residual stream at the output of layer N (which is the input to layer N+1), then that vector is the input to the LayerNorm of layer N+1. Therefore, the next layer will see the normalized version.
+     - For the purpose of comparing the representations, it is more meaningful to compare the normalized activations because the next layer operates on the normalized version. Therefore, I recommend applying LayerNorm to the residual stream activations before computing the cosine similarity.
+
+     However, note: the engineer is pulling the residual stream at layers 6, 14, and 22. This is the output of the corresponding transformer block (and the input to the next block). So it has not been normalized for the next block yet. Therefore, if the model has LayerNorm applied at the beginning of each block (like in the original Transformer), then the residual stream at the output of block L is the input to block L+1, and that input is then normalized. So to mimic what the next block sees, we should normalize the residual stream we pull.
+
+     Recommendation: Apply LayerNorm to the residual stream activations before computing the cosine similarity. This will remove the effect of arbitrary scaling and shifting and focus on the direction.
+
+     But note: in some architectures, there might be a different normalization scheme. The engineer should check their model's architecture.
+
+  Summary:
+
+  1. Threshold: 0.9 is too twitchy because it is above the noise floor (0.72 from a seed change). This would cause false alarms for retrainings. The threshold should be set below the noise floor to catch only more severe changes. Without more data, a threshold of 0.65 might be safer, but the best is to collect multiple seed retraining similarities and set the threshold at the 5th percentile of that distribution.
+
+  2. Interpretation of the score:
+     - A drop in cosine similarity at a layer indicates that the representation at that layer has changed. This could be due to a different mechanism being used. However, it is possible that the change is compensated in later layers and the output remains the same. The engineer is correct that this might indicate a different route to the same answer.
+
+     - To count as the same mechanism, we would expect high similarity in the residual stream at every layer. But note: even with high similarity, the model might have learned a different mechanism that happens to produce the same activations? That is less likely. Typically, similar activations imply similar mechanisms up to that point.
+
+     - The evidence from the cosine similarity is about the representation at a specific layer. A low score suggests a change in the mechanism at or before that layer.
+
+  3. Use LayerNorm: Apply LayerNorm to the residual stream activations before computing the cosine similarity.
+
+  Final note: The engineer might want to consider other metrics (e.g., KL divergence on the output logits, or mean squared error of the activations) but the cosine similarity is a good choice because it is invariant to the magnitude of the vectors. However, the average of per-token cosine similarities might hide per-token changes that are important. Also, averaging over layers might hide layer-specific changes. It might be beneficial to monitor each layer separately and set layer-specific thresholds.
+answer: |-
+  ### Answer to Your Questions
+
+  #### (1) Threshold Selection: Is 0.9 Appropriate?
+  **No, 0.9 is likely too twitchy.** Here's why and how to calibrate:  
+  - **Your seed retrain (0.72) is critical data**: This shows the *inherent noise floor* due to random initialization/batching. Treating 0.72 as the minimum expected similarity for functionally equivalent models is correct.  
+  - **Threshold logic**:  
+    - If you page for similarities **< 0.9**, your seed retrain (0.72) would trigger a page. This is a **false positive** since the model behavior hasn’t meaningfully changed.  
+    - **Your threshold should be below the noise floor** (i.e., **< 0.72**) to avoid alerting on expected variations.  
+  - **Recommendation**:  
+    - **Set threshold at 0.65–0.70** (e.g., 0.68) to catch *meaningful divergence* while minimizing false alarms.  
+    - **Collect more data**: Run 5–10 seed retrains, compute similarity distribution (mean/standard deviation), and set threshold at **mean − 3σ**. Example:  
+      - If seed retrains yield mean = 0.75, σ = 0.03 → threshold ≈ 0.66.  
+    - **Why this works**: Alerts will fire only when drift exceeds normal randomness, targeting genuine mechanism changes.
+
+  #### (2) What Does the Similarity Score Actually Measure?
+  Your method detects **changes in internal feature representations**. Here’s the breakdown:  
+  - **"Same mechanism" definition**:  
+    Two models use the same mechanism if, for a given input, they:  
+    1. **Build similar intermediate features** (e.g., "noun phrase detector" at layer 6).  
+    2. **Process these features in the same way** through subsequent layers.  
+    Your cosine similarity tests #1 but not #2.  
+
+  - **Evidence from your metric**:  
+    - **High similarity (e.g., > 0.72)**: Suggests features at that layer are *functionally aligned* (similar directions in activation space). Mechanisms are likely unchanged.  
+    - **Low similarity (e.g., < 0.65)**: Indicates the model now represents concepts *differently* at that layer (e.g., it detects "verb tense" instead of "subject-verb agreement").  
+
+  - **Caveats**:  
+    - **False negatives**: Models can have different mechanisms but similar activations (e.g., rotated weight matrices).  
+    - **False positives**: Drift might be harmless (e.g., denser feature packing). Always pair with output checks.  
+    - **Layer matters**:  
+      - **Early layers (e.g., 6)**: Low similarity → fundamental feature changes.  
+      - **Late layers (e.g., 22)**: Low similarity → changes to output logic.  
+
+  #### Should You Use Raw or LayerNormed Activations?
+  **Use LayerNormed activations.** Why:  
+  - LayerNorm removes scale/shift differences, isolating *directional* changes (which cosine similarity cares about).  
+  - Raw activations can have magnitude shifts (e.g., due to softmax temperature) that distort cosine scores.  
+  - **Practical tip**: If your model applies LayerNorm *before* residual connections (e.g., GPT-2), use the post-norm activations. For post-LN (e.g., BERT), apply LayerNorm yourself before comparison.
+
+  ### Suggested Workflow Improvements
+  1. **Add orthogonal metrics** to reduce false alarms:  
+     - **Output logits**: Monitor KL divergence (catches behavioral drift).  
+     - **Per-layer metrics**: Check layers 6/14/22 separately (don’t average). A drop at layer 6 but not 22 suggests localized changes.  
+     - **Dimensional analysis**: Track mean similarity per token position (some tokens matter more).  
+
+  2. **Baseline calibration**:  
+     - Compute similarity between seed retrains (not just 1 pair) → define a distribution.  
+     - Set dynamic thresholds (e.g., "page if below 5th percentile of seed retrains").  
+
+  3. **Debug drift**: If similarity drops:  
+     - **Inspect attention patterns**: `transformers` library’s `model.forward(..., output_attentions=True)`.  
+     - **Probe tasks**: Test if specific capabilities (e.g., negation handling) degraded.  
+
+  **TL;DR**: Lower threshold to **< 0.72** (start at 0.68), use **LayerNormed activations**, and pair with output checks. Your method is theoretically sound—just needs calibration!

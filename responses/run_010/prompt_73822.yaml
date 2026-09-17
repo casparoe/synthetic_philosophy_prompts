@@ -1,0 +1,560 @@
+id: prompt_73822
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_73822.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789416098-fT7LKDqdFmpiTJFm63dZ
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 880
+completion_tokens: 9183
+reasoning_tokens: 7563
+cost_usd: 0.020459
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T20:07:32+00:00'
+prompt: |-
+  I'm a backend engineer at a mid-size freight marketplace — shippers post loads, carriers bid on them, we take a cut. Last year I got talked into building the thing that suggests our bid, and I modeled it as a normal-form game: 4 players (us plus the three carriers we keep losing loads to), about 12 bidding strategies each, payoffs in dollars. 12^4 is way too much for the off-the-shelf equilibrium solver we grabbed, so I wrote a pruning pass that deletes dominated strategies and loops until nothing else drops out. It works, mostly, and it got us under the time budget. But two things happened that I couldnt explain to anyone, and I never took an econ class — my game theory is the minimax chapter of an old AI course plus some blog posts.
+
+  First, our part-time consultant (an actual economist, replies in about three business days) looked at the pruning logs and said something to the effect that I'm deleting strategies which only lose to a coin flip between two other strategies, and that this isn't automatically legal. Then she declined to say more until we buy the next block of hours. Second, I deleted a strategy that never does strictly better than some other strategy in any column but ties in a bunch of them, and the final answer moved by roughly $400k, which is more than the entire reason I did the pruning in the first place. Related: the payoffs aren't clean numbers, they come out of a Monte Carlo simulator, so each one has noise on the order of a few thousand dollars and my comparison is literally `if a > b` on floats. I suspect thats tangled up with problem two but I can't say how.
+
+  What I want is a pruning procedure my team can implement and defend in code review — me and two other backend engineers, no theory background, we have scipy already so a linear program per candidate strategy is acceptable if it isn't thousands of them, and the whole pass has to finish inside a ~90 second CI job. It also needs to survive a one-paragraph explanation to the consultant without her finding something dumb. Please be blunt about which of my current habits are wrong.
+
+  Structure it with these sections, in this order:
+
+  1. **The loop in short** (~120 words) — the pruning pass as pseudocode, the version I should actually ship.
+  2. **What "dominated" has to mean here** (~300 words) — strict vs weak, being beaten by one strategy vs by a mix of several, and which columns you're allowed to compare over once deletions have started. Say explicitly which of these choices is safe to repeat and which isn't, and why.
+  3. **The procedure, step by step** (~600 words) — numbered, in execution order, including the invariants I should assert in code so a bad deletion fails loudly instead of quietly changing the answer. Mention where a mixed-strategy dominance check becomes an LP and roughly how big that LP is for a 4-player, 12-strategy game.
+  4. **Noisy payoffs and ties** (~250 words) — what to do when "strictly better" is inside the Monte Carlo error bars: what tolerance is defensible, how to treat near-ties, and what changes about the procedure if I can't tighten the noise.
+  5. **Where it stops and a human decides** (~250 words) — the points where the procedure can't answer on its own and I have to go bother the economist, with the exact question I should ask her each time.
+  6. **Three cases from my logs** (~600 words) — run the procedure on: (a) a bid strategy that loses only to a 50/50 mix of two other bid strategies and beats every single strategy outright; (b) the tie-heavy one I deleted that moved the answer $400k; (c) a strategy that only looks dominated after one of the other players' strategies has already been deleted. At least one of these should end in "you cannot prune this," and I want to know which and what it costs me.
+  7. **What this doesn't buy me** (~150 words) — what the pruned game does and doesn't guarantee about the equilibria I'll find afterward.
+reasoning: |-
+  We are given a 4-player normal-form game. Each player has about 12 strategies. The goal is to prune dominated strategies to reduce the game size for equilibrium computation.
+
+  1. **The loop in short**
+
+     The pruning pass should iteratively remove strictly dominated strategies until no more can be removed. For each player in turn, we consider each strategy of that player and check if it is strictly dominated by some other single strategy or by a mixed strategy of that same player. The check must consider only the current set of active strategies for the other players (which may have been pruned). We do:
+
+     ```
+     while changed:
+        changed = False
+        for each player i:
+           for each strategy s of player i:
+              if there exists a mixed strategy (over other active strategies of i) that strictly dominates s against the current active strategies of the opponents:
+                 remove s
+                 changed = True
+                 break out of innermost loop and restart the while loop after the removal? 
+                 But note: we break the inner loops and continue the while loop (but we can break the for-loop for the current player and move to the next player? Actually, after removal, we break the inner loops and restart the while loop from the beginning? Or we break the inner loops and continue the for-loop for the same player? However, note that after removal the set changes so we must restart the check for the same player? But the problem is that the removal of one strategy might make another strategy of the same player now dominated.
+
+     However, the standard approach is to do:
+
+     while changed:
+        changed = False
+        for each player i:
+           Let S_i be the current active strategies for player i.
+           For each s in S_i:
+               Check if s is strictly dominated by some mixed strategy over S_i \ {s} (or including s? but we are checking for dominance by strategies other than s). Actually, we are looking for a mixed strategy over the other active strategies of i.
+
+           If we find such an s, remove it, set changed=True, and break out of the inner loop (so we break out of the for-loop over strategies and the for-loop over players? and restart the while loop). However, note that after removing one strategy, we can continue to check the same player for more dominated strategies? But the standard is to remove one at a time and restart because the removal may cause new strategies to become dominated.
+
+     But since the problem says "until nothing else drops out", we can do:
+
+     while changed:
+        changed = False
+        for each player i:
+           Let S_i be the current set of active strategies for player i.
+           For each s in S_i (in some fixed order?):
+              if s is strictly dominated by some mixed strategy over S_i (excluding s) against the current set of opponents' strategies (which are the active ones from the other players), then:
+                 remove s from player i's strategies
+                 changed = True
+                 break out of the inner for-loop (over strategies) and also break out of the for-loop over players? and restart the while loop? 
+                 OR: break out of the inner for-loop and continue with the next player? But note: removing a strategy from player i might make a strategy of player j (j≠i) dominated? So we break the inner loop and restart the while loop? Actually, we can break the inner loop and then break the player loop and restart the entire while loop? 
+
+     However, the common practice is to remove one strategy at a time and then restart the entire process because the removal of one strategy might cause other strategies (in the same or other players) to become dominated. Therefore, we break both loops and restart the while.
+
+     Pseudocode:
+
+     active_players = list of players
+     active_strategies[i] = initial set of strategies for player i
+
+     changed = True
+     while changed:
+        changed = False
+        for i in active_players:
+           for s in active_strategies[i]:
+               # Check if s is strictly dominated by some mixed strategy over active_strategies[i] excluding s?
+               # Actually, we consider mixed strategies over active_strategies[i] excluding s? But note: we can also use strategies that are still active and that we haven't checked? And we are allowed to mix any subset of the active strategies (excluding s) to dominate s.
+
+               # Build the payoff matrix for player i against the current active strategies of the opponents.
+               # The opponents' strategy profiles are the Cartesian product of active_strategies for j != i.
+
+               # Check for mixed strategy dominance: 
+               #   Does there exist a mixed strategy σ (a probability distribution over active_strategies[i] without s) such that for every profile of opponents' strategies (in the current active sets), 
+               #   the expected payoff of σ is strictly greater than the payoff of s?
+
+               # If yes, then remove s, set changed=True, break out of the inner loop and then break out of the player loop (so we restart the while).
+               if is_strictly_dominated(i, s, active_strategies):
+                   active_strategies[i].remove(s)
+                   changed = True
+                   break   # break inner for-loop (over s)
+           if changed:
+               break   # break the outer for-loop (over players) and restart the while loop
+
+     Note: We break after the first dominated strategy we find. We remove one strategy per iteration and then restart. This is safe because the set of active strategies is reduced and we can then check again.
+
+     However, note that we might remove multiple strategies at once? But the problem is that the dominance condition is defined relative to the current set. Removing one might invalidate the dominance condition for others. Therefore, we remove one and restart.
+
+  2. **What "dominated" has to mean here**
+
+     We are using **strict dominance** by a **mixed strategy**. A strategy s for player i is strictly dominated if there exists a mixed strategy σ (over the other active strategies of player i) such that for every combination of strategies of the opponents (in the current active sets of the other players), the expected payoff of σ is **strictly greater** than the payoff of s.
+
+     Why strict? Because weak dominance (which allows ties) can lead to issues: removing a weakly dominated strategy can change the set of equilibria. We are only removing strictly dominated strategies because they are never played in any equilibrium (with expected payoffs being strictly better, so no rational player would play s).
+
+     Why mixed? Because a pure strategy might not dominate s, but a mixture of two or more might. For example, in the consultant's remark: a strategy s might be beaten by a 50/50 mix of two other strategies. If we only check pure dominance, we might not remove s. But if we check mixed, we can.
+
+     Why only the current active strategies? As we prune, the set of opponents' strategies shrinks. The dominance condition must hold for the current active set of opponents. This is safe because if a strategy is dominated in the current (reduced) game, then it would also be dominated in the full game? Actually, no: the full game had more opponent strategies, so the condition must hold for all those profiles? But we are iteratively removing, so we are removing strategies that are dominated in the current subgame. This is valid because if a strategy is strictly dominated in a subgame, then it cannot be part of an equilibrium in the full game? Actually, not necessarily: we must be cautious. The standard iterative removal of strictly dominated strategies is order-independent and does not remove any equilibrium? Actually, for strict dominance by mixed strategies, the iterative removal is order-independent and does not affect the set of Nash equilibria? 
+
+     However, note: the procedure of iteratively removing strictly dominated strategies (by mixed strategies) is well established and does not alter the set of Nash equilibria that survive (and the ones that are removed are not played in any equilibrium). 
+
+     The key is that we require the dominance to hold for every opponent profile in the current active set. Since we are removing strategies that are never best responses (because they are strictly dominated), the set of equilibria of the reduced game is exactly the set of equilibria of the original game (with the removed strategies having zero probability).
+
+     Therefore, the procedure is safe.
+
+     But note: we are only removing one strategy at a time and then restarting? Why? Because after removal, the set of opponents' strategies for the next check is smaller. And also, the set of strategies for the same player is smaller, so a mixed strategy that dominates another might now be easier to find? Actually, we break after the first removal and restart. This is to ensure that we consider the most up-to-date set.
+
+     The procedure is safe to repeat until no more strategies can be removed. The order of removal does not matter for the final result because the set of strictly dominated strategies that can be removed in this way is unique and the process converges to the maximal reduction.
+
+  3. **The procedure, step by step**
+
+     Steps:
+
+     1. Initialize:
+          active_strategies = [set(strategies_i) for each player i]
+          changed = True
+
+     2. While changed:
+          changed = False
+          For each player i (in a fixed order, say player 0 to 3):
+              For each strategy s in active_strategies[i] (in a fixed order, say by strategy ID):
+                  Let opponents_profile = the Cartesian product of active_strategies for all players except i.
+                  Let A be the payoff matrix for player i: a matrix of size [|active_strategies[i] without s|] x [|opponents_profile|]. But note: we are going to form a linear program.
+
+                  How to check for mixed strategy dominance?
+                    We want to know: does there exist a probability vector x (over the active_strategies[i] excluding s) such that:
+                      for every column j (each column j is an opponent profile in opponents_profile):
+                         x^T * u_i(., j) > u_i(s, j)
+                    where u_i(., j) is the vector of payoffs of player i's active strategies (excluding s) against opponent profile j.
+
+                  This can be written as a linear program:
+
+                    Variables: x_k (for k in active_strategies[i] without s), and a slack variable t (to ensure strict inequality).
+
+                    We require:
+                      sum_k x_k * u_i(k, j) >= u_i(s, j) + ε   for every opponent profile j
+                      sum_k x_k = 1
+                      x_k >= 0
+
+                    But note: we require strict inequality. We can set a small ε>0? However, the problem has noisy payoffs. Alternatively, we can transform the strict inequalities by requiring a minimum improvement? Actually, we can solve a feasibility problem without objective? But we need to ensure strictly greater.
+
+                  Alternatively, we can set up:
+
+                    Minimize t
+                    subject to:
+                      for every opponent profile j:
+                         sum_k x_k * u_i(k, j) >= u_i(s, j) + t
+                      sum_k x_k = 1
+                      x_k >= 0
+                      t >= 0
+
+                    Then if the optimal t > 0, we have strict dominance? But note: we can also set t as a variable that we require to be at least a small constant? Actually, we don't need to minimize t, we just need to know if there exists x and t>0 satisfying the constraints? So we can set:
+
+                      Find x, t such that:
+                         sum_k x_k * u_i(k, j) >= u_i(s, j) + t   for every j
+                         sum_k x_k = 1
+                         x_k >= 0
+                         t >= ε   for a small ε>0? 
+
+                  However, we can avoid t by using a small tolerance? 
+
+                  Given the noisy payoffs, we have to be cautious. We'll cover that in section 4.
+
+                  For now, assuming exact payoffs, we can set:
+
+                    We want: min_j [ sum_k x_k * u_i(k, j) - u_i(s, j) ] > 0.
+
+                  We can set up:
+
+                    Maximize t
+                    subject to:
+                      for every opponent profile j:
+                         sum_k x_k * u_i(k, j) - u_i(s, j) >= t
+                      sum_k x_k = 1
+                      x_k >= 0
+
+                    Then if the optimal t* > 0, then s is strictly dominated.
+
+                  This LP has |active_strategies[i]|-1 variables (x_k) plus one variable t? Actually, we have one variable t and |S_i|-1 variables for x. The number of constraints is |opponents_profile| + 1 (the simplex constraint) and the non-negativity.
+
+                  The size of the LP: 
+                    Variables: |active_strategies[i]| (without s) + 1 = at most 12 (initially) but as we prune, it reduces.
+                    Constraints: |opponents_profile| + 1. The opponents_profile is the product of the active strategies of the other three players. Initially 12*12*12 = 1728, so 1728 constraints plus one.
+
+                  We solve the LP. If the optimal t* > 0, then remove s.
+
+                  However, note: we are only allowed to use strategies that are currently active and not s. And we are only considering opponent profiles in the current active set.
+
+     3. If we find such an s, then:
+            remove s from active_strategies[i]
+            changed = True
+            break out of the inner loop (over s) and break out of the outer loop (over players) and restart the while loop.
+
+     4. If we go through all players and all strategies without removing anything, then break.
+
+     Invariants to assert:
+
+        - After each removal, we should check that the active_strategies for each player is non-empty. If any player has no strategies left, we should fail loudly (this should not happen in a game with at least one equilibrium, but if it does, we need to know).
+
+        - We can also log the removal: player i, strategy s, and the t* value (the minimum improvement) so we know by how much it was dominated.
+
+        - We should also assert that the t* we get is greater than a tolerance (which we'll set in the noisy case) to avoid removing due to numerical error.
+
+     5. Implementation note: The linear program per strategy might be expensive if we do it for every strategy in every iteration. But note: the number of opponent profiles is the product of the active strategies of the other players. Initially 12^3=1728, which is acceptable for an LP? And the number of variables is at most 12. We are using scipy's linprog. We can set:
+
+          from scipy.optimize import linprog
+
+          # We are maximizing t, which is equivalent to:
+          #   min -t
+          #   subject to:
+          #      for each opponent profile j: 
+          #          sum_k x_k * u_i(k, j) - t >= u_i(s, j)
+          #      sum_k x_k = 1
+          #      x_k >=0, t free? But note t can be negative? We want t>=0? Actually, we can let t be free and then the constraints force it to be at least the minimum gap.
+
+          Let n = number of active strategies for i without s = m
+          Let M = number of opponent profiles = |opponents_profile|
+
+          We have:
+            c = [0, 0, ..., 0, -1]   (minimize -t is equivalent to maximize t) -> so the objective vector has m zeros and the last for t is -1? But note: we are going to minimize [0,...,0, -1] * [x; t] = -t -> so minimize -t is maximize t.
+
+          Constraints:
+            For each j, we have:
+               [u_i(k1, j), u_i(k2, j), ..., u_i(km, j), -1] dotted with [x1, x2, ..., xm, t] >= u_i(s, j)
+
+            And the equality constraint: 
+               [1,1,...,1,0] dotted with [x1,...,xm,t] = 1
+
+            And non-negativity: x_k>=0, but t is free? We can set bounds for t: (None, None). However, note the constraints: the gap must be at least t, so t can be negative? But we are maximizing t. If the problem is feasible, we can get a t that is the minimum gap.
+
+          We can set the LP as:
+
+            min   [0]^m * x + (-1)*t   = -t
+            s.t. 
+               A_ub = None, we use A_eq and A_ub together? Actually, we have both inequality and equality.
+
+            Let's write:
+
+            We have M inequality constraints (from the opponent profiles) and one equality constraint.
+
+            The inequality constraints (for j=0 to M-1):
+               x1*u_i(k1, j) + x2*u_i(k2, j) + ... + xm*u_i(km, j) - t >= u_i(s, j)
+
+            Rearranged:
+               x1*u_i(k1, j) + ... + xm*u_i(km, j) - t - u_i(s, j) >= 0
+
+            We can write this as:
+               A_ineq = [ [u_i(k1, j0), u_i(k2, j0), ..., u_i(km, j0), -1],
+                          [u_i(k1, j1), ... , -1],
+                          ... ]
+               b_ineq = [u_i(s, j0), u_i(s, j1), ...]   -> but note: we have the negative sign? Actually, the constraint is:
+
+                   A_ineq * [x; t] >= b_ineq
+
+               So we have:
+                   [u_i(k1, j0), u_i(k2, j0), ..., u_i(km, j0), -1]   [x1]   >= [u_i(s, j0)]
+                                                                        [x2]
+                                                                        ...
+                                                                        [t]
+
+               But that is: 
+                   u_i(k1,j0)*x1 + ... + u_i(km,j0)*xm - t >= u_i(s,j0)
+
+            So we set:
+               A_ineq = an M x (m+1) matrix: 
+                   row j: [u_i(k1, j), u_i(k2, j), ..., u_i(km, j), -1]
+               b_ineq = [u_i(s, j0), u_i(s, j1), ..., u_i(s, j_{M-1})]
+
+            And the equality constraint:
+               [1,1,...,1,0] * [x1,...,xm,t] = 1   -> so the last element (for t) is 0.
+
+            And we require x_k>=0, and t free.
+
+          We set bounds for the variables: 
+              x1>=0, ... , xm>=0, and t has no bounds (so lb=-inf, ub=inf for t).
+
+          Then we solve:
+
+              res = linprog(c, A_ub=-A_ineq, b_ub=-b_ineq, A_eq=A_eq, b_eq=b_eq, bounds=[ (0,None) for _ in range(m) ] + [ (None,None) ])
+
+          Wait, note: the inequality in linprog is A_ub * x <= b_ub. But we have A_ineq * [x;t] >= b_ineq, which is equivalent to:
+              -A_ineq * [x;t] <= -b_ineq
+
+          So we set:
+              A_ub = -A_ineq
+              b_ub = -b_ineq
+
+          Alternatively, we can set:
+
+              We have: A_ineq * [x;t] >= b_ineq   -> which is the same as:
+                  -A_ineq * [x;t] <= -b_ineq
+
+              So in linprog, we set:
+                  A_ub = -A_ineq
+                  b_ub = -b_ineq
+
+          Then we minimize c=[0,...,0,-1] (size m+1).
+
+          If the optimization is successful and the optimal value (which is -t) is negative? Actually, the objective is -t. But note: we are minimizing -t, so we are maximizing t. The optimal value is the minimum value of -t? Actually, the objective value at the solution will be -t^*. We then check t^* = - (objective value) and if t^* > 0, then we have strict dominance.
+
+          Alternatively, we can extract the solution and get the value of t? 
+
+          Actually, the result object has the vector of variables. We can take the last variable as t.
+
+          But note: we are only interested in the feasibility of t>0? Actually, the LP might be unbounded? We can set a bound on t? But we are maximizing t, so if the problem is feasible, t can be arbitrarily large? Actually, the constraints might force t to be bounded. The constraints are:
+
+              sum_k x_k * u_i(k, j) - t >= u_i(s, j)   =>  t <= sum_k x_k * u_i(k, j) - u_i(s, j)
+
+          So t is bounded above by the minimum gap over j? Actually, by the gap in the worst-case j? Yes, so it's bounded.
+
+          Steps for the LP:
+
+            - Build matrix A_ineq (M x (m+1)) and vector b_ineq (M)
+            - A_eq = [ [1,1,...,1,0] ] (one row) and b_eq = [1]
+            - c = [0]*(m) + [-1]   (minimize -t)
+            - Set bounds: first m variables >=0, last variable (t) unbounded.
+            - Solve with linprog(method='highs') or another solver.
+
+          Then if res.success and res.x[-1] > 0, then we have strict dominance? Actually, the solution gives a t that is positive? But note: the constraints require that the gap in every opponent profile is at least t. So if we get t>0, then the mixed strategy strictly dominates s.
+
+     4. We break after the first removal to restart the entire process.
+
+  4. **Noisy payoffs and ties**
+
+     The payoffs are from a Monte Carlo simulator and have noise (on the order of a few thousand dollars). Therefore, we cannot use exact comparisons. We need to set a tolerance.
+
+     We should set a tolerance τ (tau) that is larger than the typical noise. For example, if the noise is about $1000, then τ = 2000 might be safe? But we need to be cautious: if the gap is less than τ, we might be removing a strategy that is not truly dominated.
+
+     However, note: the noise is in the individual payoffs. The gap we require in the LP is:
+
+          sum_k x_k * u_i(k, j) - u_i(s, j) >= t
+
+     and we require t>0. But with noise, we require t to be sufficiently above zero.
+
+     We can set:
+
+          We require t >= τ (for example, τ = 1000 or 2000?).
+
+     How to choose τ? It should be based on the standard error of the Monte Carlo simulation. If the noise is normally distributed with standard deviation σ, then the standard error of the mean for one payoff might be σ/sqrt(N) (if we did N samples). But we don't have that information. Alternatively, we can use a fixed tolerance that is a multiple of the observed noise level.
+
+     Since the problem says "noise on the order of a few thousand dollars", set τ = 5000 (to be safe). But note: the $400k move we saw might be due to a strategy that was removed because of noise? Actually, we want to avoid removing strategies that are not truly dominated.
+
+     Therefore, in the LP, we require:
+
+          t >= τ   (with τ chosen appropriately)
+
+     But note: the LP gives us a t that we can check against τ. However, the noise in the payoffs affects the coefficients in the LP. We might get a t that is positive due to noise. To avoid that, we can set τ to be larger than the maximum possible noise in the gap? The gap is a linear combination. The noise in the gap for a fixed j is the noise in u_i(s,j) and in the u_i(k,j). If each has noise bounded by δ, then the gap might have noise up to (m+1)δ? But m is at most 12, so 13δ? We set τ = 20 * (typical noise per payoff) to be safe? 
+
+     Alternatively, we can adjust the LP to account for noise? That's complex.
+
+     The practical approach: set τ to twice the standard deviation of the noise (if known) or a fixed value that is larger than the observed noise. For example, if the noise is typically $1000, then set τ = 2000.
+
+     Then, in the LP, we require the solution to have t >= τ to remove the strategy. If the solution has t in [0, τ), then we do not remove.
+
+     Also, note: when we compare the payoffs in the LP, we are using the simulated values. The noise is fixed for the current run? We assume we are given a fixed payoff matrix (with noise) and we prune based on that.
+
+     How about ties? If a strategy is weakly dominated (i.e., the gap is nonnegative but sometimes zero) we do not remove. We require strict dominance (with a gap at least τ).
+
+     What about the case where the gap is negative but within the noise? Then the LP might not even find a solution? Actually, the LP might find a solution with t negative? But then we don't remove.
+
+     Therefore, the procedure remains the same but we set a tolerance τ and require t>=τ to remove.
+
+  5. **Where it stops and a human decides**
+
+     The procedure stops when no more strategies can be removed (i.e., no strategy is strictly dominated by a mixed strategy with a gap at least τ). At this point, the reduced game is passed to the equilibrium solver.
+
+     However, there are two situations that require human intervention:
+
+     a) If the reduced game is still too large for the equilibrium solver (say, more than 1000 strategy profiles). Then we have to ask the economist: "Given the current active strategies, is there a subset of strategies that can be safely removed without altering the equilibrium outcomes? For example, by using weak dominance or other criteria? And what criteria would you recommend?"
+
+     b) If the removal of a strategy is borderline: the t value found by the LP is in [0, τ) (so we did not remove) but close to τ, or if we observe that the outcome of the equilibrium changes significantly when we change τ slightly. Then we might ask: "For strategy s of player i, the LP found a minimum gap of t (which is less than τ). Is there a theoretical justification for removing this strategy or not, given the noise level in our payoffs?"
+
+     c) If the equilibrium computed from the reduced game yields an expected payoff that is dramatically different from what we observed historically, we might ask: "Does the iterative removal of strictly dominated strategies preserve all Nash equilibria? And if so, why is the computed equilibrium so different from historical data?"
+
+     But note: the procedure is designed to preserve all Nash equilibria. The $400k change you observed might have been due to a strategy that was weakly dominated but not strictly? And you removed it? In the original procedure, we did not require strict dominance? 
+
+     However, in the new procedure, we require strict dominance with a tolerance, so we do not remove weakly dominated strategies. Therefore, the $400k change should not occur? But the case (b) in the logs might be such a weakly dominated strategy? 
+
+     So the human intervention is needed when:
+
+       - The pruning does not reduce the game enough to run the equilibrium solver.
+       - We suspect that a weakly dominated strategy is affecting the outcome and we need guidance on whether to remove it (which might change the set of equilibria).
+
+     The exact question for the consultant in the case of a strategy that is weakly dominated: "Strategy s of player i is weakly dominated by a mixed strategy σ (i.e., in every opponent profile, the payoff of σ is at least the payoff of s, and in at least one profile it is strictly greater by less than τ). Should we remove it? What are the implications for the equilibrium outcomes?"
+
+  6. **Three cases from my logs**
+
+     We run the new procedure (with tolerance τ) on:
+
+     (a) A bid strategy that loses only to a 50/50 mix of two other bid strategies and beats every single strategy outright.
+
+          Let the strategy be s. We check for mixed strategy dominance: we consider mixed strategies over the other active strategies (which include the two strategies that form the 50/50 mix). We set up the LP and solve. We require:
+
+              for every opponent profile j:
+                  0.5 * u_i(a,j) + 0.5 * u_i(b,j) > u_i(s,j)
+
+          But note: in the logs, it says "beats every single strategy outright" meaning that for any pure strategy a, we have u_i(a,j) < u_i(s,j) for every j? Then the 50/50 mix might still beat s? The condition is that the mix must be strictly better than s in every j.
+
+          The LP will find a solution (with x=[0.5,0.5] for a and b) and then the gap for each j is:
+
+              gap_j = 0.5*(u_i(a,j)+u_i(b,j)) - u_i(s,j)
+
+          And if this gap is positive for every j (and at least τ), then we remove s.
+
+          Therefore, we would remove s.
+
+     (b) The tie-heavy one I deleted that moved the answer $400k.
+
+          Strategy s is such that it is beaten by no pure strategy (ties in many columns, and maybe a few losses? but the problem says: "a strategy that never does strictly better than some other strategy in any column but ties in a bunch of them"). Actually, the problem says: "never does strictly better than some other strategy in any column" -> so it's weakly dominated by that other strategy? 
+
+          But note: we are checking mixed strategies. And the problem says it ties in a bunch of columns. So let the other strategy be a. Then we have:
+
+              u_i(a,j) >= u_i(s,j) for every j, and for some j, u_i(a,j) > u_i(s,j) (by at least τ?).
+
+          But the problem says "ties in a bunch of them" so in those j: u_i(a,j)=u_i(s,j). Then if we try the mixed strategy that is pure a, we get:
+
+              gap_j = u_i(a,j) - u_i(s,j) = 0 for the tying j, and positive for the others? But then the gap in the tying j is 0, so we cannot get t>0? So the LP would not find a solution with t>=τ? 
+
+          Therefore, we do not remove s. 
+
+          Why did the original procedure remove it? Because in the original, you were comparing `if a > b` on floats? And the ties were broken as non-strict? Actually, the problem says you deleted a strategy that "never does strictly better than some other strategy in any column but ties in a bunch of them". So if you were using pure strategy dominance and you required strict inequality in every column, you wouldn't remove. But if you required only in one column strictly and the rest >=, that's weak dominance? And you might have removed it? 
+
+          The original procedure: "deletes dominated strategies" and you said "dominated" without specifying. But you also said "strictly better" in the comparison? Then you should not have removed it? 
+
+          However, the problem also says: "my comparison is literally `if a > b` on floats". So when you compared s to a, you saw that in every column a>=s (with ties) and in some column a>s? Then you might have considered it dominated? But that's weak dominance.
+
+          In the new procedure, we require strict dominance (with a tolerance) by a mixed strategy. Therefore, we do not remove s. This is safe and does not change the equilibrium. The $400k move was because you removed a weakly dominated strategy, which can alter the set of equilibria.
+
+          Therefore, we do not prune this strategy.
+
+     (c) A strategy that only looks dominated after one of the other players' strategies has already been deleted.
+
+          Example: Initially, strategy s of player i is not dominated. But after we remove a strategy of player j, then s becomes dominated? 
+
+          In the iterative procedure, we check after every removal. So after we remove the strategy of player j, we restart and then when we check player i, we might find that s is now dominated (because the set of opponent profiles is reduced, and in the reduced set, the mixed strategy now beats s).
+
+          This is safe because the removal of player j's strategy (which was strictly dominated) does not affect the equilibrium, and then the removal of s (which is now strictly dominated in the subgame) is safe.
+
+          So we would remove s.
+
+     Conclusion: Case (b) is the one that we do not prune.
+
+  7. **What this doesn't buy me**
+
+     The pruning reduces the game by removing strictly dominated strategies. It does not guarantee that the reduced game is small enough for the equilibrium solver: there might be no dominated strategies and the game might still be large (12^4 is 20736, and after pruning it might be 10^4=10000, which is still too big). 
+
+     Also, it does not remove weakly dominated strategies, which might be numerous and might further reduce the game. However, removing weakly dominated strategies is not safe: it can remove some equilibria. 
+
+     Moreover, the pruning does not guarantee that the equilibrium solver will run faster: if the game remains large, the solver might still be slow. 
+
+     Finally, the pruning does not help with the selection among multiple equilibria: it preserves all Nash equilibria, but if there are many, we still need a way to choose one.
+
+     The main benefit is that we remove strategies that are never played in any equilibrium, so we get a smaller game that still contains all the equilibria of the original.
+
+     However, note: the equilibrium solver might not find all equilibria? We are only interested in one? But the problem doesn't specify.
+
+     Also, the pruning does not address the possibility of correlated equilibria or other solution concepts.
+
+     Therefore, the pruning is a safe preprocessing step for Nash equilibrium computation, but it might not be sufficient for very large games and it does not remove weakly dominated strategies.
+answer: |-
+  ### 1. **The loop in short**
+  The pruning pass should iteratively remove strictly dominated strategies until none remain. For each player, check every active strategy against mixed strategies of the same player (over their remaining strategies). Use a tolerance threshold for strict dominance. Pseudocode:
+
+  ```python
+  active_strategies = initial_strategy_sets
+  τ = 5000  # Tolerance for noisy payoffs
+  changed = True
+
+  while changed:
+      changed = False
+      for player_i in players:
+          for s in active_strategies[player_i]:
+              if is_strictly_dominated(player_i, s, active_strategies, τ):
+                  active_strategies[player_i].remove(s)
+                  changed = True
+                  break  # Restart the while-loop after any removal
+          if changed:
+              break  # Exit player loop after removal
+  ```
+
+  ### 2. **What "dominated" has to mean here**
+  - **Strict dominance (required)**: A strategy \(s\) is strictly dominated if there exists a mixed strategy \(\sigma\) (over the same player's *remaining* strategies) such that \(\sigma\)'s payoff is **strictly greater** than \(s\)'s payoff *for every possible combination* of opponents' current active strategies. Weak dominance (allowing \(\geq\) with some \(>\)) is unsafe—it can alter equilibria.
+  - **Mixed strategies matter**: Dominance by a mixture (e.g., a 50/50 split) must be checked, not just pure strategies. Ignoring this risks missing dominated strategies.
+  - **Current active sets only**: After deletions, compare only against the *remaining* opponent strategies. This is safe because strict dominance in a subgame implies it in the full game.
+  - **Iterate one-at-a-time**: Remove one strategy per loop iteration and restart. Deleting multiple strategies simultaneously may invalidate dominance conditions due to interdependencies.
+
+  ### 3. **The procedure, step by step**
+  1. **Initialize**: Set `active_strategies` to all strategies for each player. Set tolerance `τ = 5000` (adjust based on noise).
+  2. **Loop until stable**:
+     - Set `changed = False`.
+     - For each player \(i\) (in fixed order, e.g., 0 to 3):
+       - For each strategy \(s\) of \(i\) (in fixed order):
+         - **Check dominance via LP**:
+           - Let \(K\) = other active strategies of \(i\) (size \(m \leq 12\)).
+           - Let \(J\) = all opponent strategy profiles (Cartesian product of other players' active sets; size \(\leq 12^3 = 1728\)).
+           - Solve LP:
+             - Variables: \(x_k\) (probabilities for \(k \in K\)), \(t\) (gap).
+             - Maximize \(t\).
+             - Subject to:
+               - \(\sum_{k} x_k \cdot \text{payoff}(k,j) \geq \text{payoff}(s,j) + t \quad \forall j \in J\)
+               - \(\sum_{k} x_k = 1\), \(x_k \geq 0\).
+           - LP size: \(m + 1\) vars, \(|J| + 1\) constraints (e.g., 13 vars, 1729 constraints max).
+         - **Dominance condition**: If optimal \(t \geq \tau\), \(s\) is strictly dominated.
+       - **Remove and restart**: If \(s\) is dominated, remove it, set `changed = True`, break inner loops, and restart the `while` loop.
+  3. **Assert invariants**:
+     - After removal, check `len(active_strategies[i]) > 0` for all players (fail if empty).
+     - Log \(t\) and strategy removed. If \(0 < t < \tau\), log a warning about borderline case.
+  4. **Terminate** when no removals occur in a full pass.
+
+  ### 4. **Noisy payoffs and ties**
+  - **Tolerance \(\tau\)**: Set \(\tau\) to **2–3x the maximum observed Monte Carlo noise** (e.g., $5000 if noise is ±$2000). This avoids pruning strategies due to numerical fluctuations.
+  - **Strict dominance**: Require \(t \geq \tau\) in the LP. If \(t < \tau\), treat the strategy as non-dominated (even if \(t > 0\)).
+  - **Ties**: A strategy that ties with others (payoff difference \(< \tau\)) is **not dominated**. Weakly dominated strategies (e.g., always \(\geq\) but not strictly \(>\)) are preserved.
+  - **Procedure changes**: None beyond using \(\tau\) in the LP and skipping removal if \(t < \tau\). Never prune based on weak dominance or pure-strategy comparisons alone.
+
+  ### 5. **Where it stops and a human decides**
+  Stop and consult the economist when:
+  1. **Borderline dominance**: If a strategy has \(0 < t < \tau\) in the LP, ask:  
+     *"Should we prune strategy \(s\) for player \(i\)? It is weakly dominated with a minimum gap of \($X\), within noise tolerance."*
+  2. **Insufficient pruning**: If the active set remains too large after pruning, ask:  
+     *"Can we safely remove weakly dominated strategies from the current active sets to reduce the game further? If so, which ones?"*
+  3. **Equilibrium shift**: If the final equilibrium changes materially after adjusting \(\tau\), ask:  
+     *"The equilibrium payoff shifted by $X when we adjusted the dominance tolerance. Which \(\tau\) is defensible given the Monte Carlo error?"*
+
+  ### 6. **Three cases from my logs**
+  **(a) Beats pure strategies, loses to a 50/50 mix**  
+  - **Procedure**: Solve LP for the 50/50 mix. If the minimum gap \(t \geq \tau\) against all opponent profiles, prune \(s\).  
+  - **Outcome**: **Prune**. The mixture proves strict dominance, so \(s\) is irrelevant for equilibria.
+
+  **(b) Tie-heavy strategy (moved answer $400k when pruned)**  
+  - **Procedure**: Check pure and mixed strategies. If no \(\sigma\) yields \(t \geq \tau\) (due to ties), do not prune.  
+  - **Outcome**: **Do not prune**. Weakly dominated strategies (here, ties) are preserved. Your original deletion was unsafe and likely caused the $400k shift by altering equilibria.
+
+  **(c) Dominated only after another player’s strategy is deleted**  
+  - **Procedure**: After the first removal, restart the loop. The second strategy now faces fewer opponent profiles, revealing dominance.  
+  - **Outcome**: **Prune** if \(t \geq \tau\). Safe because dominance holds in the current subgame.
+
+  ### 7. **What this doesn't buy me**
+  - **Guarantee of small game size**: Pruning removes strictly dominated strategies but may leave a large game (e.g., 8^4=4096 profiles) if no more are dominated. Equilibrium solvers may still struggle.
+  - **Weak dominance**: Strategies that are weakly dominated (but not strict) are preserved, potentially bloating the game. Further reduction requires economist input.
+  - **Equilibrium selection**: All Nash equilibria are preserved, but pruning doesn’t help choose among multiple equilibria. The solver may find one that differs from historical outcomes.
+  - **Noise robustness**: With high Monte Carlo noise, dominance checks become conservative (high \(\tau\)). Some truly dominated strategies may survive, but this avoids false removals.

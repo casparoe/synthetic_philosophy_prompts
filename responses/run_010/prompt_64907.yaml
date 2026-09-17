@@ -1,0 +1,431 @@
+id: prompt_64907
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_64907.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789383990-lqD8MdUAVuDoEIxqNr2G
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 757
+completion_tokens: 8437
+reasoning_tokens: 5596
+cost_usd: 0.018771
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T11:13:40+00:00'
+prompt: |-
+  I run an internal forecasting program on a commodity desk — 14 analysts, roughly 35 questions a week (recession calls, OPEC decisions, refinery outages, election stuff), and the numbers go straight into a position-sizing and limits model, so a bad 0.9 is expensive. Management's new ask is that I flag "irrational" probability estimates before they hit sizing. My first thought was the Dutch book story — Ramsey and de Finetti, coherence: if your degrees of belief don't obey the probability calculus, then there's a package of bets, each of which you'd accept at your own quoted prices, that loses you money for sure no matter how things turn out. Which sounds like exactly the check I want, except the theorem's assumptions are its fantasy down here. Nobody accepts every bet at their quoted price. There are stake limits and transaction costs. And half the time I'm not sure two analysts are even answering about the same event.
+
+  So: write me a procedure I can actually run. Ordered checks, what counts as passing each one, what triggers a flag, how big an inconsistency has to be before it's worth bothering anyone given the stakes, and where the procedure stops and hands the thing to a human because it's a judgment call and not a calculation. I get maybe 20 minutes per analyst per week, nobody on staff has read any of this, and the output has to be a one-line reason code I can defend to the analyst being flagged — two of them are senior and will absolutely push back.
+
+  Hard cases it has to survive, all real-ish:
+
+  - A quotes 0.75 for the Fed cutting at least twice next year, 0.6 for a US recession being declared next year, and 0.2 for both, and she also tells me the cuts are certain if there's a recession. Maybe that one's obvious. Tell me what to actually do with it.
+  - B won't give points, he gives ranges (0.3 to 0.5). He can't be booked at all, which makes him look like the most rational guy in the room, but his numbers also can't feed the sizing model or be scored sharply. Flag him, excuse him, or force him to commit?
+  - C is impeccably coherent and has been badly calibrated for two years. I dont want the procedure calling her irrational, but I also don't want it staying silent.
+  - D announces an update rule ("if the rig count drops below X I go to 0.9") and his prices today plus that rule would let a counterparty book him across the two dates. In practice no counterparty can actually bet with him at both dates. Flag, downgrade, or ignore?
+  - Two analysts answered what looked like the same question about "default" — one meant failure to pay, one meant a distressed exchange. Any conjunction test run across them is meaningless, so I assume the procedure has to start somewhere before the arithmetic.
+
+  And be honest about which of the steps are judgment calls in a procedure costume, what the thing structurally can't catch, and why bookability should matter to a desk that never actually bets — i.e. whether the reading on which incoherence matters because it produces bad decisions rather than because you'd literally lose money (the Christensen move, as I understand it) does better work in my setting than the money-loss reading. Then tell me what would count as evidence the flags are worth anything at all: do they predict something downstream, or am I generating busywork?
+
+  Run it on three cases, including one where the right answer is "leave it alone" and one where it flags somebody senior and I have to have an awful conversation.
+reasoning: |-
+  We are designing a procedure to flag "irrational" probability estimates for an internal forecasting program. The constraints are:
+  - 14 analysts, ~35 questions/week.
+  - Output must be a one-line reason code that can be defended.
+  - Time: about 20 minutes per analyst per week.
+  - Staff hasn't read the literature.
+  - The output feeds into position-sizing and limits, so bad probabilities are expensive.
+
+  We'll break the procedure into ordered checks. We'll define what counts as passing, what triggers a flag, and the threshold for an inconsistency to be worth flagging (given the stakes). We'll also indicate where judgment is needed.
+
+  The procedure must handle:
+  1. Incoherence (violations of probability calculus) but with practical adjustments.
+  2. Ranges instead of point estimates.
+  3. Calibration vs. coherence.
+  4. Update rules that could lead to Dutch books in theory but not in practice.
+  5. Ambiguity in event definitions.
+
+  We must also address the philosophical point: why care about incoherence if we don't actually bet? The answer (Christensen move) is that incoherence can lead to bad decisions even without literal betting. We want to avoid decisions that are dominated in the sense that there is a pattern of choices that would lead to sure losses (or at least, systematically worse outcomes) if one were to act on these probabilities.
+
+  Finally, we need to discuss validation: what evidence would show the flags are worth the effort?
+
+  ---
+
+  **Procedure Outline**
+
+  We'll structure the procedure in stages, with each stage having one or more checks. We start with the easiest and most objective checks and move to more subjective ones. We set thresholds for flagging based on the potential cost (with a rule of thumb: flag if the expected loss from the incoherence exceeds a certain amount, but we'll use a simpler approach given time constraints).
+
+  **Stage 0: Preprocessing and Event Matching**
+  - Before any coherence checks, we must ensure that the events are well-defined and that we are comparing apples to apples.
+    - Check: For each question, we require a clear, unambiguous definition. If two analysts are to be compared (e.g., in a conjunction) or if one analyst's probabilities are to be checked for coherence, the events must be identical.
+    - If an event definition is ambiguous (e.g., two analysts interpret "default" differently), then skip any checks that require matching that event until the ambiguity is resolved (by a human).
+    - This step is a judgment call: the procedure administrator (you) must review the event definitions and note which events are equivalent. This can be done once per question (not per analyst) and then reused.
+
+  **Stage 1: Basic Sanity Checks**
+  - Check 1.1: Point estimates must be in [0,1]. Flag any outside as "INVALID_RANGE".
+  - Check 1.2: If an analyst provides a range (like B), then we cannot use the range in the sizing model without a point estimate. We require a point estimate for the model. So:
+    - If an analyst consistently uses ranges and we cannot get a point estimate, then we have two options:
+        a) Flag as "RANGE_NOT_COMMITTED" and require a point estimate (if the analyst can be persuaded).
+        b) If the analyst refuses, then we must either exclude that analyst's forecasts from the model (and flag as "EXCLUDED_RANGE") or use a rule to convert the range to a point (e.g., midpoint). But note: using the midpoint might be arbitrary and lead to incoherence in the model. 
+    - Given that the model requires a point, we should require a point. So we flag as "RANGE_PROVIDED" and then the human must either force a point or exclude the forecast. This is a flag that requires human intervention.
+
+  **Stage 2: Internal Coherence Checks (for an analyst's own set of probabilities)**
+  We check for violations of the probability calculus within one analyst's set of probabilities for related events. We focus on the most common and easily checked violations.
+
+  - Check 2.1: Conjunction rule. For two events A and B, we require P(A ∩ B) ≤ min(P(A), P(B)) and P(A ∩ B) ≥ P(A) + P(B) - 1. But more importantly, if the analyst provides P(A), P(B), and P(A ∩ B), then we check if P(A ∩ B) is within [max(0, P(A)+P(B)-1), min(P(A),P(B))]. However, we also have additional constraints if there is known dependence (like in the Fed/recession example: the analyst says that if there's a recession, then cuts are certain). We'll do two subchecks:
+    - Check 2.1a: Without additional constraints: if P(A ∩ B) is outside [max(0, P(A)+P(B)-1), min(P(A),P(B))], flag as "CONJUNCTION_VIOLATION".
+    - Check 2.1b: With additional constraints: if the analyst states a conditional probability (e.g., P(cuts | recession) = 1) then we can derive that P(cuts ∩ recession) = P(recession). So if the provided P(cuts ∩ recession) is not equal to P(recession) (within a tolerance), then flag as "CONDITIONAL_VIOLATION".
+
+    *Tolerance*: We need to set a tolerance threshold because of rounding and small inconsistencies. Given that a bad 0.9 is expensive, we might set the tolerance at 0.05 (absolute) or 5% of the maximum stake (but that's complex). Alternatively, we can set a fixed tolerance (say 0.1) and then adjust based on the potential loss. However, for simplicity, we'll set a tolerance of 0.05 (absolute difference) for now.
+
+    Example: Analyst A: 
+      P(cuts) = 0.75, P(recession)=0.6, P(both)=0.2, and states P(cuts|recession)=1.
+      Then we expect P(both) = P(recession) = 0.6. But she has 0.2. The difference is 0.4 > 0.05 -> Flag with "CONDITIONAL_VIOLATION".
+
+  - Check 2.2: Disjunction rule. For two mutually exclusive events, P(A ∪ B) = P(A)+P(B). If the analyst states that A and B are mutually exclusive and provides P(A), P(B), P(A ∪ B), then we check if |P(A ∪ B) - (P(A)+P(B))| < tolerance (0.05). If not, flag as "DISJUNCTION_VIOLATION".
+
+  - Check 2.3: Complements: P(not A) = 1 - P(A). Check if |P(not A) + P(A) - 1| < tolerance (0.01, because this is exact). Flag as "COMPLEMENT_VIOLATION".
+
+  - Check 2.4: Conditional probability: If an analyst provides P(A|B) and P(B) and P(A ∩ B), then we check if |P(A ∩ B) - P(A|B)*P(B)| < tolerance (0.05). Flag as "CONDITIONAL_CONSISTENCY_VIOLATION".
+
+  Note: We only run these checks if the analyst has provided all the required probabilities for a given rule. We don't force them to provide all the probabilities for every event, but if they do, we check.
+
+  **Stage 3: Coherence Across Time (Update Rules)**
+  - Check 3: If an analyst announces an update rule (like D: "if the rig count drops below X I go to 0.9"), then we can check the current prices and the rule for potential Dutch booking. However, note that in practice, no counterparty can bet at both dates. So we might not flag it as a violation. But we can still note it for two reasons:
+    a) It might reveal an inconsistency in the analyst's beliefs at the two times (if we can compare the current probability for the event that the rig count drops and the conditional probability given the drop).
+    b) It might be used in a model that simulates future updates, and the rule might be inconsistent with current beliefs.
+
+    How to check:
+      - Let E be the event that the rig count drops below X.
+      - Let F be the event of interest (say, a price increase).
+      - The analyst currently has P(F) and P(E). Also, the rule says if E happens, then P(F) becomes 0.9. But note: the analyst should also have a current conditional probability P(F|E). We can check if the announced update (0.9) is consistent with the current P(F|E). If they are different, that might be okay because the analyst might update on other information too. But if the analyst states that the update rule is the only update (i.e., based solely on E) then we would expect P(F|E) to be 0.9. So if the analyst currently has a P(F|E) that is not 0.9, that is a contradiction.
+
+    However, the analyst might not have provided P(F|E). So we can ask for it? But we have limited time.
+
+    Alternatively, we can note that the update rule implies a conditional probability. We can then check if the current unconditional probability P(F) is consistent with the rule and the current P(E) via the law of total probability? But we don't have P(F|~E). 
+
+    Given the complexity and the fact that in practice no Dutch book can be made, we might choose to flag only if the analyst has provided both the current P(F|E) and it differs from the update rule (by more than 0.05). Otherwise, we note the update rule and do nothing. 
+
+    Flag: "UPDATE_RULE_INCONSISTENT" if the current conditional probability is provided and differs from the rule.
+
+    But note: the rule is for a future update. The analyst might change their mind about the conditional probability when the event happens? So this is a judgment call. We might flag for review and let a human decide.
+
+  **Stage 4: Calibration Check (separate from coherence)**
+  - We want to flag bad calibration, but note: the procedure so far only checks coherence. Calibration is about the empirical frequency matching the probability. We can track each analyst's forecasts over time and compute calibration curves. However, this is a separate process and not done in real-time per forecast.
+
+    Check 4: We maintain a calibration database. For each analyst, we track:
+      - For each probability provided (or binned, e.g., 0.1-0.2, 0.2-0.3, ...), the empirical frequency of the event occurring.
+
+    We can run this periodically (maybe monthly) and flag analysts whose forecasts are miscalibrated (e.g., using a Brier score or a calibration plot). We can flag if the calibration curve is too far from the diagonal (e.g., by a chi-square test or by looking at the mean absolute deviation in the bins).
+
+    But note: we don't have time per week to do this for every analyst. So we do it offline and then assign a "CALIBRATION_WARNING" to an analyst that persists until the calibration improves. This is not part of the 20-minute weekly check, but we can include a note in the output if the analyst is under a calibration warning.
+
+    Example: Analyst C is coherent but miscalibrated. We don't flag her in the weekly coherence check, but we have an ongoing flag for calibration that we report alongside. We can design the system to show both coherence flags (which are per forecast set) and a persistent calibration flag.
+
+  **Stage 5: Threshold for Flagging and Escalation**
+  - We set a threshold for the absolute difference that triggers a flag. We started with 0.05. But we might adjust based on the stakes. We can compute the expected loss from the incoherence. For example, in the conjunction violation, the error might lead to an incorrect position size. We can estimate the cost:
+
+    Let the potential loss from an error of size Δ in a probability be: 
+        Cost = (Δ) * (stake per probability point) 
+    But we don't have a direct conversion. However, note that a bad 0.9 is expensive. So if the probability is used in a decision that could lose $X if the event happens, then an error of Δ in the probability leads to an expected error of Δ * $X. 
+
+    But we don't have $X per event. So we set a fixed tolerance: 0.05 for probabilities in [0.2, 0.8] and 0.02 for extreme probabilities (below 0.2 or above 0.8) because extreme probabilities might have higher stakes (like stop-loss decisions). Alternatively, we can set a fixed tolerance of 0.05 for all.
+
+  - We also consider the number of violations: if an analyst has multiple violations, we might flag even if each is below the tolerance? But we start by flagging each violation above the tolerance.
+
+  - The output is a one-line reason code, which is the flag string (e.g., "CONDITIONAL_VIOLATION").
+
+  **Stage 6: Human Judgment and Stopping Point**
+  - After running the automated checks, we have a list of flags. Some flags require human follow-up:
+    - Event ambiguity (Stage 0): requires human resolution.
+    - Ranges (Stage 1): requires human to get a point or exclude.
+    - Update rule inconsistency (Stage 3): human to discuss with the analyst.
+    - Calibration flags: human to decide on training or other actions.
+
+  - The procedure stops at the automated checks and hands off to a human for these cases.
+
+  **Why bookability matters even without betting?**
+  - The Christensen argument: incoherent probabilities can lead to decisions that are dominated. For example, if an analyst violates the conjunction rule, then the position-sizing model might over- or under-hedge. In the Fed/recession example, the model might use the 0.2 for both events when it should be 0.6, leading to an underpreparation for the joint event. This could be costly. So coherence is a necessary condition for making decisions that are not systematically flawed.
+
+  **Validation: Are the flags worth anything?**
+  - We can track:
+    a) Whether the flags predict downstream model errors. For example, when a flag is raised and we adjust the probability (or exclude it) does the model perform better?
+    b) Whether the flags are associated with higher losses in the positions taken.
+    c) Alternatively, we can simulate the expected loss from the violation (by comparing the incoherent probability with the closest coherent probability) and then estimate the savings from correcting it.
+
+    We might run an experiment: for a period, we record flags but don't adjust. Then we see if the events that were flagged had larger errors in the outcome (compared to the analyst's probability) than non-flagged ones? But note: the flag is about internal consistency, not about the probability being wrong. So a coherent forecast can be wrong (due to bad information) and an incoherent one can be right by luck.
+
+    A better validation: we fix the incoherence by adjusting the probabilities to the closest coherent set (using a method like minimum Euclidean distance) and then compare the Brier score of the original and the fixed set? But that might be complex.
+
+    We might simply note that if we don't fix the incoherence, then the model is using inconsistent inputs, which can lead to suboptimal positions. We can run backtests with and without the correction to see if the corrected probabilities lead to better performance.
+
+    In practice, we can start by flagging and correcting the most egregious violations and then monitor the overall performance of the sizing model.
+
+  ---
+
+  **Run the Procedure on Three Cases**
+
+  **Case 1: Analyst A (Fed and recession)**
+  - Events: 
+      A: Fed cuts at least twice next year.
+      B: US recession declared next year.
+      A ∩ B: Both.
+
+  - Provided: P(A)=0.75, P(B)=0.6, P(A ∩ B)=0.2.
+  - Also, the analyst states: if there's a recession (B), then cuts (A) are certain -> P(A|B)=1.
+  - Check 2.1b: We require P(A ∩ B) = P(B) * P(A|B) = 0.6 * 1 = 0.6.
+  - But provided P(A ∩ B)=0.2. Difference = 0.4 > 0.05 -> Flag: "CONDITIONAL_VIOLATION".
+
+  **Case 2: Analyst B (ranges)**
+  - Provides a range (0.3 to 0.5) for an event.
+  - Check 1.2: We require a point estimate for the model. Since he hasn't provided one, we flag: "RANGE_PROVIDED". Then the human must either get a point or exclude the forecast.
+
+  **Case 3: Analyst D (update rule)**
+  - Current forecast: P(rig count drops below X) = p, P(price increase) = q.
+  - Update rule: if rig count drops below X, then P(price increase)=0.9.
+  - We need to check if the analyst has provided the current conditional probability P(price increase | rig count drops below X). 
+    - If they have, and it is not 0.9 (within 0.05), then flag: "UPDATE_RULE_INCONSISTENT".
+    - If they haven't, then we skip (no flag). 
+
+    Suppose the analyst has not provided the conditional probability. Then no flag. 
+
+  **Case 4: Two analysts on "default"**
+  - Stage 0: We check the event definitions. Analyst1: default = failure to pay. Analyst2: default = distressed exchange. They are different events. Therefore, we do not run any conjunction checks (or other coherence checks) that require these events to be the same. We skip and note: "EVENT_DEFINITION_MISMATCH". We must resolve the ambiguity.
+
+  **Case 5: Analyst C (coherent but miscalibrated)**
+  - In the weekly coherence checks, she passes (no flags). 
+  - However, we have a periodic calibration check that shows she is miscalibrated. We attach a persistent "CALIBRATION_WARNING" to her forecasts. This is not a weekly flag but is displayed in the system.
+
+  **Case 6: A Case to Leave Alone**
+  - Analyst E provides:
+      P(A) = 0.4, P(B)=0.5, P(A ∩ B)=0.2.
+  - Check 2.1a: 
+      Lower bound: max(0, 0.4+0.5-1)=max(0,-0.1)=0.
+      Upper bound: min(0.4,0.5)=0.4.
+      0.2 is in [0, 0.4] -> passes.
+  - No other constraints provided -> no flag.
+
+  **Case with a Senior Analyst (Hard Conversation)**
+  - Senior Analyst F provides:
+      P(A)=0.8, P(B)=0.7, P(A ∪ B)=0.95, and states that A and B are mutually exclusive.
+  - Check 2.2: For mutually exclusive events, P(A ∪ B) should be 0.8+0.7=1.5. But 1.5>1, which is impossible. However, note that the probability of the union cannot exceed 1. So we have two issues:
+     - The mutual exclusivity implies P(A ∪ B)=P(A)+P(B)=1.5, but that is impossible (so one of the inputs must be wrong).
+     - Alternatively, the events are not mutually exclusive? But the analyst states they are.
+
+    Actually, the analyst might have made a mistake in the mutual exclusivity statement. We check the provided P(A ∪ B)=0.95. But 0.95 is less than 1.5, so it passes the non-negativity (it's within [0,1]) but it fails the mutual exclusivity condition: |0.95 - (0.8+0.7)| = |0.95-1.5|=0.55 > 0.05 -> Flag: "DISJUNCTION_VIOLATION".
+
+    However, note that the disjunction rule for mutually exclusive events requires P(A ∪ B)=P(A)+P(B). But 1.5>1, which is impossible. Therefore, the analyst must have erred either in the probabilities or in the mutual exclusivity. This is a serious violation.
+
+    We flag: "DISJUNCTION_VIOLATION" and the reason code is that the union probability (0.95) is not equal to the sum (1.5) and also the sum exceeds 1 which is impossible. We must have the conversation.
+
+    But note: the analyst might say that they are not mutually exclusive? Then why did they say they were? We must clarify.
+
+    Alternatively, we might have a more specific flag for when the sum of mutually exclusive events exceeds 1: "MUTUALLY_EXCLUSIVE_SUM_EXCEEDS_1". That might be clearer for the senior analyst.
+
+    We adjust: in Check 2.2, we first check if the sum of P(A)+P(B) exceeds 1. If so, and the analyst says they are mutually exclusive, then that is impossible. So we flag as "MUTUALLY_EXCLUSIVE_IMPOSSIBLE" (because the probabilities sum to more than 1). This is a more specific and severe flag.
+
+    So for this case: flag with "MUTUALLY_EXCLUSIVE_IMPOSSIBLE".
+
+  ---
+
+  **Summary of Flags (Reason Codes)**
+  - INVALID_RANGE: probability not in [0,1].
+  - RANGE_PROVIDED: analyst provided a range, but we need a point.
+  - CONJUNCTION_VIOLATION: P(A ∩ B) not in [max(0, P(A)+P(B)-1), min(P(A),P(B))].
+  - CONDITIONAL_VIOLATION: when a conditional probability constraint is violated (like in the Fed/recession example).
+  - DISJUNCTION_VIOLATION: for non-mutually exclusive events? Actually we used it for mutually exclusive events and found a discrepancy. But we added:
+  - MUTUALLY_EXCLUSIVE_IMPOSSIBLE: when the analyst states A and B are mutually exclusive but P(A)+P(B)>1.
+  - COMPLEMENT_VIOLATION: P(not A) != 1 - P(A).
+  - CONDITIONAL_CONSISTENCY_VIOLATION: P(A ∩ B) != P(A|B)*P(B) (if all provided).
+  - UPDATE_RULE_INCONSISTENT: if the current conditional probability is provided and differs from the announced update rule by more than 0.05.
+  - EVENT_DEFINITION_MISMATCH: when the same event label is used for two different definitions (across analysts or within an analyst?).
+  - CALIBRATION_WARNING: from an offline process.
+
+  **Procedure Steps in Order (Weekly per Analyst)**
+
+  1. **Preprocessing (Stage 0)**: For the analyst's set of forecasts, check that each event is clearly defined and matches any other events that will be used in checks (like conjunctions). If there is ambiguity, skip the affected checks and note "EVENT_DEFINITION_AMBIGUOUS" for those events. (This step might be done once for all analysts per question.)
+
+  2. **Basic Sanity (Stage 1)**:
+     - For each probability, check if in [0,1]. If not, flag "INVALID_RANGE".
+     - If the analyst provided a range and no point, flag "RANGE_PROVIDED" and skip further checks for that event (until a point is provided).
+
+  3. **Internal Coherence (Stage 2)**:
+     - For each pair of events (A, B) for which the analyst provided P(A), P(B), and P(A ∩ B), run Check 2.1a (conjunction without constraints). If the analyst also provided a conditional probability that constrains the joint, run Check 2.1b.
+     - For each pair of events stated as mutually exclusive with P(A), P(B), P(A ∪ B), run Check 2.2 (and also check if P(A)+P(B)<=1, if not flag "MUTUALLY_EXCLUSIVE_IMPOSSIBLE").
+     - For each event and its complement (if both provided), run Check 2.3.
+     - For each conditional probability and the corresponding joint and marginal (if all provided), run Check 2.4.
+
+  4. **Update Rules (Stage 3)**: For each announced update rule, if the current conditional probability (for the condition in the rule) is provided, check against the rule.
+
+  5. **Calibration (Stage 4)**: Not done weekly, but if there is an active calibration warning for the analyst, we include it in the report.
+
+  6. **Flagging**: Any flag from the above checks (with the exception of the calibration warning) is produced as a one-line reason. We also note that the calibration warning is attached.
+
+  7. **Human Handoff**: For flags that require human intervention (like RANGE_PROVIDED, EVENT_DEFINITION_AMBIGUOUS, and severe violations like MUTUALLY_EXCLUSIVE_IMPOSSIBLE), we stop and hand off.
+
+  **Time Considerations**
+  - We have 20 minutes per analyst. The checks are automated except for the preprocessing (Stage 0) which is done once per question. The automated checks for one analyst should take seconds. The human time is mostly in the handoff: discussing with the analyst to resolve flags. We hope that with clear flags, the discussions are focused.
+
+  **Conclusion**
+  This procedure provides a practical way to flag irrational probability estimates. It focuses on the most common and costly violations and produces actionable reason codes. It is designed to be run within the time constraints and to be defensible. The validation will come from monitoring the impact on the model's performance and by reducing the occurrence of costly errors.
+answer: |-
+  Below is a practical, executable procedure for flagging irrational probability estimates in your commodity desk forecasting program. It balances rigor with operational constraints (20 min/analyst/week, minimal staff training, defensible one-line flags), addresses your hard cases, and specifies judgment call boundaries. The core philosophy is **Christensen's "pragmatic incoherence"**: we care about violations that enable *dominated decisions* in position-sizing, not just theoretical Dutch books.
+
+  ---
+
+  ### **Procedure: Probability Sanity Check (Weekly Run)**
+  **Input:** 14 analysts' 35 probability estimates (points or ranges) + any stated dependencies/rules.  
+  **Output:** "CLEAR" or one-line flag code per analyst with violation details.  
+  **Runtime:** 15-20 min/analyst (automated checks + targeted human review).  
+  **Threshold:** Flag if inconsistency implies ≥0.1 expected value error in sizing model (calibrate to your loss function).
+
+  #### **Ordered Checks & Flagging Rules**
+  1. **Stage 0: Event Definition Harmonization (Judgment Call)**  
+     - **Check:** Match all probability labels to a master event glossary (e.g., "US recession" = 2 consecutive negative GDP quarters).  
+     - **Flag If:** Ambiguous event definition (e.g., "default" could mean payment failure or distressed exchange).  
+     - **Code:** `EVENT_AMBIGUOUS:[event name]`  
+     - **Action:** Hold estimates until resolved. *Do not proceed to arithmetic checks.*  
+     - **Time:** 5 min/analyst (pre-weekly, bulk-run during question setup).
+
+  2. **Stage 1: Basic Coherence (Automated)**  
+     - **Check 1.1:** Point estimates in [0,1].  
+     - **Check 1.2:** If ranges, width ≤0.3 (e.g., [0.3,0.5] OK; [0.2,0.7] not).  
+     - **Check 1.3:** Complements: |P(A) + P(¬A) - 1| ≤ 0.05.  
+     - **Flag If:** Violates 1.1, 1.2 (width >0.3), or 1.3 (|gap| >0.05).  
+     - **Codes:** `INVALID_RANGE`, `RANGE_TOO_WIDE`, `COMPLEMENT_FAIL:[event name]`  
+     - **Threshold:** Absolute (no stake scaling) – foundational validity.
+
+  3. **Stage 2: Conditional Coherence (Automated + Judgment)**  
+     - **Check 2.1:** Conjunctions: P(A∩B) ≤ min(P(A),P(B)) and P(A∩B) ≥ P(A) + P(B) - 1.  
+     - **Check 2.2:** Stated conditionals: If analyst says "A → B" (A implies B), check P(B|A) ≥ 0.95 (effective certainty).  
+     - **Flag If:**  
+       - 2.1 violation with |min violation margin| >0.1 (e.g., P(both) = 0.2 when P(A)+P(B)-1 = 0.35 → gap 0.15).  
+       - 2.2 violation with |P(B|A) - 1| >0.05 (if P(B|A) provided) or P(A∩B) < P(A) - 0.05 (if not).  
+     - **Codes:** `CONJUNCTION_FAIL:[A;B]`, `CONDITIONAL_FAIL:[A→B]`  
+     - **Threshold:** 0.1 = ~10% position error in sizing model. Adjust based on historical loss data.
+
+  4. **Stage 3: Update Rule Audit (Judgment Call)**  
+     - **Check:** If analyst states rule (e.g., "If rig count < X → P(outage)=0.9"), compare current P(outage) and P(rig count < X).  
+     - **Flag If:** Rule implies arbitrage *and* counterparty could plausibly exploit (e.g., liquid forward markets).  
+     - **Code:** `RULE_ARBITRAGE:[rule]`  
+     - **Action:** Downgrade weight in model; do not auto-reject. Real-world frictions matter.
+
+  5. **Stage 4: Calibration Check (Separate Track)**  
+     - **Check:** Monthly calibration score (Brier score, AUC) vs. 2-year rolling window.  
+     - **Flag If:** Consistent miscalibration (e.g., Brier score >0.25 for binary events).  
+     - **Code:** `CALIBRATION_LOW` (persistent flag, not weekly).  
+     - **Note:** *Never* flagged as "irrational" – separate from coherence.
+
+  6. **Stage 5: Range Commitment (Judgment Call)**  
+     - **Check:** If analyst provides ranges (e.g., [0.3,0.5]), require point estimate for model input.  
+     - **Flag If:** Refuses to provide point after Stage 1.2 pass.  
+     - **Code:** `NO_COMMITMENT`  
+     - **Action:** Exclude from sizing model; use for qualitative context.
+
+  **Final Output:** One primary code per analyst (e.g., `CONDITIONAL_FAIL:Recession→FedCuts`). Escalate only one flag; cascade from Stage 1 → 2 → 3 → 5.
+
+  ---
+
+  ### **Hard Case Resolution**
+  1. **Analyst A (Fed/Recession):**  
+     - Stage 0: Events defined.  
+     - Stage 2: States "recession → cuts" (P(cuts|recession) ≈ 1), but P(both) = 0.2 vs. P(recession) = 0.6. Violation: 0.2 < 0.6 - 0.05.  
+     - **Flag:** `CONDITIONAL_FAIL:Recession→FedCuts`  
+     - **Defense:** "Your model implies P(both) ≈ P(recession)=0.6, but you reported 0.2. This understates joint risk."
+
+  2. **Analyst B (Ranges):**  
+     - Stage 1: Range [0.3,0.5] (width=0.2 ≤0.3) → passes.  
+     - Stage 5: Refuses point estimate → **Flag:** `NO_COMMITMENT`.  
+     - **Action:** Exclude from model. "Your ranges are rational but unusable for automated sizing."
+
+  3. **Analyst C (Coherent but Miscalibrated):**  
+     - Weekly: No flags (coherence checks passed).  
+     - Monthly: **Flag:** `CALIBRATION_LOW` (separate report).  
+     - **Action:** Training, not model exclusion.
+
+  4. **Analyst D (Update Rule):**  
+     - Stage 3: Rule "rig count < X → P(outage)=0.9" → check current P(rig count < X) and P(outage).  
+     - If rule implies Dutch book (e.g., if P(rig<X) is high and P(outage) is low), but physical commodity markets lack liquid counter-party betting → **No flag** (ignore).  
+     - **Judgment:** Flag only if exploitable in *your* markets (e.g., traded outage derivatives).
+
+  5. **Two Analysts on "Default":**  
+     - Stage 0: Definitions conflict → **Flag both:** `EVENT_AMBIGUOUS:Default`.  
+     - **Action:** Freeze estimates until definitions harmonized. *Never* run conjunction tests.
+
+  ---
+
+  ### **Judgment Call Boundaries**
+  - **Explicit Judgment:**  
+    - Event definitions (Stage 0).  
+    - Update rule exploitability (Stage 3).  
+    - Range commitment enforcement (Stage 5).  
+  - **Automated (in "procedure costume"):**  
+    - Conjunction/conditional thresholds (Stage 2) – thresholds are educated guesses.  
+    - Calibration scoring (Stage 4) – statistical, but pass/fail cutoff is arbitrary.  
+  - **Structurally Blind Spots:**  
+    - Unstated dependencies (e.g., analyst assumes A and B are independent but doesn't say).  
+    - Model misspecification (correct probabilities applied to wrong drivers).  
+    - Black swans (no coherence violation, but probability unanchored).
+
+  ---
+
+  ### **Why Bookability Matters (Even Without Bets)**
+  The **Christensen pragmatic view** dominates here:  
+  - **Dutch Book:** Theoretical loss from accepting all bets. *Irrelevant* – your desk doesn't book bets.  
+  - **Pragmatic Incoherence:** Self-sabotaging decisions. *Critical* – incoherence distorts position-sizing:  
+    - Example: Analyst A's understated P(both) leads to insufficient hedging capital.  
+    - Flagging ensures probabilities internalize dependencies, avoiding *dominated choices* (e.g., over-hedging A while under-hedging A∩B).  
+  **Verdict:** Coherence matters because it prevents avoidable sizing errors, not because it prevents literal bankruptcy.
+
+  ---
+
+  ### **Validation: Are Flags Worth It?**  
+  Test flags against:  
+  1. **Downstream Losses:**  
+     - Track P&L impact of positions sized with flagged probabilities vs. closest coherent fix.  
+     - Metric: Avoided loss per flag (e.g., "Flags prevented $Xk loss in Q1 from under-hedged joint events").  
+  2. **Forecast Scoring:**  
+     - Do coherent forecasts have lower Brier scores? If yes, flags add value.  
+  3. **Operational Efficiency:**  
+     - Reduced model blow-ups (e.g., "Flags cut reconciliation time by Y hours/week").  
+
+  **Busywork Risk:** Flags are only valuable if:  
+  - They predict sizing errors (test via backtesting).  
+  - Analysts adjust behavior (e.g., flagged analysts reduce errors by 30% in 6 months).  
+  **Start:** Pilot on 3 months of historical data. Measure prevented losses from "fixing" flagged probabilities.
+
+  ---
+
+  ### **Run Examples**
+  **Case 1: Leave Alone (Junior Analyst E)**  
+  - Events: P(Refinery Outage) = 0.4, P(Oil Spike) = 0.5, P(Both) = 0.2.  
+  - Check: Conjunction: min(P(Outage),P(Spike))=0.4, P(Outage)+P(Spike)-1=-0.1 → 0.2 ∈ [0,0.4] ✓.  
+  - No stated conditionals.  
+  - **Output:** CLEAR. No action.
+
+  **Case 2: Flag (Mid-Level Analyst F)**  
+  - Events: P(Strike) = 0.6, P(Production Halt) = 0.7, P(Both) = 0.2.  
+  - States: "Strike → Halt" (P(Halt|Strike) ≈ 1).  
+  - Check: P(Both) should ≈ P(Strike)=0.6, but 0.2 < 0.6 - 0.05 → gap 0.4.  
+  - **Flag:** `CONDITIONAL_FAIL:Strike→ProductionHalt`  
+  - **Action:** Escalate; explain: "Your model implies P(Both)≈0.6, but you reported 0.2. This may under-size hedge positions."
+
+  **Case 3: Senior Analyst G (Hard Conversation)**  
+  - Events: P(Election Chaos) = 0.8, P(Regime Change) = 0.7, P(Either) = 0.9.  
+  - States: "Chaos and Regime Change are mutually exclusive."  
+  - Check: Mutually exclusive → P(Either) should = 0.8 + 0.7 = 1.5. But P(Either)≤1 → impossible. Violation margin = 0.5.  
+  - **Flag:** `CONJUNCTION_FAIL:ElectionChaos;RegimeChange` (with note: mutual exclusivity impossible).  
+  - **Conversation Script:**  
+    > "Your model assumes mutual exclusivity, but P(Chaos)+P(Regime)=1.5 >1. This could overstate risk exposure. Can we revisit the dependency? Alternatively, is one probability mis-scaled?"  
+  - **Senior Pushback Mitigation:** Focus on model impact: "If we size positions assuming these are additive, we could overallocate 50% capital to this risk."
+
+  ---
+
+  ### **Implementation Kit**
+  - **Tools:** Python script (pandas for checks, Streamlit for review UI).  
+  - **Training:** 1-page checklist for analysts ("How to avoid flags").  
+  - **Reporting:** Weekly email: "Flags: 3 this week. Top issue: Conditional violations (50% of flags)."  
+  - **QA:** Randomly audit 20% of "CLEAR" forecasts monthly for missed flags.  
+
+  This procedure targets high-impact, detectable incoherence with minimal friction. It won’t catch everything, but it will nail the expensive, obvious errors – and the flags will withstand senior scrutiny.

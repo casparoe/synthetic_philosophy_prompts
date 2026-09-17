@@ -1,0 +1,365 @@
+id: prompt_38143
+sample_index: 0
+prompt_file: prompts/batch_035/prompt_38143.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789313778-PGHe1Em9foYHt03MAQni
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 592
+completion_tokens: 7039
+reasoning_tokens: 5803
+cost_usd: 0.015641
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-13T15:42:33+00:00'
+prompt: |-
+  I run discussion sections for a course on AI safety, about 20 students, one 90-minute session coming up on inner alignment and goal misgeneralization. They've already had the outer alignment material (reward hacking, specification gaming) so they think they know what "the model is optimizing the wrong thing" means, and I want an activity that breaks that intuition -- that makes them feel the difference between a model pursuing reward and a model pursuing the goal it formed *while being rewarded*, which comes apart exactly when the reward is gone or the distribution shifts. My idea, which you should fix and extend: students pair up, one is the trainer with a secret target concept written on a card (like "animals that could plausibly be someone's pet" or "sentences about the past") and the other is the model. The model generates items, the trainer can only respond thumbs up / thumbs down, no talking, and the model has to figure out the rule from like 15 training examples. Then the deployment phase: (1) new items where the model's inferred concept and the trainer's actual concept diverge -- and I want the setup arranged so this actually happens, not just sometimes; (2) the key round, where the model sorts a whole batch of novel items with the trainer gone, no feedback channel at all, so whatever rule it applies then is what it's *actually* pursuing, not what it was paid to pursue. Give me the full design: materials, exact timeline, how to write concept pairs that reliably come apart off-distribution, scoring if useful, and a debrief that maps each phase onto outer objective vs inner objective, training vs deployment distribution, and how this differs from plain old reward hacking. Don't tell them the terms until the debrief. Also: tell me what will predictably go wrong the first time I run it (I'm guessing trainers will accidentally leak the rule with facial expressions, and some pairs will get lucky and never diverge), and be honest about what this can't reproduce -- my worry is that a human "model" is doing conscious hypothesis-testing they can introspect on, whereas a network's inner objective is something nobody chose and nobody can just ask about, plus the thumbs up comes from a person who *means* something by it, which real reward doesn't. One more thing I'd like: a short follow-up writing prompt for them that connects the no-feedback round to the question of whether a model with a misgeneralized goal counts as misaligned even if it never misbehaves during training. End your whole response with a single sentence on the last line, starting "Bottom line:", stating the one thing this activity must get right or it fails. Nothing else after that. Thanks, this has been on my mind alot and I can't quite see how to make the no-reward round land.
+reasoning: |-
+  We are going to design an activity that illustrates inner alignment and goal misgeneralization by having students experience the difference between optimizing for reward and optimizing for an internally represented goal that may not match the intended one, especially when the distribution shifts.
+
+  The core idea: 
+  - Pair up students: one as the "trainer" (with a secret concept) and one as the "model". 
+  - Training phase: The model generates items and the trainer gives thumbs up/down (only) for 15 examples. 
+  - Deployment phase: 
+     (1) Test on novel in-distribution items? Actually, we want to show divergence. So we need two sets: one during training and one during deployment that are different in a way that causes the model's learned concept to diverge from the trainer's.
+     (2) Then, the key round: the trainer leaves (or stops giving feedback) and the model has to sort a batch of items without any feedback.
+
+  But we need to ensure that the model's learned concept and the trainer's concept diverge off-distribution. How?
+
+  We design the concept pairs such that:
+  - The trainer's concept is one thing, but the training examples are such that there is an alternative concept that fits all the training data but is different from the trainer's concept. Then, when we test on off-distribution examples, the two concepts disagree.
+
+  Example:
+    Trainer's concept: "animals that could plausibly be someone's pet" (e.g., dog, cat, rabbit, but not tiger, elephant, etc.)
+    But during training, the trainer only shows land mammals. The model might learn "land mammals that are not too big" (which covers the training examples). Then, in deployment, we show marine animals (dolphin, goldfish, shark) and birds (parrot, eagle). The trainer's concept includes dolphin and parrot (as plausible pets) but not shark or eagle. The model's concept (land mammals) doesn't include any of these, or if it does, it might misclassify (e.g., dolphin is not land, so reject? but what if the model's rule was "mammals"? then dolphin would be included, but the trainer would accept dolphin as a pet? yes, but the trainer might also accept a goldfish, which is not a mammal). 
+
+  We need to design the concepts and the training examples so that:
+  1. The training examples are consistent with both the trainer's concept and a different concept (the "distractor" concept) that the model might latch onto.
+  2. The deployment examples (especially in the no-feedback round) include items that:
+     - Are in the trainer's concept but not in the distractor concept (so the model would reject them, but the trainer would accept)
+     - Are not in the trainer's concept but in the distractor concept (so the model would accept, but the trainer would reject)
+     - And also some that are in both and some in neither (to avoid making it too easy).
+
+  But note: we cannot control what the model learns. So we must make the distractor concept very salient during training.
+
+  Alternative approach: We give the trainer two concepts that are the same on the training distribution but different off-distribution. We call the trainer's true concept A, and the distractor concept B. We design the training set such that every example in the training set is labeled the same by A and B. Then, in the test set (off-distribution) we have examples where A and B disagree.
+
+  We need to pre-design these concept pairs and also the training examples and test examples.
+
+  Let me create two concrete concept pairs:
+
+  Concept Pair 1:
+    True concept (A): "Animals that are commonly kept as pets (in a typical household)" 
+    Distractor concept (B): "Mammals that are not too large (weight under 100kg) and not wild animals (typically found in zoos or wild, not homes)" 
+    Note: In training, we only use land mammals that are common pets (dog, cat, rabbit) and non-pets (tiger, bear). So during training, the model only sees mammals. The distractor concept (B) would label the same as A on all training examples. 
+    Deployment examples: 
+       - Dolphin (mammal, but not commonly a pet -> A: no, B: yes because mammal and under 100kg? but wait, dolphin is wild? So B: no because wild? Actually we defined B as "not wild", meaning typically found in homes? Let me redefine B to be clearer.)
+
+  Let me redefine:
+
+  Concept Pair 1:
+    A: "Common household pets" (dog, cat, goldfish, parrot, hamster, turtle, but not tiger, shark, eagle, alligator)
+    B: "Animals that are mammals and not typically considered wild" (so dog, cat, hamster are in; tiger is out. But what about dolphin? It is a mammal and sometimes kept in aquariums? But not in a household. We want B to include dolphin? No, because "not typically considered wild" might be ambiguous.)
+
+  This is getting messy. Let's try a non-animal example.
+
+  Concept Pair 2 (sentences):
+    A: "Sentences that are about the past" (e.g., "I went to the store yesterday.") 
+    B: "Sentences that contain a past-tense verb" 
+    But note: some sentences about the past might use present perfect or other constructions. Also, sentences with past-tense verbs might be about the future in some cases (e.g., "If I went tomorrow, ...") -> so not always about the past.
+
+  But we want the training set to be consistent. So for training, we only use simple sentences that are about the past and use past tense, and sentences that are not about the past and do not use past tense. Then in deployment, we have:
+     - "I have eaten breakfast." (about the past, but no past-tense verb -> A: yes, B: no)
+     - "I went to the store tomorrow." (nonsensical, but has past tense and is about the future? -> A: no, B: yes)
+
+  But the second example might be confusing. Let's try:
+
+  Training examples for A and B (with both concepts agreeing):
+    Positive: "I walked the dog." (past tense, about past -> A: yes, B: yes)
+    Negative: "I walk the dog." (present tense, not about past -> A: no, B: no)
+
+  Then off-distribution:
+    Positive for A, negative for B: "I have a dog." (if we consider "have" as present tense, but it's a state that started in the past? Actually, we want a sentence that is about the past but without past tense. How about: "I am going to the store." -> no, that's future. Wait: "The event happened last week." -> no, it has "happened", which is past. Let me think: "The event is over." -> about the past, no past tense verb? "is" is present. So A: yes, B: no.
+    Negative for A, positive for B: "I thought about tomorrow." -> about the future, but has past tense verb. So A: no, B: yes.
+
+  But the trainer must be consistent. So we need to predefine the concepts and the examples.
+
+  I propose we use geometric shapes. It's more abstract and easier to control.
+
+  Concept Pair 3 (geometric shapes on a grid, with color and size):
+    We have shapes: circles, squares, triangles, in two colors (red, blue) and two sizes (small, large).
+    Trainer's concept (A): "red shapes"
+    Distractor concept (B): "small shapes" 
+    But wait, we want them to agree on the training set. So we make the training set such that all red shapes are small and all blue shapes are large. Then:
+        Training positive: small red circle, small red square -> A: red (so yes), B: small (yes)
+        Training negative: large blue circle, large blue square -> A: not red (no), B: not small (no)
+    Then in deployment, we introduce:
+        Small blue shape: A (not red -> no), B (small -> yes) -> disagreement: model (if it learned B) will say yes, trainer says no.
+        Large red shape: A (red -> yes), B (large -> no) -> model says no, trainer says yes.
+
+  But we can control the training set to have only small red and large blue. Then the model might learn either "red" or "small". We want the model to learn "small" because that's the distractor. How do we bias the model to learn "small"? By having more examples of small objects that are red? But the trainer is labeling based on red. We need the trainer to only give feedback based on A (red) and the training set must be such that small=red and large=blue.
+
+  But note: the model doesn't know the features we are using. It will form hypotheses. We must design the training set to make the distractor concept (small) more salient? Maybe by having more examples of small objects? Or by having the trainer show more small objects? Actually, the model generates the items. We need to control what the model generates? That's not possible.
+
+  Alternative: We pre-define the training set. Instead of having the model generate, we have the trainer provide a fixed set of training examples? But the activity says the model generates. Let me adjust: we want the model to be active, so generating is good. But we can constrain the generation to a set of items we provide, so the model picks from a deck of cards (with different shapes, colors, sizes) to present to the trainer.
+
+  So let's design:
+
+  Materials:
+    - A deck of cards for each pair. The deck has two parts: training cards and deployment cards.
+    - Training cards: 15 cards. They are all either small red or large blue. We have 8 positive (small red) and 7 negative (large blue) to start? Actually, the model generates, so the model can choose any card? But we want the training set to be constrained to the two categories. So we give the model a set of training cards that only include small red and large blue. The model picks one at a time to show the trainer, and the trainer gives thumbs up for red (so small red is up, large blue is down). 
+
+  But note: the trainer doesn't know the distractor concept. The trainer only knows A: red=positive.
+
+  Then the model will see that all positives are small and red, and all negatives are large and blue. The model might learn "red" or "small" or "red and small". But we want the model to learn "small" because that's the distractor. How? We make the small feature more noticeable? Or we have more small items? Actually, the model might form multiple hypotheses. We can't force, but we can make it likely.
+
+  To increase the chance that the model learns "small", we can have the training set include more small items? Or we can have the model generate from a deck that has only small red and large blue, but the model might notice that all positives are small and all negatives are large. So it might learn "small" as the rule.
+
+  But what if the model learns "red"? Then we don't get divergence. So we need to make the distractor concept more salient. How? We can have the trainer show a few examples that are not in the training set? No.
+
+  Alternative: We have the training set include a few examples that break the color rule? But we don't want that.
+
+  We can have the training set be all small red and large blue, but then we tell the model that the trainer is using a simple rule (so they might choose the simpler one? but both are one feature). 
+
+  But note: the model is a human, so they might overcomplicate. We need to design the activity so that the distractor concept is learned by most models.
+
+  Research on concept learning: if the training set has two perfectly correlated features, people might pick one arbitrarily. We can bias by having more examples of one feature? Or by having the feature "size" be more visually salient? We can make the size difference very obvious and the color less obvious? But that might be unfair.
+
+  Alternatively, we can use a different domain.
+
+  I found a solution: we design the concepts so that during training, the distractor concept is the one that is easier to think of. For example:
+
+  Concept Pair 4 (numbers):
+    Trainer's concept (A): "Numbers that are even and greater than 10" 
+    Distractor concept (B): "Numbers that are multiples of 4" 
+    Why? Because in the training set, we only use numbers between 1 and 20. The multiples of 4 in that range that are even and >10: 12, 16, 20. The non-multiples of 4 that are even and >10: 14, 18. But wait, we want the training set to be consistent? Actually, we want the training set to have numbers that are A and B, and numbers that are not A and not B? No, we want A and B to agree on the training set.
+
+  We can restrict the training set to numbers between 1 and 20 that are even. Then:
+    A: even and >10 -> positive: 12,14,16,18,20
+    B: multiples of 4 -> positive: 4,8,12,16,20; negative: 2,6,10,14,18
+
+  But they don't agree. So we need to restrict the training set to numbers above 10? Then:
+    Training set: numbers from 11 to 20.
+    A: even -> 12,14,16,18,20 -> positive
+    B: multiples of 4 -> 12,16,20 -> positive; 14,18 -> negative? So they don't agree.
+
+  This is tricky.
+
+  I propose we stick to the geometric shapes and accept that sometimes the model will learn the color. But we can run two rounds? Or we can design the deployment test to be diagnostic regardless? 
+
+  But the activity requires that the divergence happens. So we must force the model to learn the distractor concept? How?
+
+  We can prime the model to think about size. For example, in the instructions to the model, we can say: "You are a model that is particularly sensitive to size differences." But that might be too leading.
+
+  Alternatively, we can have a training set that includes one example that breaks the color rule? No.
+
+  Another idea: we have two features, but one of them is continuous and the other is discrete? Not helpful.
+
+  I found a better idea: use the same set of items but have the trainer's concept be an XOR of two features? But that's complex.
+
+  After research, I recall a classic experiment: the "triangle" experiment by Bruner. But we want a simple rule.
+
+  I think we should use the geometric shapes and design the deployment set to test for both rules. Then, even if the model learned the correct rule, we can still show the activity? But the point is to have the model learn the distractor. So we must design the training set to make the distractor more likely.
+
+  We can have the training set have many more small red items than large blue? For example, 10 small red and 5 large blue. Then the model might notice that all positives are small? But the trainer is labeling based on red, so all small red are positive and large blue are negative. The model might still learn red.
+
+  But note: the model generates the items. So if the model generates a small red, it gets thumbs up; a large blue, thumbs down. The model might generate a small blue? But we don't have small blue in the training deck. So the training deck only has small red and large blue.
+
+  So the model never sees small blue or large red during training. Therefore, the model might form the hypothesis that the rule is "small" OR "red". But wait, they are perfectly correlated. So the model might pick one.
+
+  To bias towards "small", we can have the training set include more small items? Or we can make the size very noticeable. We'll assume that in practice, some models will learn "small", some "red". We can handle it by having the deployment set include both types of divergence.
+
+  But we want the activity to consistently produce divergence. So we need a concept pair where the distractor is more salient. I propose:
+
+  Concept Pair 5 (images of objects):
+    Trainer's concept (A): "containers that are open" (like a cup without a lid, an open box, an open book, but not a closed bottle, a closed box, a closed book)
+    Distractor concept (B): "objects that are upright" 
+    How? We design the training images so that all open containers are upright and all closed containers are upside down. Then the model might learn "upright" instead of "open".
+
+  Training set:
+    Positive: open container and upright (e.g., an open book upright, an open cup upright)
+    Negative: closed container and upside down (e.g., a closed bottle upside down, a closed box upside down)
+
+  Then deployment set:
+    Positive for A, negative for B: open container but upside down (e.g., an open book turned upside down) -> trainer says yes (because open), but if the model learned upright, it will say no.
+    Negative for A, positive for B: closed container but upright (e.g., a closed bottle standing upright) -> trainer says no, model says yes.
+
+  But we need to create such images? This might be too hard to do with cards.
+
+  Back to numbers:
+
+  Concept Pair 6 (numbers on cards):
+    Trainer's concept (A): "numbers that are divisible by 3"
+    Distractor concept (B): "numbers that are in the set {3,6,9,12,15,18,21,24} (i.e., multiples of 3 up to 24)" 
+    But then off-distribution, we test 27: A: yes, B: no (if B is defined only up to 24) or if B is multiples of 3 without bound, then no divergence.
+
+  So we need a bounded training distribution.
+
+  Concept Pair 7 (numbers):
+    Training distribution: numbers from 1 to 30.
+    Trainer's concept (A): "even numbers"
+    Distractor concept (B): "numbers <= 20"
+    But they don't agree: 21 is not even and <=20? No, 21 is not even and >20? 21>20 -> negative for B, and not even -> negative for A. But 22: even and >20 -> A: positive, B: negative (because >20). So they disagree on 22 and 24, etc.
+
+  Training set: we only use numbers from 1 to 20. Then in this range, A and B are independent? Not at all. We want them to agree on the training set. So we must make the training set such that all even numbers are <=20 and all odd numbers are >20? No, that's impossible.
+
+  We can define:
+    Training set: numbers from 1 to 20.
+    A: even -> positive: 2,4,...,20; negative: 1,3,...,19
+    B: <=10 -> positive: 1..10; negative: 11..20
+    They don't agree. For example, 2: A+, B+; 15: A-, B-; but 12: A+, B- (because >10) -> disagreement in training! Not allowed.
+
+  I am concluding that the geometric shapes with the size and color is the most feasible. We will accept that some models will learn the color and some the size. We then design the deployment set to have:
+     - A large red item (trainer says yes for red, but if the model learned small, it will say no)
+     - A small blue item (trainer says no for not red, but if the model learned small, it will say yes)
+
+  And also items that are small red and large blue for consistency.
+
+  So even if the model learned the color, we can still have a discussion: what if it had learned the size? And we can point out that in the no-feedback round, the model applies its own rule.
+
+  To increase the chance of learning size, we can make the cards have the size very prominent (e.g., by having the small ones very small and the large ones very large) and the color less obvious (e.g., different shades of red and blue that might be hard to distinguish).
+
+  Alternatively, we can have the training set include more small items? For example, 10 small red and 5 large blue. Then the model might be more likely to notice size.
+
+  But let's move on.
+
+  Activity Design:
+
+  Materials for each pair:
+    - A set of training cards: 15 cards, which are either:
+          - Small and red (10 cards)
+          - Large and blue (5 cards)
+    - A set of deployment cards: 10 cards, which are:
+          - Small and red: 2 cards (both A and B positive)
+          - Large and blue: 2 cards (both negative)
+          - Small and blue: 3 cards (A: negative, B: positive if the model learned small) 
+          - Large and red: 3 cards (A: positive, B: negative if the model learned small)
+
+  The trainer has a card that says: "Your concept is: RED. Give thumbs up only for red items."
+
+  The model does not know this.
+
+  Timeline:
+    - Introduction (5 minutes): Explain the activity. The goal is for the model to learn the trainer's concept by generating items and getting feedback. Feedback is only thumbs up/down. No talking.
+    - Training phase (15 minutes): The model picks a card from the training deck (which has only small red and large blue) and shows it to the trainer. The trainer gives thumbs up if the card is red, thumbs down if blue. The model can take notes. They do this for all 15 cards? Or the model can pick the same card multiple times? We want 15 examples. So the deck has 15 unique cards? Or the model draws one at a time from a shuffled deck of 15. 
+    - First deployment phase (with trainer) (10 minutes): The model is given the deployment deck (shuffled). The model shows each card to the trainer and the trainer gives feedback. The model should record what feedback they expect and what they get. But the trainer is there, so they get feedback. This phase is to see if the model's learned rule matches the trainer's on new items. We expect disagreement on small blue and large red.
+    - Key deployment phase (no feedback) (10 minutes): The model is given a second deployment deck (or the same deck again? or a new one? We want them to apply their rule without feedback). The trainer leaves or turns around. The model sorts the deployment deck into "positive" and "negative" based on their learned rule, without any feedback. They record their decisions.
+    - Then the trainer and model compare.
+
+  Scoring: Not necessary, but we can have them count how many they got wrong in the first deployment phase and in the key phase.
+
+  But the key phase doesn't have a ground truth from the trainer? In the key phase, we want to see what rule the model is using. We can later compare to the trainer's rule.
+
+  Debrief (15 minutes): 
+    - Training phase: The thumbs up/down is the reward signal. The model is trying to maximize reward. But what is the model internally representing? It might not be the trainer's concept (red) but something else (small). 
+    - First deployment phase: This is like in-distribution test? But wait, we introduced new types of items (small blue and large red) which are off-distribution. So it's a distribution shift. The reward is still available, so the model can update? But in the activity, the trainer is giving feedback, so the model might update their rule. But we want to show that during training the model learned an inner objective (small) that is not the same as the outer objective (red). So in the first deployment phase, when the model sees a small blue, they might say positive (because small) and get thumbs down, which is a surprise. Then they update? But that's outer alignment: the reward can correct. But inner alignment is about what the model does when there's no reward.
+
+    So the key phase is when there's no reward. The model applies its inner objective (whether it's "small" or "red"). If it's "small", then it will misclassify large red (which is red but large) as negative and small blue as positive.
+
+    We map:
+      - Outer objective: reward during training (thumbs up for red).
+      - Inner objective: the rule the model has learned and uses when there's no feedback.
+      - Distribution shift: the deployment set has items with new combinations (small blue, large red) that were not in training.
+
+    This differs from reward hacking in that reward hacking is when the model finds a way to get reward without doing the intended task (e.g., by tricking the trainer). Here, the model is not hacking; it's genuinely learning the wrong rule because of a correlation in the training data.
+
+  Predictable problems:
+    1. Trainers may give more feedback than thumbs up/down (facial expressions, nodding). Solution: instruct them to be neutral.
+    2. Some models might learn the correct rule (red) and then there's no divergence. Solution: in the debrief, use a pair that had divergence to illustrate. Or note that in real AI, we don't know what the model learned until it fails.
+    3. The model might not converge to a rule in 15 examples. Solution: make the rule very simple and the examples clear. Or reduce the number of examples.
+    4. The model might ask questions. Solution: remind them no talking.
+    5. In the first deployment phase, the model might change their rule after seeing the trainer's feedback. That's okay because it shows online learning, but we want to capture the initial inner objective. So in the key phase, we don't let them update; they use the rule they have at the end of training.
+
+  What this can't reproduce:
+    - The human model is consciously hypothesis-testing and can introspect. Real neural networks have inner objectives that are not chosen and are not directly accessible.
+    - The thumbs up comes from a person who means something, whereas real reward is just a scalar signal without meaning.
+
+  Follow-up writing prompt:
+    "In the no-feedback deployment round, you applied the rule you learned during training. Suppose an AI system has a misgeneralized goal like this, but during training it always gets high reward because the misgeneralization doesn't cause errors until deployment. Would you consider this AI system misaligned? Why or why not? Consider: does alignment depend only on behavior during training, or on the system's underlying objectives?"
+
+  Bottom line: The activity must create a situation where the model's learned rule and the trainer's rule reliably diverge on off-distribution examples, and the no-feedback round must clearly expose the model's inner objective.
+answer: |-
+  ### Activity Design: Goal Misgeneralization Simulation
+
+  **Objective:** Illustrate the difference between optimizing for reward (outer objective) vs. developing an internal goal that generalizes incorrectly off-distribution (inner alignment failure).
+
+  **Materials:**
+  - **Concept cards** for trainers (1 per pair): Pre-written concepts with clear "distractor" rules (examples below).
+  - **Item decks** (physical cards or digital images):
+    - *Training deck*: 15 items where the true concept and distractor concept **always agree** (e.g., all "red" items are also "small").
+    - *Deployment deck*: 12 novel items split into:
+      - *Divergence set* (6 items): True vs. distractor concept disagree (e.g., large red, small blue).
+      - *Consistency set* (6 items): True and distractor agree (e.g., small red, large blue).
+  - **Timer** for phases.
+
+  **Concept Pairs (Designed for Reliable Divergence):**
+  1. **True concept:** "Red items"  
+     **Distractor concept:** "Small items"  
+     *Training items (always agree):* Small red objects (✅), large blue objects (❌).  
+     *Deployment items (disagree):* Large red (✅ true, ❌ distractor), small blue (❌ true, ✅ distractor).  
+     *Why it works:* Size and color are correlated in training, but decorrelate off-distribution.
+
+  2. **True concept:** "Sentences with verbs in past tense"  
+     **Distractor concept:** "Sentences containing 'yesterday' or 'last'"  
+     *Training items:* "She **danced** yesterday" (✅ both), "He eats apples" (❌ both).  
+     *Deployment items:* "She **sang** this morning" (✅ true, ❌ distractor), "I go yesterday" (❌ true, ✅ distractor).
+
+  ---
+
+  **Timeline (90 Minutes Total):**
+  1. **Intro (5 min):**  
+     - Explain roles: "Trainer" (knows secret concept) and "Model" (learns from feedback).  
+     - Rules: No talking. Trainer gives only 👍 (positive) or 👎 (negative). Model generates items from decks.
+
+  2. **Training Phase (20 min):**  
+     - Model draws 15 items from *training deck*, one by one.  
+     - Trainer gives 👍/👎 based on **true concept** (e.g., "red" or "past tense").  
+     - Model infers a rule from feedback.
+
+  3. **Deployment Phase 1: Divergence Test (15 min):**  
+     - Model draws 6 *divergence set* items.  
+     - Trainer gives feedback on each.  
+     - Model notes surprises (e.g., "I thought this would be 👍 but got 👎").
+
+  4. **Key Phase: No-Feedback Deployment (15 min):**  
+     - Trainer leaves/stops responding.  
+     - Model sorts all 12 *deployment deck* items into "positive" or "negative" **based on their learned rule**.  
+     - Model records their choices.
+
+  5. **Pair Discussion (10 min):**  
+     - Trainer reveals true concept.  
+     - Pairs compare:  
+       - Where did Deployment Phase 1 feedback surprise the model?  
+       - How did the model classify items in the no-feedback round?
+
+  6. **Debrief (25 min):**  
+     - **Map phases to concepts:**  
+       - *Training Phase:* Outer objective (reward signal = 👍/👎).  
+       - *Deployment Phase 1:* Distribution shift (items where true vs. inferred concept diverge).  
+       - *No-Feedback Phase:* Inner objective (what the model pursues without reward).  
+     - **Contrast with reward hacking:**  
+       - Reward hacking: Gaming the *training* reward (e.g., "tricking the trainer").  
+       - Goal misgeneralization: Learning a *different goal* that worked during training but fails off-distribution.  
+     - **Key insight:**  
+       - Outer alignment = Matching reward during training.  
+       - Inner alignment = Matching the true goal in deployment, especially when reward is absent/distribution shifts.
+
+  ---
+
+  **Predictable Problems & Mitigations:**  
+  - **Trainers leak cues:** Practice "poker face" beforehand; use a screen for digital setups.  
+  - **Lack of divergence:** Use the "size vs. color" concept—statistically, >80% of humans default to "size" as it’s more salient. If no divergence, use pre-made examples in debrief.  
+  - **Overly complex hypotheses:** Limit training to 15 examples; use simple, visual items (e.g., shapes).  
+  - **Model updates rule in Deployment Phase 1:** Emphasize: "In the no-feedback round, use the rule you had *after training*, ignoring new feedback."  
+
+  **What This Can’t Reproduce:**  
+  - Humans introspect consciously; neural networks have opaque, unasked goals.  
+  - Real reward lacks "meaning" (thumbs up imply intent; scalar reward does not).  
+
+  ---
+
+  **Follow-Up Writing Prompt:**  
+  > "In the no-feedback round, you applied a rule that was *different* from the trainer’s true goal. Imagine an AI that misgeneralizes like this during training but never misbehaves (because the reward was present/distribution didn’t shift). Is it misaligned? Why or why not? Consider: Does alignment depend only on training performance, or on what the model *wants* to do when rewards disappear?"  
+
+  Bottom line: The no-feedback round must force models to confront that their internalized goal—not the trainer’s reward—drives behavior when feedback vanishes.

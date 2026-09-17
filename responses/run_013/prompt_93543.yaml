@@ -1,0 +1,259 @@
+id: prompt_93543
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_93543.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789536144-JBZio1BWPXFA24D91jPB
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1019
+completion_tokens: 5610
+reasoning_tokens: 4106
+cost_usd: 0.012739
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-16T05:27:02+00:00'
+prompt: |-
+  I write smart contracts for a living — not a researcher, just someone who ships escrow contracts, commit-reveal schemes, multisigs, hash-locked conditional payments, and who's been burned enough by MEV, reentrancy and deployment ordering that I think in terms of deployed bytecode, verified source, gas, storage slots, and the question "what can this thing actually enforce, and against whom". My formal game theory is thin: I know Nash equilibrium as "nobody wants to unilaterally change what they're doing", and that's about it. So when a friend in a theory group described a construction to me (he called it program equilibrium) I could half-follow it but I can't shake the feeling that he was describing something I already build, or something I can't build at all. The setup as I understood it: two players don't pick moves, they each submit a *program*; both programs go to a referee, which runs each one with the other program as input, and the resulting outputs are played in some base game (his example was a one-shot prisoner's dilemma); the programs are allowed to read each other's source code, or at least to compare it to their own. An equilibrium is then a pair of programs where neither player wants to swap in different code knowing what the other submitted. The payoff is that you get mutual cooperation in a one-shot PD with no repetition and nobody enforcing anything, via a recipe like "if the opponent's program is textually identical to me, cooperate, otherwise defect" — a clone cooperates, anything else gets defected on, and since mutual defection is worse for me than mutual cooperation, deviating doesn't pay. He also mentioned a folk-theorem-flavoured result: exactly the payoffs that are feasible and better-than-minimax for each player are achievable, the same condition as in repeated games but without the repetition. And he mentioned the standard complaint, that the whole thing is fragile — if one player's copy has an extra space character in it, both programs defect and you're back to mutual defection.
+
+  What I want from you: restate that construction, as faithfully as you can, in the vocabulary I actually use. Go piece by piece rather than in one blob — what the player's program corresponds to (a contract? a deployed bytecode hash? a constructor argument? a signed message? a commitment?), what the referee corresponds to, what "reading the opponent's source" corresponds to, what the equilibrium condition corresponds to, what the clone recipe corresponds to, and what the folk-theorem result corresponds to. Then give me the residue report: which of those translations are clean, which only work if you fudge something and what exactly you had to fudge, and which parts of the construction have no counterpart at all in how contracts work. I'm especially suspicious of one spot, so please answer it directly rather than hedging: the theory seems to buy cooperation *without* an enforcer, whereas basically everything I build is a way of borrowing the chain's enforcement, so I suspect the mapping inverts at exactly the point that matters — the referee in his story has no power except running the programs, and the EVM in my story is precisely the thing doing the enforcing. If that's right, tell me what the inversion costs, and if it isn't, tell me why not.
+
+  Two more specific things I want in the report. First, the theory seems to assume both programs are handed over and then run together, and that a program can inspect the other one for free; on chain I can't simulate arbitary code without paying for it, I can't call into a contract that hasn't been deployed yet, and whoever deploys second gets to read the first one — so I want to know which of the results survive contact with deployment ordering and cost, and whether "hash-committed to code identical to mine" is the real counterpart of the clone recipe or a cheap imitation of it. Second, the whitespace fragility landed weirdly hard for me, because I've hit its exact on-chain analogue: two contracts with identical source can compile to different bytecode (compiler version, settings, the metadata that gets appended), so "same code" and "same hash" come apart in ways that bite me in practice — tell me whether that makes the construction more fragile than he let on, or whether it's the opposite, i.e. the fragility is a feature because it's what makes deviation detectable. And don't just tell me in general that translations lose something — make a call on each bit of residue: is it a gap in my vocabulary, or is it a sign that program equilibrium is doing less work than it looks like? If the honest answer is that my framing quietly presupposes the very thing (a trusted, enforcing referee) the construction was designed to do without, say so, and tell me what the construction is actually buying that a smart contract isn't.
+reasoning: |-
+  We are going to break down the program equilibrium construction into pieces and map each piece to the vocabulary of smart contract development. Then we will analyze the residue: where the mapping is clean, where it requires fudging, and where there is no counterpart. We'll also address the specific concerns about the referee, deployment ordering, cost, and the whitespace fragility.
+
+  ### 1. The Players' Programs
+  **Theory:** Each player submits a program (a string of code) that, when run, takes the opponent's program as input and outputs a move (e.g., Cooperate or Defect in the PD).
+
+  **Smart Contract Translation:**
+  - **What it corresponds to:** A smart contract (deployed bytecode) that has a function which can take as input (or inspect) the opponent's contract address and return a move. Alternatively, it could be a commitment to a program (e.g., a hash of the bytecode) that is later revealed and run by the referee.
+
+  **Residue Report:**
+    - **Clean?** Partially. We can deploy a contract that, when called, returns a move. However, the "input" to the program (the opponent's contract) is not passed as a string of code but as an address. To inspect the opponent's code, we would have to use `EXTCODECOPY` (or similar opcode) to get the bytecode of the opponent's contract. This is possible but costly. Also, note that the contract is deployed, so we are dealing with bytecode, not source code.
+    - **Fudging:** We are fudging the "source code inspection" because in the theory, the program can read the exact source code (as a string). On-chain, we get the deployed bytecode. This might differ from the source due to compilation (as you noted). Also, the cost of reading and analyzing the bytecode is non-zero and must be paid by someone (the referee? the player?).
+    - **No Counterpart?** The theory allows arbitrary computation on the opponent's program. On-chain, we are limited by gas and the fact that the contract must be deployed (so we cannot run against an undeployed program).
+
+  ### 2. The Referee
+  **Theory:** A trusted referee that receives both programs, runs each one (providing the other program as input), and then takes the outputs as the moves for the base game.
+
+  **Smart Contract Translation:** 
+  - **What it corresponds to:** A smart contract (the "referee contract") that:
+    - Receives the addresses of two deployed contracts (one for each player).
+    - Calls a function on each contract, passing the address of the other contract as an argument (or allowing the callee to inspect the other's code via `EXTCODECOPY`).
+    - Collects the outputs and enforces the outcome (e.g., distributes payments).
+
+  **Residue Report:**
+    - **Clean?** The referee contract can be built. However, note the inversion of enforcement: in the theory, the referee is just a runner and has no enforcement power. In the smart contract world, the referee contract is the enforcer because it runs on the blockchain. So the blockchain is providing the trust that the referee is honest and that the programs are run as specified.
+    - **Fudging:** The theory does not require the referee to enforce the outcome (it just runs the programs and the moves are played). But in the PD example, there's no external enforcement needed because the moves are just outputs. However, in a setting where the moves lead to payments (like in an escrow), the referee contract would be the one holding and distributing funds. So the enforcement of the outcome (payments) is done by the referee contract, which is on-chain. This is a shift: the theory gets cooperation without an enforcer, but on-chain we are using the blockchain (the referee contract) as the enforcer.
+    - **No Counterpart?** The theory referee is just a computation runner, but in our case, the referee contract is also the enforcer. This is a key difference.
+
+  ### 3. Reading the Opponent's Source
+  **Theory:** The program can inspect the opponent's program's source code (as a string).
+
+  **Smart Contract Translation:**
+  - **What it corresponds to:** Using `EXTCODECOPY` to get the bytecode of the opponent's contract and then comparing bytecode (or hashes of bytecode). Alternatively, we could compare the runtime bytecode (which excludes constructor code and the constructor arguments) or the creation bytecode (if we are in the deployment phase). 
+
+  **Residue Report:**
+    - **Clean?** We can get the bytecode, but note that it's the compiled bytecode, not the source. Also, the bytecode might include metadata (like the Swarm hash) which can change even if the source is the same (if the compiler version or settings change). So the comparison is at the bytecode level, not source.
+    - **Fudging:** We are comparing bytecode, not source. This is a practical issue because two source-identical contracts might have different bytecode (due to compiler version, optimization settings, or metadata). Also, the cost of reading and comparing the entire bytecode might be high (so we might compare hashes instead).
+    - **No Counterpart?** The theory's ability to read the exact source string has no direct counterpart. We have bytecode, which is a compiled representation. Also, the cost of reading and comparing is non-trivial on-chain.
+
+  ### 4. The Equilibrium Condition
+  **Theory:** A pair of programs (P1, P2) is an equilibrium if no player can unilaterally change their own program to a different program and get a higher payoff, given that the other player's program remains fixed.
+
+  **Smart Contract Translation:**
+  - **What it corresponds to:** A situation where two deployed contracts (with their specific bytecode) are such that if one player were to deploy a different contract (with different bytecode), then the outcome (as computed by the referee contract) would not yield a higher payoff for that player.
+
+  **Residue Report:**
+    - **Clean?** The condition is the same in spirit: once both contracts are deployed, and the referee contract is set to use them, no player would want to have deployed a different contract. However, note that the deployment is atomic? No: in practice, one contract is deployed first, then the other. The player deploying second can condition their contract on the first (by reading its bytecode). The first deployer cannot condition on the second (because it's not there). This breaks symmetry and might require a commitment scheme (see below).
+    - **Fudging:** The theory assumes both programs are submitted simultaneously. On-chain, we have deployment ordering. We might need a two-phase commit: both players commit to the hash of their bytecode, then both reveal (deploy) their contracts. Then the referee can check that the deployed contracts match the commitments. This adds a layer and changes the timing.
+    - **No Counterpart?** The simultaneous submission in the theory has no direct counterpart. We have to simulate it with commitments.
+
+  ### 5. The Clone Recipe
+  **Theory:** The program that says: "if the opponent's program is textually identical to me, then output Cooperate; else, output Defect."
+
+  **Smart Contract Translation:**
+  - **What it corresponds to:** A contract that, when called by the referee, does:
+    - Read the opponent's contract bytecode (via `EXTCODECOPY`).
+    - Compare it to its own bytecode (which it can get via `EXTCODECOPY` of its own address? But note: a contract cannot read its own bytecode via `EXTCODECOPY` in the same way because it doesn't know its own address at compile time. However, we can pass the opponent's address and the own address to the function). Alternatively, we can hardcode the own bytecode in the contract (but that would be expensive and might change if the contract is deployed with different constructor arguments). 
+    - If the opponent's bytecode is identical to its own, return Cooperate; else, Defect.
+
+  But note: we cannot have the contract compare the entire bytecode because of gas costs. Instead, we might compare the hash of the bytecode (which we can precompute and store in the contract). The contract would then:
+    - Compute the hash of the opponent's bytecode (which is expensive but feasible).
+    - Compare it to a stored hash of its own bytecode.
+
+  Alternatively, we can design the contract so that the hash of the bytecode is known at deploy time and passed as a constant. But note: the hash of the bytecode might change if the contract is deployed with different constructor arguments? The runtime bytecode (what `EXTCODEHASH` returns) is the same for the same code and same constructor arguments? Actually, the `EXTCODEHASH` of a contract is the hash of the runtime bytecode (which does not include the constructor arguments). So if two contracts are built from the same source and compiled the same, they will have the same runtime bytecode and hence the same `EXTCODEHASH` (if the constructor arguments are set in the creation code, they are not part of the runtime code). So we can use `EXTCODEHASH` for comparison.
+
+  **Residue Report:**
+    - **Clean?** We can do it by comparing the `EXTCODEHASH` of the two contracts. This is efficient (one opcode) and cheap. However, note that if the contracts are deployed with different constructor arguments, the runtime bytecode might be the same (if the constructor arguments are only used in the constructor) so the `EXTCODEHASH` would be the same. So this works for contracts that are built from the same source, same compiler, and same settings. But if the constructor arguments are part of the runtime code (e.g., if they are stored in the contract storage and used in the logic) then the runtime bytecode is the same, but the behavior might differ. However, in the clone recipe, we only care about the code, not the state. So comparing the code hash is a good proxy for "same program".
+
+    - **Fudging:** We are comparing the hash of the runtime bytecode, not the exact source. This means that if two programs are functionally equivalent but compiled differently (so different bytecode) then they would not be considered clones. Also, if a player tries to deploy a contract with the same behavior but different bytecode (to save gas, for example), it would be considered a deviation and get defected on. This is more fragile than the theory because the theory's "textually identical" is more about the source, but in practice, we are using the bytecode hash.
+
+    - **No Counterpart?** The theory's textual identity is not the same as bytecode identity. We are forced to use bytecode identity because that's what runs. This might lead to false negatives (same source, different bytecode) and false positives (different source, same bytecode? unlikely but possible with obfuscation?).
+
+  ### 6. The Folk Theorem Result
+  **Theory:** Any feasible payoff vector that is strictly better than the minimax for each player can be achieved as a program equilibrium.
+
+  **Smart Contract Translation:**
+  - **What it corresponds to:** In the smart contract setting, we can design contracts that encode strategies for repeated games (but without repetition) by having the contract condition its behavior on the opponent's code. For example, we can have a contract that says: "if the opponent's contract is designed to play tit-for-tat (as verified by code inspection), then I will cooperate; else, I defect." But the theory says we can achieve any such payoff without repetition.
+
+  **Residue Report:**
+    - **Clean?** The idea is that by using code as a commitment to a strategy, we can achieve the same outcomes as in repeated games. On-chain, we can build contracts that implement these strategies. However, the feasibility depends on the ability to verify the opponent's strategy by inspecting their code. This might be complex and expensive (or even impossible if the strategy is complex and the code is obfuscated). Also, the folk theorem in repeated games relies on punishment strategies that are triggered by deviations. Here, the punishment is built into the program: if the opponent's code is not the one we expect, we defect (or play the punishment). But the verification must be done in the contract, which is limited in computational power.
+
+    - **Fudging:** The theory assumes that programs can be arbitrarily complex and can recognize any deviation. On-chain, we are limited by gas and the complexity of the code. Also, we cannot verify arbitrary properties of the opponent's code (because of the halting problem, and because of gas constraints). So we are limited to simple strategies that can be verified cheaply (like comparing hashes) or to a set of pre-agreed strategies (which are recognized by their hash).
+
+    - **No Counterpart?** The full generality of the folk theorem might not be achievable because of the computational limitations of the EVM.
+
+  ### Addressing the Specific Concerns
+
+  #### 1. The Referee and Enforcement
+  You are right: in the theory, the referee is just a runner and has no enforcement power. The enforcement comes from the programs themselves (by the threat of defection if the other program is not as expected). But in the smart contract translation, the referee contract is the one that runs the programs and also enforces the outcome (if the base game involves payments). So the blockchain is acting as an enforcer for the referee contract's computation and for the payment. 
+
+  However, note that in the base PD game, the moves (Cooperate/Defect) are just labels. The enforcement of the consequences (e.g., payoffs) is outside the program equilibrium. The theory does not specify how the payoffs are enforced. In the smart contract setting, we build the payoffs into the referee contract. So the inversion is that the referee contract is the enforcer for the payoffs, but the cooperation is achieved by the programs without the need for the referee to enforce cooperation (it emerges from the code inspection). 
+
+  **Cost of Inversion:** The blockchain's enforcement is used for the payment aspect (which is necessary) and for faithfully running the programs (which the theory assumes). The program equilibrium construction does not require the referee to enforce the moves, only to run the programs and then the moves are played. So the blockchain is providing a trusted computing environment (which the theory assumes) and also, in our case, we are using it for payments. This is not a flaw because the theory does not specify how the payoffs are enforced. It just assumes that the moves lead to payoffs. So if we use the blockchain to enforce the payoffs, that's consistent.
+
+  #### 2. Deployment Ordering and Cost
+  - **Deployment Ordering:** The theory assumes simultaneous submission. On-chain, we can simulate this with a two-phase commit: 
+    - Phase 1: Both players commit to the hash of their contract's bytecode (by sending the hash to the referee contract).
+    - Phase 2: Both players deploy their contracts and the referee contract verifies that the deployed contracts match the hashes. Then the referee runs the contracts.
+
+  This adds an extra round and requires both players to reveal (deploy) their contracts. If one player fails to deploy, then the commitment can be used to prove they cheated? But that might require a timeout and slashing.
+
+  - **Cost:** Reading and comparing bytecode on-chain is expensive. Using `EXTCODEHASH` is cheap (700 gas) but only gives a hash. Comparing full bytecode would be very expensive. So we rely on comparing hashes. This is efficient but means we are comparing a hash, not the full code. Also, if a player wants to deploy a contract that is functionally equivalent but with different bytecode (to save gas, for example), it would break the clone condition.
+
+  #### 3. Whitespace Fragility and Bytecode Differences
+  In the theory, an extra space causes mutual defection. On-chain, the same source code might produce different bytecode (due to compiler version, optimization settings, or metadata). This would cause the same problem: mutual defection. 
+
+  But note: the theory's fragility is a feature because it makes any deviation (even a trivial one) detectable. In the smart contract setting, we have the same feature: any change in the bytecode (even an insignificant one) will cause the clone condition to fail. However, in practice, we can control the compilation environment to ensure bytecode identity. But if we cannot (because players use different compilers) then it becomes a problem.
+
+  Alternatively, we could relax the condition: instead of requiring the same bytecode, we could require that the contract behaves the same. But that is undecidable in general. So we are stuck with bytecode identity (or hash identity). 
+
+  This makes the construction even more fragile than the theory because in the theory, the players can agree on a canonical form (remove whitespace, etc.) but on-chain, we are bound by the bytecode. However, if both players use the same compilation process, then it should work. 
+
+  ### Final Residue Summary
+  - **Clean Translations:**
+    - The players' programs as deployed contracts: clean if we accept bytecode as the representation.
+    - The referee as a smart contract: clean, but note that it also enforces payments (which is an added feature we need on-chain).
+    - The clone recipe using `EXTCODEHASH`: clean and efficient.
+
+  - **Fudged Translations (with caveats):**
+    - Reading the opponent's source: we read bytecode, which is a compilation of the source. We also use hashes for efficiency.
+    - Equilibrium condition: we simulate simultaneous submission with a two-phase commit (commit to hash, then deploy).
+    - The folk theorem result: we can achieve some equilibria, but complex strategies might be too expensive to verify.
+
+  - **No Counterpart:**
+    - The ability to read the exact source code (as a string) has no counterpart; we have bytecode.
+    - The theory's arbitrary computation on the opponent's program is limited by gas and by the fact that the contract must be deployed.
+
+  ### Conclusion
+  The program equilibrium construction can be implemented on-chain, but with caveats:
+  1. We rely on the blockchain to enforce the computation (running the programs) and the payments (if any). This is not a flaw because the theory assumes a trusted referee to run the programs and that the payoffs are enforced somehow.
+  2. We must handle deployment ordering with a commitment phase.
+  3. We use bytecode hashes for efficiency, which makes the clone condition fragile to compilation differences, but that fragility is inherent in the theory (whitespace) and even more pronounced on-chain.
+
+  The construction buys cooperation without an external enforcer for the moves (the threat of defection if the other program is not as expected ensures cooperation). The blockchain enforcer is used for the computation and payments, which the theory does not address. So the core idea (code as commitment) survives, but the practical implementation is constrained by the blockchain environment.
+
+  The fragility due to bytecode differences is a real issue, but it is the same kind of fragility as in the theory (whitespace) and is what makes deviations detectable. So it's a feature, not a bug, but it requires careful setup (same compilation process) to avoid accidental defection.
+answer: |-
+  ### Restating Program Equilibrium in Smart Contract Vocabulary
+
+  #### 1. **Player's Program**  
+  - **Theory:** A string of code (e.g., Python script) submitted to a referee.  
+  - **Smart Contract Translation:** A **deployed contract's bytecode hash**, committed to *before* deployment.  
+    - Why? On-chain, you can't inspect undeployed code. Players must:  
+      1. Commit to a hash of their contract's *runtime bytecode* (not source).  
+      2. Deploy the contract.  
+      3. The referee verifies hash matches the deployed bytecode.  
+  - **Residue:** Clean only if you enforce **hash commitment**. Raw source code isn't usable on-chain.
+
+  #### 2. **Referee**  
+  - **Theory:** A neutral party that runs both programs together.  
+  - **Smart Contract Translation:** A **verifier contract** that:  
+    - Checks bytecode hashes against commitments.  
+    - Calls `PlayerContract.play(opponentAddress)` for each player.  
+    - Enforces payouts (e.g., sends ETH based on PD outcomes).  
+  - **Residue:** Dirty inversion. In theory, the referee *only runs code*; on-chain, it **enforces outcomes**. The EVM is the enforcer the theory avoids.
+
+  #### 3. **Reading Opponent's Source**  
+  - **Theory:** Program inspects opponent's raw source code.  
+  - **Smart Contract Translation:**  
+    - During execution, your contract calls `EXTCODEHASH(opponentAddress)`.  
+    - Compares it to a precomputed hash (e.g., `if (hashA == hashB) cooperate; else defect`).  
+  - **Residue:** Clean for *hash comparisons*. Brutally fragile to compilation quirks (compiler version, metadata). Source-level inspection is impossible.
+
+  #### 4. **Equilibrium Condition**  
+  - **Theory:** No player wants to unilaterally change their program.  
+  - **Smart Contract Translation:** No player wants to deploy different bytecode *after seeing the opponent's commitment*.  
+  - **Residue:** Clean, but **ordering matters**. Player 2 can condition their deployment on Player 1's hash. Player 1 must commit first blindly.
+
+  #### 5. **Clone Recipe (`if same_code: cooperate else defect`)**  
+  - **Smart Contract Translation:**  
+    ```solidity
+    function play(address opponent) public returns (Move) {
+        bytes32 myHash = this.getCodeHash();
+        bytes32 oppHash = opponent.getCodeHash();
+        return (myHash == oppHash) ? Move.Cooperate : Move.Defect;
+    }
+    ```  
+  - **Residue:** The real counterpart is **"hash-committed-to-identical-runtime-bytecode"**. Not source code.
+
+  #### 6. **Folk Theorem Result**  
+  - **Theory:** Achieve any feasible >minimax payoff without repetition.  
+  - **Smart Contract Translation:** You *could* build contracts that enforce complex strategies (e.g., tit-for-tat) via bytecode checks.  
+  - **Residue:** Theoretically possible, **practically gas-limited**. Verifying arbitrary code properties on-chain is expensive/undecidable.
+
+  ---
+
+  ### Residue Report: What Breaks, What Bends, What's Missing  
+
+  | **Component**          | **Residue Analysis**                                                                 | Verdict                          |
+  |------------------------|--------------------------------------------------------------------------------------|----------------------------------|
+  | **Player's Program**   | Must commit to bytecode hash. Source code is irrelevant.                             | **Fudged** (bytecode ≠ source)   |
+  | **Referee**            | EVM *enforces* payouts; theory assumes no enforcer.                                 | **Inversion** (core divergence) |
+  | **Reading Source**     | Only bytecode hashes are practical. Source inspection impossible.                   | **Gap in vocabulary**            |
+  | **Equilibrium**        | Asymmetric deployment (Player 1 commits blind) weakens symmetry.                    | **Fudged** (ordering constraint) |
+  | **Clone Recipe**       | Hash comparison works, but hypersensitive to compilation artifacts.                | **Clean but more fragile**      |
+  | **Folk Theorem**       | Gas costs limit complex verification. Only simple hashes are efficient.             | **No counterpart** (gas reality) |
+
+  ---
+
+  ### Your Two Specific Queries  
+
+  #### 1. **Referee as Enforcer vs. Theory**  
+  - **The Inversion:**  
+    - Theory uses the referee *only* to run code. Enforcement comes from the programs' logic (threat of defection).  
+    - On-chain, the referee contract **is** the enforcer: it holds funds, verifies moves, and punishes deviations.  
+  - **Cost of Inversion:**  
+    The theory achieves cooperation **without external enforcement**. Smart contracts *rely* on the chain for enforcement. What the construction buys:  
+    - A way to coordinate *without repeated interactions*.  
+    - But it **does not remove the need for a trusted execution environment** (EVM).  
+
+  #### 2. **Deployment Ordering & Fragility**  
+  - **Surviving Deployment Ordering:**  
+    - Use a **commit-reveal scheme**:  
+      1. Both commit to `hash(bytecode)`.  
+      2. Both deploy contracts.  
+      3. Referee verifies hashes match commitments.  
+    - Player 2 can condition their code on Player 1's hash, but Player 1 is blind. Breaks symmetry.  
+  - **Whitespace Fragility → Bytecode Fragility:**  
+    - **More fragile than theory**: A single compiler flag change or metadata update breaks bytecode identity.  
+    - **Is it a feature?** Yes, but unintentionally. It makes "deviations" easier to detect (even accidental ones).  
+    - **Solution?** Standardize toolchains or compare **runtime code sections only** (strip metadata).  
+
+  ---
+
+  ### The Brutal Truth  
+  **Program equilibrium doesn't map cleanly to smart contracts because:**  
+  1. It assumes a **frictionless environment** (free inspection, no deployment ordering).  
+  2. It **doesn't need an enforcer**; you *always* need one on-chain.  
+  3. Its fragility is **theoretical** (whitespace); yours is **practical** (Solidity 0.8.21 vs 0.8.22).  
+
+  **What the construction *actually* buys you:**  
+  A way to enforce one-shot cooperation *if* you have:  
+  - A trusted place to run code (EVM).  
+  - Perfect bytecode reproducibility.  
+  - Players willing to deploy mirror contracts.  
+
+  **What you already build:**  
+  Your existing tools (escrows, multisigs) are **strictly stronger** because they leverage the chain's enforcement directly. Program equilibrium is a *clever thought experiment*—not a practical upgrade. Its value is in formalizing how code-as-commitment enables cooperation, but on-chain, you pay for this in gas, fragility, and deployment complexity.

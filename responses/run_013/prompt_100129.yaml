@@ -1,0 +1,660 @@
+id: prompt_100129
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_100129.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789430818-Q7qGjTttWXDzPVP40A43
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 826
+completion_tokens: 10080
+reasoning_tokens: 7070
+cost_usd: 0.022387
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T00:14:05+00:00'
+prompt: |-
+  Ok, I need help building something and I'm not even sure it's the right shape. I run a tiny deep-uncertainty desk for a government department - three of us, and we get pulled in maybe once every couple months when a decision is too big or too weird for the normal cost-benefit people. The pattern is always the same: the decision is basically one-shot (we can't run a pilot and learn), the stakes are high and some outcomes are hard or impossible to undo, and when we ask the expert panel for probabilities they won't give us numbers. They give ranges, or a handful of scenarios with weights, or they just refuse. So I end up holding a big set of probability distributions instead of one, and then everyone argues about what to do with it.
+
+  I don't have a stats PhD and neither does anyone who has to sign off on this, so what I actually want from you is a procedure my team can run - a checklist, a flowchart in words, a set of tests in order - for turning a set of probabilites into a defensible recommendation. Not a lecture on the theory, a thing I can hand a new hire on their first day.
+
+  Some constraints I think matter:
+
+  - It has to seperate two things I keep treating as the same: a set that's wide because the experts genuinely don't know, vs. a set that's wide because two experts flatly disagree with each other. I suspect those want different handling and I've been merging them.
+
+  - It has to deal with pooling. I've got 5-7 overlapping ranges and I know averaging them shrinks the spread in a way that feels like cheating. The procedure needs to tell me when I'm allowed to narrow the set and when narrowing it is the sin.
+
+  - It has to handle the case where a variable that should be irrelevant to my decision nonetheless makes my answer about the thing I care about less precise. I saw this happen in a toy model and it broke my brain - adding information made me more uncertain about the target - and I want a step that flags it if it's a real phenomenon and not just me being confused.
+
+  - It should use the actual decision rules that exist for this kind of thing (maximin, the regret-based one, the one where an option counts as fine if it's best under at least one distribution in the set, and whatever else is in the toolbox) and be honest that they can disagree and rank the options differently. Don't hide that behind picking one rule for me. I want the procedure to say which rule to use when, or else to output a set of defensible options instead of a single pick.
+
+  - Related: our decisions are one-shot but they recur. I've read that if you just keep choosing whatever's admissible from the set, someone can string your choices together into a sequence that loses you money for sure. If that's real, the procedure should say what it means for a team that keeps making these calls, and whether it's a reason to narrow to a single rule.
+
+  - It has to mark clearly where it stops being a calculation and starts being a value judgement I should escalate to the minister rather than decide myself. I'd rather the procedure have a big honest hole in it than paper that over.
+
+  Then run it, start to finish, on two cases:
+
+  (a) pre-emptive release of a stockpiled countermeasure. The panel broadly agrees it works, but the range on the rate of serious side effects is enormous, and it's mostly two camps disagreeing, not noise.
+
+  (b) a cheap, reversible mitigation that almost certainly does nothing but has a small chance of helping alot. I have a suspicion the procedure is going to tell me to do (b), and I already hate that, so if that's where it lands don't soften it - tell me straight, and tell me what it reveals about the rule I picked.
+
+  Also tell me what the procedure can't do, and name the failure mode I'm most likely to hit in practice.
+reasoning: |-
+  We are designing a procedure for decision-making under deep uncertainty with a set of probability distributions. The procedure must be operational (like a checklist) and address the constraints provided.
+
+  Key elements from the problem:
+  - The set of distributions can be wide due to genuine ignorance or due to expert disagreement.
+  - We must avoid inappropriate narrowing (like simple averaging) that masks uncertainty.
+  - We must handle cases where adding irrelevant information increases uncertainty (a real phenomenon, e.g., due to confounding).
+  - We must use multiple decision rules (maximin, minimax regret, admissibility, etc.) and be transparent about when they conflict.
+  - We must consider the long-run consequences of repeated decisions (to avoid being exploited by an adversary or nature).
+  - We must clearly separate calculation from value judgments that require escalation.
+
+  The procedure will have the following steps:
+
+  ### Step 0: Preprocessing - Clarify the Decision Problem
+  - **0.1** Define the set of actions (A), states of the world (S), and outcomes (O). Map each (a, s) to an outcome (e.g., in monetary or utility terms).
+  - **0.2** Elicit the set of probability distributions (P) over S. This set P is the "credal set". Record the source of each distribution (which expert, model, etc.) and the reason for uncertainty (ignorance vs. disagreement). 
+    - **0.2.1** For each variable, note if the uncertainty is due to disagreement (multiple experts) or ignorance (single expert giving a wide range). Label these as "disagreement" or "ignorance".
+    - **0.2.2** Pooling: Do not average across experts. Instead, maintain the entire set. If there are overlapping ranges from the same expert (e.g., multiple scenarios), keep them as separate distributions or as a set. The credal set P is the union of all distributions provided by experts (each distribution is a point in the simplex over S). If an expert provides a range for a parameter, we may have to sample or discretize to get distributions, but note that the set is convex and we can work with extreme points.
+
+  ### Step 1: Characterize the Credal Set
+  - **1.1** Separate the sources of uncertainty: 
+    - Group distributions by source (if due to disagreement, keep each expert's view separate; if due to ignorance, the entire range from one expert is one group of distributions that are considered equally plausible by that expert).
+    - **1.1.1** For disagreement: We have multiple groups of distributions (each group representing one expert's view). We will treat each group as a separate "scenario" in the decision rules that require scenarios (like maxmin over sets of distributions). Alternatively, we can keep the entire set and note the structure for later steps.
+    - **1.1.2** For ignorance: We have one group that is a set of distributions (e.g., a range) that one expert deems possible. We do not break this down further.
+
+  - **1.2** Check for dependencies: If the decision problem involves multiple variables, check if the uncertainty in one variable is independent of others. If not, we must capture the joint uncertainty. This step is complex and might require expert input.
+
+  - **1.3** Check for "irrelevant" variables increasing uncertainty: 
+    - **1.3.1** For the target variable Y and an additional variable X that is thought to be irrelevant, compute the set of distributions for Y both with and without conditioning on X. 
+    - **1.3.2** If conditioning on X leads to a wider set of distributions for Y (even though X is irrelevant to the decision problem), flag this as an instance where the "irrelevant" variable is actually creating an ambiguity that affects the decision. This is a real phenomenon (e.g., in imprecise probability, conditioning can increase imprecision). The procedure should note that this is a case where the set P is not closed under conditioning and we must be cautious.
+
+  ### Step 2: Apply Decision Rules
+  We will apply several decision rules to the set P. Each rule will produce a set of acceptable actions. We will then compare the results.
+
+  - **2.1** Maxmin (Wald Rule): For each action a, compute the minimum expected utility over all distributions in P. Then choose the action with the highest minimum expected utility.
+    - **2.1.1** If the set P is very large, we might use linear programming to compute the minimum expected utility for each action. Alternatively, if the set is structured (e.g., defined by constraints), we can use optimization.
+
+  - **2.2** Minimax Regret: 
+    - For each distribution p in P and each action a, compute the regret: 
+        regret(a, p) = [max_{a'} U(a', p)] - U(a, p)
+      where U(a, p) is the expected utility of action a under distribution p.
+    - Then for each action a, compute the maximum regret over p in P.
+    - Choose the action with the smallest maximum regret.
+
+  - **2.3** Admissibility (in the sense of Levi): An action is admissible if there is no other action that dominates it for every distribution in P. That is, action a is admissible if there is no a' such that for every p in P, U(a', p) >= U(a, p) and for some p, U(a', p) > U(a, p).
+    - We can compute the set of admissible actions by pairwise comparison.
+
+  - **2.4** Gamma-Maxmin (if we have a weighting over the set P): If we have a second-order distribution (a distribution over the distributions in P), then we can compute the expected utility for each action by integrating over P and then choose the action with the highest expected utility. However, this requires a weighting and the problem states that we don't have one. So we skip this unless we have weights (e.g., from scenario weights).
+
+  - **2.5** E-admissibility (Levi again): An action is E-admissible if it maximizes expected utility under at least one distribution in P. That is, for each action a, if there exists a p in P such that a is the maximizer of expected utility under p.
+
+  Note: The rules above can produce different results.
+
+  ### Step 3: Resolve Conflicts and Make a Recommendation
+  - **3.1** Compare the results from Step 2:
+    - Let A_mm = set of actions that are maxmin optimal.
+    - Let A_mr = set of actions that are minimax regret optimal.
+    - Let A_adm = set of admissible actions.
+    - Let A_eadm = set of E-admissible actions.
+
+    Typically, we have: A_mm ⊆ A_adm, and A_mr ⊆ A_adm? Not necessarily. But note: every maxmin optimal action is admissible (under mild conditions). Similarly, every minimax regret optimal action is admissible.
+
+  - **3.2** If all rules point to the same action (or a small set), then that action is the recommendation.
+
+  - **3.3** If there is conflict, then:
+    - **3.3.1** Check if the conflict is due to the structure of the set P (e.g., disagreement vs ignorance). For example, if the set P is convex and we have disagreement, then the maxmin rule might be too conservative. On the other hand, if the set is due to ignorance (and we have no reason to weigh one part more than another), then maxmin might be appropriate.
+    - **3.3.2** Consider the source of uncertainty: 
+        - If the set is wide due to disagreement, then we might want to use a rule that is less conservative (like E-admissibility) because each expert's view is internally consistent and we are unsure which expert is right. 
+        - If the set is wide due to ignorance, then we might lean toward maxmin because we have no reason to be optimistic.
+
+    However, note: the decision rule choice is a value judgment. Therefore, we must escalate if there is conflict and the stakes are high.
+
+  - **3.4** Long-run considerations: 
+    - If the decisions are repeated and we are using a rule that doesn't use a single prior (like maxmin), then we are vulnerable to being exploited by nature (e.g., nature can choose a sequence of distributions that makes us lose). This is a known issue in robust control. 
+    - To mitigate, we might consider using a rule that is dynamically consistent. However, for one-shot decisions, this is less of an issue. For repeated decisions, we can note that if we are going to face a sequence of decisions, we might want to use a rule that is not too conservative (like minimax regret) or even use a Bayesian approach with a prior over the set. But this is a deep issue and we might need to escalate.
+
+    In practice, for a team making a sequence of independent one-shot decisions, we can still use the same rule each time. The exploitation issue arises when the same uncertainty is faced repeatedly and the adversary (nature) can adapt. If the uncertainties are independent, then using maxmin each time is safe. But if they are dependent, then we must model the entire sequence. Given the complexity, we note that for a sequence of decisions, we must consider the joint uncertainty and use a rule that is consistent over time. This is beyond the scope of a simple procedure and should be flagged for escalation.
+
+  - **3.5** Output: 
+    - If one action is in the intersection of A_mm, A_mr, A_adm, and A_eadm, then recommend that action.
+    - Else, if there is a non-empty set of actions that are in A_adm and also in at least one of A_mm or A_mr, then we can narrow to that set and present them as defensible.
+    - Else, we present the entire set of admissible actions and explain the conflict.
+
+    However, note: sometimes an action that is not maxmin might be admissible and have low regret. We must present the trade-offs.
+
+  - **3.6** Escalation: 
+    - We must escalate if the set of admissible actions is large and the decision rules conflict, especially when the stakes are high. Also escalate if the long-run exploitation issue is a concern for a sequence of decisions.
+
+  ### Step 4: Document and Review
+  - Document the set P, the sources of uncertainty, the computed sets of actions for each rule, and the reasoning for the recommendation.
+
+  Now, we run the procedure on the two cases:
+
+  ### Case (a): Pre-emptive release of a stockpiled countermeasure
+  - **Decision**: Release now or not?
+  - **Outcomes**: 
+    - If released and side effects are low: good (saves lives, avoids outbreak).
+    - If released and side effects are high: bad (causes harm, possibly more than the disease).
+    - If not released and outbreak occurs: bad (could have been prevented).
+    - If not released and no outbreak: no harm, no benefit.
+
+  - **Uncertainty**: The rate of serious side effects is the key uncertainty. The expert panel disagrees: two camps. One camp believes the rate is low (say, between 0.1% and 0.5%), the other believes it is high (between 2% and 10%). The outbreak probability is also uncertain, but for simplicity, let's assume it is fixed at p_outbreak (or we can extend).
+
+  - **Step 0**: 
+    - Actions: {release, do_nothing}
+    - States: side_effect_rate (SER) and outbreak_occurrence (binary). But note: the outbreak might depend on whether we release? Let's assume releasing the countermeasure prevents the outbreak. So states are:
+        s1: outbreak occurs (if we don't release) and SER is low (if we release)
+        s2: outbreak occurs and SER is high
+        s3: no outbreak and SER is low
+        s4: no outbreak and SER is high
+
+    However, the outbreak might be independent of release? Actually, if we release, we prevent the outbreak. So:
+      - If we release: we get side effects at rate SER (so the outcome is the number of side effects, and we avoid the outbreak damage).
+      - If we don't release: we get the outbreak damage (if outbreak occurs) and no side effects.
+
+    Let U(outcome) be the utility. We need numbers. Let's assume:
+      - The outbreak causes 1000 deaths if it occurs.
+      - The countermeasure, if released, will be given to 1 million people.
+      - Each serious side effect causes 1 death (so total deaths from side effects = 1e6 * SER).
+
+    Then the outcomes:
+      - Release: deaths = 1e6 * SER
+      - Do nothing: deaths = 1000 * I(outbreak), where I(outbreak) is 1 if outbreak occurs, 0 otherwise.
+
+    We assume we want to minimize deaths. So utility = -deaths.
+
+    Uncertainty:
+      - SER: two camps. Camp A: SER ~ Uniform(0.001, 0.005) [so expected 0.003]
+               Camp B: SER ~ Uniform(0.02, 0.10) [expected 0.06]
+      - Outbreak probability: let's assume it is fixed at 0.5 (for simplicity, though it could be uncertain too).
+
+    We have two distributions for SER. We ignore the outbreak probability uncertainty for now.
+
+    So the set P: two distributions: p1 (from camp A) and p2 (from camp B). Note: we are not averaging them.
+
+  - **Step 1**: 
+    - The set P is due to disagreement (two camps). We have two distributions: p1 and p2.
+    - We check for irrelevant variables: none in this simple model.
+
+  - **Step 2**: 
+    We compute the expected deaths for each action under each distribution.
+
+    Under p1 (low SER):
+      - Release: E[deaths] = 1e6 * 0.003 = 3000
+      - Do nothing: E[deaths] = 1000 * 0.5 = 500
+
+    Under p2 (high SER):
+      - Release: 1e6 * 0.06 = 60000
+      - Do nothing: 500
+
+    Now we compute the decision rules:
+
+    **Maxmin**: 
+        For release: min(3000, 60000) = 3000
+        For do nothing: min(500, 500) = 500
+        So maxmin chooses do nothing because 500 > 3000? Wait: we want to minimize deaths, so we want the action with the highest minimum utility? But note: utility is negative deaths. So we want to minimize the maximum loss? Actually, in maxmin we maximize the minimum utility. Since utility = -deaths, we can work in terms of deaths and then we want to minimize the maximum expected deaths? Actually, the maxmin rule for loss is minmax: we want the action that minimizes the maximum expected loss.
+
+        So for action release: maximum expected loss = max(3000, 60000) = 60000
+        For do nothing: maximum expected loss = 500
+        So minmax loss chooses do nothing.
+
+    **Minimax Regret**:
+        We compute the regret for each action under each distribution.
+
+        Under p1 (low SER):
+          Best action: do nothing (500) vs release (3000) -> regret for release = 3000 - 500 = 2500
+          regret for do nothing = 0.
+
+        Under p2 (high SER):
+          Best action: do nothing (500) vs release (60000) -> regret for release = 60000 - 500 = 59500
+          regret for do nothing = 0.
+
+        Now, maximum regret for release = max(2500, 59500) = 59500
+        for do nothing = 0.
+        So minimax regret chooses do nothing.
+
+    **Admissibility**:
+        Compare release and do nothing:
+          Under p1: release (3000) > do nothing (500) -> so release is worse
+          Under p2: release (60000) > do nothing (500) -> worse
+          So do nothing dominates release? Actually, release is always worse. So do nothing is the only admissible action.
+
+    **E-admissibility**: 
+        Under p1: the best action is do nothing (500) because 500 < 3000.
+        Under p2: the best action is do nothing (500) because 500 < 60000.
+        So only do nothing is E-admissible.
+
+    So all rules agree: do nothing.
+
+    But wait: what if the outbreak probability is high? Let's say outbreak probability is 0.9. Then:
+      Under p1:
+          Release: 3000
+          Do nothing: 1000 * 0.9 = 900
+          So do nothing is better.
+      Under p2:
+          Release: 60000
+          Do nothing: 900
+          Still do nothing.
+
+    Now, what if outbreak probability is 0.99?
+      Under p1:
+          Release: 3000
+          Do nothing: 990
+          Still do nothing.
+
+    But what if the outbreak is certain (p=1) and SER is low? Then:
+          Release: 3000
+          Do nothing: 1000
+          Then do nothing is better.
+
+    So the countermeasure only makes sense if the outbreak is very likely and the SER is very low. But in our setup, even then it's worse. Why? Because 3000 > 1000. So unless we can target the countermeasure to a smaller population, it's never worth it? That seems odd.
+
+    Let me reexamine: We give the countermeasure to 1 million people. If the outbreak is going to cause 1000 deaths, then even if the SER is as low as 0.001, we get 1000 deaths from the countermeasure. So it's break even? But if SER is 0.0009, then 900 deaths, which is better than 1000. So the threshold SER is 0.001.
+
+    In our camp A: SER at least 0.001 (so worst-case in camp A is 0.005, which is 5000 deaths). So if the outbreak is certain, then under camp A the expected deaths for release are between 1000 (at SER=0.001) and 5000 (at SER=0.005). Under camp B, it's between 20000 and 100000.
+
+    Now, if outbreak probability is 1, then:
+        Under camp A: release: expected deaths = 1e6 * SER (which is between 1000 and 5000)
+        do nothing: 1000.
+
+        So under camp A, if SER is exactly 0.001, then release and do nothing are equal. If SER is above 0.001, release is worse.
+
+    But we don't know SER exactly. We have distributions. So under camp A (uniform between 0.001 and 0.005), the expected SER is 0.003 -> 3000 deaths. So they would say: do nothing is better.
+
+    Therefore, in the original setup (with outbreak probability 0.5) and the two camps, the decision is clear: do nothing.
+
+    However, what if the outbreak would cause 5000 deaths? Then under camp A (SER=0.003) we have:
+        Release: 3000 deaths
+        Do nothing: 5000 * 0.5 = 2500? Wait, if outbreak probability is 0.5, then expected deaths for do nothing = 5000 * 0.5 = 2500.
+        Then under camp A: release 3000 > 2500 -> so do nothing is better.
+
+    Only if the outbreak is very deadly and very likely, and the SER is low, might release be better. But in our case, the outbreak is 1000 deaths. So the countermeasure is only beneficial if 1e6 * SER < expected outbreak deaths.
+
+    Since expected outbreak deaths = 1000 * p_outbreak, we need 1e6 * SER < 1000 * p_outbreak  => SER < p_outbreak / 1000.
+
+    For p_outbreak=0.5, we need SER < 0.0005. But camp A has SER>=0.001, which is above that. So indeed, even in the best camp, release is worse than do nothing.
+
+    Therefore, the procedure recommends: do nothing.
+
+    But note: this is because the outbreak is not deadly enough relative to the side effects. The decision is clear.
+
+  ### Case (b): A cheap, reversible mitigation that almost certainly does nothing but has a small chance of helping a lot.
+
+  - **Decision**: Implement the mitigation or not.
+  - **Outcomes**:
+    - If implemented and it works: we prevent a major disaster (say, save 10000 lives).
+    - If implemented and it doesn't work: we incur a small cost (say, 10 lives lost due to effort and resources).
+    - If not implemented and the disaster would have happened: we lose 10000 lives.
+    - If not implemented and the disaster wouldn't have happened: 0.
+
+  - **Uncertainty**: The probability that the mitigation works is very low. Experts give a range: [0.001, 0.01]. But note: this is a single expert? Or multiple? Let's assume it's one expert giving a range (ignorance). Also, the disaster probability is uncertain? Let's assume the disaster probability is independent and we have a point estimate: p_disaster = 0.1.
+
+    Actually, the mitigation only helps if the disaster happens. So:
+      - Implement: 
+          if it works: we save 10000 lives (but we paid 10, so net gain 9990? Or we consider the cost regardless). Let's say:
+            if disaster occurs and it works: we avoid 10000 deaths but we have 10 deaths from the effort -> so net 10 deaths.
+            if disaster occurs and it doesn't work: we have 10000 deaths from the disaster + 10 from effort = 10010.
+            if no disaster: we have 10 deaths from effort.
+      - Do nothing:
+          if disaster: 10000 deaths.
+          if no disaster: 0.
+
+    We can simplify the outcomes in terms of deaths:
+      Implement: 
+          disaster and works: 10
+          disaster and not works: 10010
+          no disaster: 10
+      Do nothing:
+          disaster: 10000
+          no disaster: 0
+
+    Uncertainty: 
+      p_works: we have a set of distributions? Actually, we have a range for the probability that the mitigation works. But note: this is a Bernoulli probability. We can represent the uncertainty by a set of probabilities: p in [0.001, 0.01]. The disaster probability: let's assume we know p_disaster = 0.1.
+
+    Then for a fixed p (probability that it works, given we implement and the disaster occurs), we can compute the expected deaths for implement:
+
+        E[deaths | implement] = 
+            P(disaster) * [ p * 10 + (1-p)*10010 ] + P(no disaster)*10
+            = 0.1 * [10p + 10010(1-p)] + 0.9 * 10
+            = 0.1 * [10p + 10010 - 10010p] + 9
+            = 0.1 * [10010 - 10000p] + 9
+            = 1001 - 1000p + 9
+            = 1010 - 1000p
+
+    For do nothing:
+        E[deaths] = 0.1 * 10000 = 1000
+
+    Now, we have p in [0.001, 0.01]. Then E[deaths | implement] ranges from:
+          at p=0.01: 1010 - 1000*0.01 = 1010 - 10 = 1000
+          at p=0.001: 1010 - 1000*0.001 = 1010 - 1 = 1009
+
+    So the expected deaths for implement are between 1000 and 1009.
+
+    For do nothing: always 1000.
+
+    So under every p in the set, implement is worse (or equal at p=0.01) than do nothing.
+
+    Therefore, we would choose do nothing.
+
+    But wait: the problem says "a small chance of helping a lot". In the above, at p=0.01, implement and do nothing have the same expected deaths (1000). But note: at p=0.01, implement gives:
+          with 0.1*0.01 = 0.001 chance: 10 deaths
+          with 0.1*0.99 = 0.099 chance: 10010 deaths
+          with 0.9 chance: 10 deaths
+        which has a long right tail? But the expected value is 1000.
+
+    So why would we ever do it? Because we are risk-seeking? But the problem doesn't say we are. We are minimizing expected deaths.
+
+    However, note: if we are risk-averse, we might prefer the sure 1000? But in this case, do nothing gives exactly 10000 deaths with probability 0.1 and 0 otherwise. Implement gives a small chance of very bad outcomes (10010 deaths) and a high chance of 10 deaths.
+
+    But expected deaths are the same at p=0.01 and worse elsewhere. So we wouldn't do it.
+
+    But what if the cost of the mitigation is negligible? Let's change the cost from 10 deaths to 0.1 deaths. Then:
+
+        Implement: 
+          disaster and works: 0.1 deaths
+          disaster and not works: 10000.1
+          no disaster: 0.1
+
+        E[deaths | implement] = 0.1 * [0.1*p + 10000.1*(1-p)] + 0.9*0.1
+                              = 0.1 * [0.1p + 10000.1 - 10000.1p] + 0.09
+                              = 0.1 * [10000.1 - 10000p] + 0.09
+                              = 1000.01 - 1000p + 0.09
+                              = 1000.1 - 1000p
+
+        Do nothing: 1000
+
+        Then at p=0.01: 1000.1 - 1000*0.01 = 1000.1 - 10 = 990.1
+        at p=0.001: 1000.1 - 1 = 999.1
+
+        So now implement is better than do nothing (990.1 < 1000) at p=0.01, but worse at p=0.001? Actually, at p=0.001: 999.1 < 1000? 999.1 is less than 1000, so it's better? 
+
+        Actually, we have:
+            p in [0.001,0.01]: E[implement] from 999.1 to 990.1, which is always less than 1000.
+
+        So then implement is always better.
+
+    But the problem says "almost certainly does nothing". So let me adjust the cost to be 0, then:
+
+        Implement: 
+            disaster and works: 0
+            disaster and not works: 10000
+            no disaster: 0
+            E[deaths] = 0.1 * [0*p + 10000*(1-p)] = 1000*(1-p)
+
+        Do nothing: 1000
+
+        So E[implement] = 1000*(1-p) and since p>0, this is less than 1000. So we should implement.
+
+    So the key is the cost. The problem says "cheap", so let's assume the cost is negligible. We'll set cost=0.
+
+    Then:
+        E[implement] = 1000 * (1-p)   [since we avoid the disaster if it works, which happens with probability p given disaster]
+        E[do nothing] = 1000
+
+        So for any p>0, implement is better. But note: the probability p is at least 0.001.
+
+    Now, the set P: p in [0.001, 0.01]. So the expected deaths for implement are between 990 and 999. So it's always less than 1000.
+
+    Therefore, we would always choose implement.
+
+    But note: the problem says "I have a suspicion the procedure is going to tell me to do (b), and I already hate that". Why hate? Because it almost never works and we spend resources. But in this calculation, the expected deaths are lower by implementing it. The cost is negligible, so we have nothing to lose? Actually, we avoid 10000 deaths with a small probability. That's worth it.
+
+    Now, run the decision rules:
+
+    **Maxmin** (minimize maximum expected loss):
+        Implement: max over p of expected loss = max{990, 991, ..., 999} = 999
+        Do nothing: 1000
+        So minmax is 999 (implement) vs 1000 -> choose implement.
+
+    **Minimax Regret**:
+        We compute for each p the regret.
+
+        For a fixed p, the best action: 
+            if we compare E[implement] = 1000(1-p) and E[do nothing] = 1000, then implement is always better (since p>0). So the best action is implement.
+
+        Then regret for implement = 0.
+        regret for do nothing = 1000 - 1000(1-p) = 1000p.
+
+        Now, the maximum regret for implement: over p in [0.001,0.01] -> max(0) = 0.
+        for do nothing: max(1000p) = 1000*0.01 = 10.
+
+        So minimax regret chooses implement.
+
+    **Admissibility**:
+        Implement is better than do nothing for every p? Yes: 1000(1-p) < 1000 for every p>0. So do nothing is dominated. Only implement is admissible.
+
+    **E-admissibility**: 
+        For every p, implement is the best action. So it is E-admissible.
+
+    So all rules agree: implement.
+
+    But why do we hate it? Because we are going to implement it and almost always it won't work (if there is a disaster) and we'll see that we spent resources for nothing. But note: we assumed the cost is negligible. If the cost is not negligible, then we might reconsider.
+
+    Also, note: the disaster might not happen. In 90% of the cases (if p_disaster=0.1), we implement and nothing happens (but we spent the cost). But if the cost is very small, then it's worth the small chance of avoiding a disaster.
+
+    The procedure reveals that the rule we picked (minimizing expected deaths) is risk-neutral. If we are risk-averse and the cost of the mitigation is a sure loss (even if small) and the benefit is a lottery, we might prefer not to take it. But the problem doesn't specify risk attitude. In government decisions, we usually use expected utility with a linear utility in lives? Or we might use a risk-averse utility. But that's a value judgment.
+
+    Therefore, if we are risk-averse, we might need to adjust the utility function. This is a point for escalation: the decision depends on risk attitude.
+
+  ### What the procedure can't do and failure modes
+
+  **What the procedure can't do**:
+  - It cannot handle non-convex sets of distributions without discretization (but we assume we work with extreme points).
+  - It cannot resolve deep conflicts in decision rules without escalation.
+  - It cannot incorporate vague qualitative information (like "very unlikely") without quantification.
+  - It may become computationally intensive for large state spaces and many distributions.
+
+  **Most likely failure mode in practice**:
+  - **Garbage in, garbage out**: If the elicitation of the set P is flawed (e.g., experts are not properly calibrated, or the set does not capture the true uncertainty), then the decision may be wrong.
+  - **Escalation overuse**: If the procedure flags too many decisions for escalation because of conflicts in rules, it may become impractical.
+  - **Mischaracterization of uncertainty**: Failing to properly separate disagreement from ignorance might lead to inappropriate decision rules.
+  - **Overlooking dependencies**: In complex systems with many variables, missing dependencies can lead to an inadequate credal set.
+
+  The procedure is a starting point. It must be applied with judgment and may require iteration.
+answer: |-
+  Below is a complete, step-by-step procedure for handling deep-uncertainty decisions. It's designed as a checklist/flowchart for operational use (tested on your two cases). The procedure **explicitly separates calculation from judgment**, **flags escalation points**, and **outputs defensible options** (not a single "answer"). It assumes you have:  
+  - A set of actions \( \{a_1, \dots, a_k\} \)  
+  - A set of outcomes (with utilities, e.g., lives saved, costs)  
+  - A credal set \(\mathcal{P}\) (collection of probability distributions from experts)  
+
+  ---
+
+  ### **PROCEDURE: DEEP-UNCERTAINTY DECISION CHECKLIST**  
+  *Execute steps in order. Stop and escalate at ❗ if criteria met.*
+
+  #### **STEP 0: CLASSIFY UNCERTAINTY SOURCES**  
+  *(Separates ignorance from disagreement)*  
+  1. **Annotate each distribution in \(\mathcal{P}\):**  
+     - If an expert provided a range/scenario set due to *lack of knowledge*, label as **"Ignorance"**.  
+     - If an expert provided a range/scenario set due to *conflict with another expert*, label as **"Disagreement"**.  
+     - *Example: 3 experts; Expert 1 gives a range (ignorance), Experts 2 and 3 give conflicting point estimates (disagreement).*  
+
+  2. **Split \(\mathcal{P}\) into subsets:**  
+     - \(\mathcal{P}_{\text{ignorance}}\): All distributions from single-expert ignorance.  
+     - \(\mathcal{P}_{\text{disagreement}}\): All distributions from conflicting experts.  
+     - *Output: Two separate sets. Do NOT merge or average across sets.*  
+
+  3. **❗ ESCALATION POINT:**  
+     - If \(\mathcal{P}_{\text{disagreement}}\) is non-empty and high-stakes, notify leadership: *"Experts fundamentally disagree; political judgment may be needed."*  
+
+  ---
+
+  #### **STEP 1: HANDLE POOLING & IRRELEVANT VARIABLES**  
+  *(Prevents false narrowing and flags uncertainty inflation)*  
+  1. **Pool within uncertainty types (DO NOT POOL ACROSS TYPES):**  
+     - For \(\mathcal{P}_{\text{ignorance}}\): Keep full set (convex hull). Do not narrow.  
+     - For \(\mathcal{P}_{\text{disagreement}}\): Keep all distributions. Do not average.  
+
+  2. **Test for "irrelevant variable" uncertainty inflation:**  
+     - Let \(X\) be the variable you care about (e.g., side effect rate).  
+     - Let \(Y\) be an unrelated variable (e.g., background infection rate).  
+     - Compute \(\text{range}(X)\) using \(\mathcal{P}\) (all distributions).  
+     - Now compute \(\text{range}(X|Y)\) (conditioning on \(Y\) for each distribution).  
+     - **If** \(\text{range}(X|Y)\) is wider than \(\text{range}(X)\):  
+       - *Flag:* "Adding variable \(Y\) increases uncertainty about \(X\)."  
+       - *Action:* Reject \(Y\) as irrelevant; use \(\text{range}(X)\) without conditioning.  
+
+  ---
+
+  #### **STEP 2: APPLY DECISION RULES**  
+  *(Runs all standard rules; reports conflicts)*  
+  **Input:** Actions \(a_i\), utilities \(u(a_i,s)\), credal set \(\mathcal{P}\).  
+  **Output:** Sets of acceptable actions per rule.  
+
+  1. **Maximin (Wald Rule):**  
+     - For each action \(a_i\), compute:  
+       \[
+       \text{MM}(a_i) = \min_{p \in \mathcal{P}} \mathbb{E}_p[u(a_i,s)]
+       \]  
+     - **Acceptable:** \(\arg\max_{a_i} \text{MM}(a_i)\)  
+
+  2. **Minimax Regret:**  
+     - For each \(a_i\) and \(p \in \mathcal{P}\), compute regret:  
+       \[
+       R(a_i,p) = \max_{a_j} \mathbb{E}_p[u(a_j,s)] - \mathbb{E}_p[u(a_i,s)]
+       \]  
+     - **Acceptable:** \(\arg\min_{a_i} \left( \max_{p \in \mathcal{P}} R(a_i,p) \right)\)  
+
+  3. **E-Admissibility (Levi):**  
+     - **Acceptable:** All \(a_i\) such that \(\exists p \in \mathcal{P}\) where \(a_i\) maximizes \(\mathbb{E}_p[u(a_i,s)]\).  
+
+  4. **Maximax (if optimism justified):**  
+     - **Acceptable:** \(\arg\max_{a_i} \left( \max_{p \in \mathcal{P}} \mathbb{E}_p[u(a_i,s)] \right)\)  
+     - *❗ Only use if leadership pre-approves optimism (e.g., for low-stakes decisions).*  
+
+  ---
+
+  #### **STEP 3: RESOLVE CONFLICTS & OUTPUT OPTIONS**  
+  *(Handles rule disagreements and long-run risks)*  
+  1. **Compute admissible set:**  
+     - An action \(a_i\) is **admissible** if no other action dominates it across all \(p \in \mathcal{P}\).  
+     - *Output:* All admissible actions.  
+
+  2. **Check rule agreement:**  
+     - Let \(A_{\text{MM}} = \text{Maximin acceptable actions}\)  
+     - Let \(A_{\text{MR}} = \text{Minimax Regret acceptable actions}\)  
+     - Let \(A_{\text{E}} = \text{E-Admissible actions}\)  
+     - **If** \(A_{\text{MM}} \cap A_{\text{MR}} \cap A_{\text{E}}\) is non-empty → Recommend this set.  
+     - **Else** → Recommend all admissible actions.  
+
+  3. **Long-run exploitability test (for repeated decisions):**  
+     - *"If we use this rule repeatedly, could nature force a guaranteed loss?"*  
+     - **Maximin:** Not exploitable (pessimism protects against worst-case).  
+     - **Minimax Regret:** Not exploitable in repeated play.  
+     - **E-Admissibility:** Potentially exploitable (if distributions change adversarially).  
+     - *Action:* If using E-Admissibility for repeated decisions, add a constraint: "Switch to Minimax Regret if >50% of past decisions had high regret."  
+
+  4. **❗ ESCALATION POINT:**  
+     - If admissible set has >2 actions, or rules strongly disagree → Notify leadership: *"Technical criteria inconclusive; value judgment needed."*  
+     - If long-run exploitability detected → Notify: *"Repeated use may lead to systematic losses; consider locking a rule."*  
+
+  ---
+
+  #### **STEP 4: DOCUMENT & REVIEW**  
+  1. Report:  
+     - Credal set \(\mathcal{P}\) with ignorance/disagreement labels.  
+     - All acceptable action sets per rule.  
+     - Escalation flags raised.  
+  2. **Final output:**  
+     - A defensible set of actions (not a single recommendation).  
+     - Clear statement: *"Decision rule(s) X support actions Y; escalate if Z."*  
+
+  ---
+
+  ### **APPLICATION TO YOUR CASES**  
+  #### **Case (a): Pre-emptive release of stockpiled countermeasure**  
+  - **Context:** High-stakes, irreversible. Experts agree it works but disagree on side effect rate (two camps: Camp A [low risk], Camp B [high risk]).  
+  - **Utilities:** Lives saved (net of side effects).  
+
+  **Step 0:**  
+  - \(\mathcal{P}_{\text{ignorance}} = \emptyset\) (no ignorance, pure disagreement).  
+  - \(\mathcal{P}_{\text{disagreement}} = \{p_A, p_B\}\) (Camp A vs. Camp B distributions).  
+  - ❗ Escalation: "Experts disagree; judgment may be needed."  
+
+  **Step 1:**  
+  - No pooling; keep both \(p_A\), \(p_B\).  
+  - Irrelevant variable test: Not triggered (all variables relevant).  
+
+  **Step 2 (Decision Rules):**  
+  - Assume utilities:  
+    - Release if low risk: +1000 lives  
+    - Release if high risk: -5000 lives  
+    - Do nothing: 0  
+  - Under \(p_A\): Release expected utility = +1000  
+  - Under \(p_B\): Release expected utility = -5000  
+  - **Maximin:** \(\min(+1000, -5000) = -5000\) (Do nothing: 0). Acceptable: Do nothing.  
+  - **Minimax Regret:**  
+    - Regret(release) = \(\max(0 - (-5000), 0 - 1000) = 5000\)  
+    - Regret(do nothing) = \(\max(1000 - 0, -5000 - 0) = 1000\)  
+    - Acceptable: Do nothing (lower max regret).  
+  - **E-Admissibility:**  
+    - Do nothing maximizes utility under \(p_B\).  
+    - Release maximizes utility under \(p_A\).  
+    - Both actions acceptable.  
+  - **Admissible set:** Both actions (neither dominates).  
+
+  **Step 3:**  
+  - Rules conflict: Maximin and Minimax Regret say "do nothing"; E-Admissibility says both.  
+  - Admissible set: {Release, Do nothing}.  
+  - ❗ Escalation: "Rules disagree; admissible set has 2 actions."  
+  - **Output:** Defensible options = {Do nothing} (per Maximin/Minimax Regret), but escalate due to conflict.  
+
+  **Conclusion:** Procedure flags "do nothing" as robust but forces escalation due to expert disagreement. *Reveals: Maximin/Minimax Regret prioritize avoiding catastrophe when experts clash.*  
+
+  ---
+
+  #### **Case (b): Cheap, reversible mitigation with small chance of high reward**  
+  - **Context:** Low cost, reversible. Experts: Single ignorance distribution for effectiveness (\(p(\text{success}) \in [0.001, 0.01]\)).  
+  - **Utilities:** Cost = -1 unit (small), Success = +1000 units, Do nothing = 0.  
+
+  **Step 0:**  
+  - \(\mathcal{P}_{\text{ignorance}} = \text{uniform over } p(\text{success}) \in [0.001, 0.01]\)  
+  - \(\mathcal{P}_{\text{disagreement}} = \emptyset\)  
+
+  **Step 1:**  
+  - No disagreement; use full ignorance set.  
+  - Irrelevant variable test: Not triggered.  
+
+  **Step 2 (Decision Rules):**  
+  - Expected utility for Mitigate: \(\mathbb{E}[u] = -1 + 1000 \cdot p(\text{success})\)  
+  - Range of \(\mathbb{E}[u]\): \([-1 + 1000 \cdot 0.001, -1 + 1000 \cdot 0.01] = [0, 9]\)  
+  - Do nothing: 0  
+  - **Maximin:** \(\min(\mathbb{E}[u]) = 0\) (Mitigate) vs. 0 (Do nothing). Tie → Both acceptable.  
+  - **Minimax Regret:**  
+    - Best action under \(p\): Mitigate if \(p>0.001\), else Do nothing.  
+    - Max regret(Mitigate) = \(0 - 0 = 0\) (when \(p=0.001\))  
+    - Max regret(Do nothing) = \(9 - 0 = 9\) (when \(p=0.01\))  
+    - Acceptable: Mitigate (lower max regret).  
+  - **E-Admissibility:**  
+    - Mitigate maximizes utility for all \(p > 0.001\).  
+    - Do nothing maximizes utility at \(p=0.001\).  
+    - Both acceptable.  
+  - **Admissible set:** Both actions.  
+
+  **Step 3:**  
+  - Rules: Maximin (tie), Minimax Regret (Mitigate), E-Admissibility (both).  
+  - Admissible set: {Mitigate, Do nothing}.  
+  - No long-run exploitability (Mitigate is low-risk).  
+  - **Output:** Defensible options = {Mitigate} (per Minimax Regret).  
+
+  **Conclusion:** Procedure recommends **Mitigate** (you hate this, but it’s correct). *Reveals: Minimax Regret "breaks the tie" in favor of actions with high upside when downside is capped. Your discomfort likely stems from over-weighting the high probability of failure, but the math is clear: the small cost justifies the lottery ticket.*  
+
+  ---
+
+  ### **WHAT THE PROCEDURE CANNOT DO**  
+  1. **Resolve fundamental conflicts:** If rules disagree and leadership won’t escalate, it won’t "force" a decision.  
+  2. **Handle intractable credal sets:** If \(\mathcal{P}\) is huge/complex (e.g., 10,000 distributions), computation may be approximate.  
+  3. **Replace value judgments:** E.g., "How much risk is acceptable?" is outside scope.  
+  4. **Fix bad inputs:** Garbage in, garbage out (e.g., biased experts, poor utilities).  
+
+  ### **MOST LIKELY FAILURE MODE**  
+  **Ignorance vs. disagreement misclassification** (e.g., labeling true ignorance as disagreement). This causes:  
+  - Over-escalation (if disagreement is over-reported) or  
+  - False precision (if ignorance is pooled as disagreement).  
+  *Mitigation: Audit expert elicitation; ask experts: "Is your range due to what you don’t know or what others believe?"*  
+
+  --- 
+
+  **Final note:** This procedure makes uncertainty *visible* and forces hard choices upstream. It won’t make decisions easy—but it will make them defensible. Use it as a "source of friction" to trigger conversations that bypass statistical sophistry.

@@ -1,0 +1,791 @@
+id: prompt_100763
+sample_index: 0
+prompt_file: prompts/batch_041/prompt_100763.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789432529-QVIaFEFgwYFSuSEj7hFz
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 839
+completion_tokens: 13561
+reasoning_tokens: 11416
+cost_usd: 0.029982
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-15T00:45:14+00:00'
+prompt: |-
+  I run the rules-and-definitions side of things at a mid-size benefits agency -- my team writes the eligibility criteria, the glossary, the data dictionary, and the logic the caseworkers' system actually executes. We've grown a couple thousand definitions over the years and they refer to each other, and last month we hit one that broke the loader in a funny way. We had a term, 'reviewable case', defined as any case not listed in the schedule of non-reviewable cases, and the schedule was itself built by reference to the reviewable ones, and the thing started flipping: every case came out reviewable exactly when it came out not reviewable, depending on the order the loader walked it. My boss called it Russell's paradox with a lanyard. I only half understand the fix, which I think is something like: you're not allowed to define a set by a rule that quantifies over everything, only by carving a subset out of a collection you already have. Thats the whole of what I know and it's not enough, because the team keeps writing new definitions every quarter and I can't tell which ones are the dangerous ones.
+
+  So what I want from you is a procedure I can hand a junior analyst -- not a logician, someone who took one discrete math class five years ago -- that takes a batch of definitions and sorts them into: safe, safe-but-rewrite-for-the-loader's-sake, and genuinely this-will-flip. A list of checks in order, each with a pass or fail and a plain-English reason, plus a clear point where the analyst stops and escalates to me. It has to run in about twenty minutes on a batch of thirty definitions, because that's the throughput I need before every quarterly release, and both kinds of error hurt: an inconsistent rulebook is an audit finding, and needless rewrites make my team hate me.
+
+  Ground it in what set theory actually settled on after the paradox -- the shift from letting a rule define a set to only letting it pick out members of a set you already have, and the thought that self-reference is only vicious when it isn't grounded. One of my colleagues also mentioned, vaguely, that you can sometimes just assign levels or ranks to the terms so that a term at one level is only allowed to talk about things at a lower level, and that if you can do the assignment the definition can't bite you. Is that the right test, and can it be turned into something a junior can actually run on paper? I don't need axiom names, I need the distinction those axioms were doing.
+
+  Then run it on five of our real definitions and show your work:
+
+  1. 'Eligible dependent': a child under 19 of an eligible claimant, or a child under 19 of an eligible dependent. This is our standard recursive one, we've shipped it for a decade, and I'll be annoyed if you tell me to rewrite it -- but tell me anyway if you think so.
+
+  2. 'Outstanding balance': the total amount owed minus the total amount paid, where total paid includes credits applied against outstanding balances.
+
+  3. 'Non-standard rule': any rule in the rulebook that is not among the standard rules. This is the shape that bit us.
+
+  4. 'Flagship case': the case with the highest priority score in the caseload, where the priority score of a case is computed by a formula that includes, for each case, how many other cases in the caseload have a lower score. I honestly don't know if this one is ok and it worries me.
+
+  5. 'Undefined term': any term used anywhere in the dictionary that has no entry in the dictionary.
+
+  Finally, be honest about the limits. If there's a class of definition that passes every check you give me but still misbehaves once the loader runs it, say so and say what to watch for. And if any of your checks will give a verdict that a working rules writer would find pedantic and pointless, tell me which ones and why I should ignore you on those.
+reasoning: |-
+  We are going to implement a procedure based on the idea of "levels" or "ranks" (similar to the concept in set theory to avoid Russell's paradox). The key idea is that we assign a level to each definition and ensure that a definition at level n can only refer to terms that are defined at levels lower than n. This breaks circular dependencies that can lead to paradoxes.
+
+  Steps for the junior analyst:
+
+  1. **Extract dependencies**: For each definition, list all the terms it refers to (that are defined in the same dictionary). Ignore primitive terms (like numbers, basic operations, or terms from outside the dictionary) and focus only on the defined terms.
+
+  2. **Assign levels**:
+     - Start by assigning level 0 to definitions that do not depend on any other defined term (they only depend on primitive terms or nothing).
+     - Then, for each definition that depends only on terms that have been assigned levels (and the maximum level of the dependencies is k), assign level k+1.
+     - If we encounter a circular dependency (a definition that depends on itself either directly or through a chain that includes a term not yet assigned a level and which eventually leads back), then we have a problem.
+
+  3. **Classification**:
+     - **Safe**: Definitions that can be assigned a level without any circularity and without any reference to the entire set (like a universal quantification over the whole set of definitions) that might lead to a paradox. Also, recursive definitions that are well-founded (like the 'eligible dependent' that bottoms out at the base case) are safe if they can be assigned levels appropriately.
+     - **Safe-but-rewrite-for-the-loader's-sake**: Definitions that are theoretically safe (no circularity) but might cause issues for the loader because of the order of processing (like mutual recursion, or definitions that are not strictly ordered by level). We might rewrite to make the dependency order explicit or to break the recursion by introducing a base case more clearly.
+     - **Genuinely this-will-flip**: Definitions that have a circular dependency that cannot be assigned levels (like the Russell's paradox example) or that try to define a set by quantifying over the entire set that includes the set being defined.
+
+  4. **Specific checks for common pitfalls**:
+     - **Check for self-reference**: If a definition refers to itself (directly or indirectly) and the reference is not through a base case that terminates, then it might be problematic.
+     - **Check for universal quantification over the entire set of definitions**: For example, defining a set as "all things that are not in some other set" where that other set is defined in terms of the first set. This is the Russell's paradox pattern.
+
+  5. **Stopping condition**: If during level assignment we find a circular dependency that we cannot break (i.e., a group of definitions that all depend on each other and none can be assigned a level without the others) then we have an inconsistency. Also, if we find a definition that quantifies over the entire set of which it is a part (like the "non-standard rule" example) then it is dangerous.
+
+  Now let's run the procedure on the five definitions:
+
+  **Definition 1: 'Eligible dependent'**
+  - Defined as: a child under 19 of an eligible claimant, or a child under 19 of an eligible dependent.
+  - Dependencies: 'eligible claimant' (which we assume is defined elsewhere and is a primitive for this definition) and 'eligible dependent' (itself).
+  - This is a recursive definition. We can assign it a level if we can break the recursion.
+
+  How to handle recursion?
+  - We note that the recursion has a base case: the child of an eligible claimant (which does not require the definition of 'eligible dependent'). So the base case is level 0 (if 'eligible claimant' is level 0 or primitive). Then the recursive case uses the definition at a lower level? Actually, no: the recursion is on the same term.
+
+  But note: In the level assignment, if we try to assign a level to 'eligible dependent', we see that it depends on itself. However, we can break the recursion by noting that the base case does not require the recursive call. In practice, we can assign level 0 to the base case and then level 1 to the entire recursive definition? Actually, the level assignment method for recursive definitions is a bit tricky.
+
+  Alternatively, we can view recursive definitions as being defined at the same level because the recursion is over a well-founded relation (here, the parent-child relationship, which is acyclic). However, our level assignment method might not capture that.
+
+  We can handle it by:
+  - Assigning level 0 to the base case (without recursion). Then the recursive part is at level 0 too? Or we treat the entire definition as one that requires multiple stages? Actually, the level assignment is for the entire definition.
+
+  We can think of it as:
+  - The definition of 'eligible dependent' uses 'eligible claimant' (which is at level k) and also uses 'eligible dependent'. Since the use of 'eligible dependent' is for a different individual (the child of the eligible dependent, which is a different person) and we can compute by starting from the base case and then applying the rule, we can assign it a level if we assume that the recursion terminates. However, the level assignment algorithm we described does not allow a definition to depend on itself at the same level.
+
+  This is a case of recursion that is safe but might require the loader to handle recursion. Therefore, we classify it as:
+
+  **Verdict**: Safe-but-rewrite-for-the-loader's-sake. Why? Because the loader might not handle recursion well. We can rewrite it as a recursive function that the system can compute iteratively (starting with the base case and then applying the rule until no new dependents are found). However, if the family tree has a cycle (which it shouldn't in reality) then it would loop. So we must ensure the data is acyclic.
+
+  But note: the definition does not have a circular reference in the definitions dictionary? It only has a recursive call. So in the dependency graph, it has a self-loop. This breaks the level assignment (we cannot assign a level because it depends on itself). Therefore, we must treat it as a special case.
+
+  How to handle in the procedure?
+  - We allow recursive definitions if the recursion is well-founded (i.e., there is a base case and the recursion decreases some measure). But the junior analyst might not be able to check that. Therefore, we mark any definition that has a self-loop (direct recursion) or mutual recursion (with other definitions) as requiring review.
+
+  But note: the problem we had was with circular definitions that lead to paradoxes. This recursion does not lead to a paradox because it is not defining a set by a condition that quantifies over the whole set. It is a recursive data definition.
+
+  So we adjust: 
+  - The dangerous circularity is when we have a definition that refers to the set being defined in a universal or existential quantifier (like "all cases that are not in a certain set" and that set is defined by excluding the current set). Recursive definitions that are not about sets but about individual elements (like this one) are safe if they terminate.
+
+  Therefore, we can have two kinds of checks:
+  1. Level assignment (for non-recursive definitions) to avoid circular dependencies and Russell-like paradoxes.
+  2. For recursive definitions, we check that there is a base case and that the recursion is on a "smaller" instance (which the analyst can see by the data structure: e.g., child of a child, so we are going down the family tree). 
+
+  For this definition:
+  - It has a base case (child of an eligible claimant) and the recursion is on a child of an eligible dependent (which is a step down the family tree). So it should terminate.
+
+  But we mark it as safe? However, the dependency graph has a cycle (self-loop). So we must break the cycle by assigning a level arbitrarily? Actually, we can assign the entire recursive definition a level if we consider that the base case does not depend on the recursive part? Not exactly.
+
+  Alternatively, we can define the set of eligible dependents as the smallest set satisfying:
+  - Any child under 19 of an eligible claimant is in the set.
+  - Any child under 19 of someone in the set is in the set.
+
+  This is a standard inductive definition and is safe. But in our level assignment, we cannot assign a level because of the self-reference.
+
+  Therefore, we must treat recursive definitions differently. We can allow them if they are positive and inductive. The procedure for the junior analyst:
+
+  - If a definition refers to itself (or a group of definitions refer to each other) then it is recursive. 
+  - Check that the recursion has a base case (at least one case that does not require the recursive call).
+  - Check that the recursive calls are on "smaller" inputs (e.g., in terms of a well-founded relation). For 'eligible dependent', the recursive call is on the parent, and the parent must have been added in an earlier step? Actually, the recursion is on the parent being an eligible dependent, which is the same set we are defining. But we start with the base case (the eligible claimant's children) and then we add the children of those children, etc. So it is a well-founded recursion over the natural numbers (generations). 
+
+  Therefore, we classify as safe. But note the loader might have trouble with the recursion, so we might rewrite it iteratively for the loader's sake? But the problem says it's been shipped for a decade, so it's working. So we can mark it safe.
+
+  But to be cautious: 
+  **Verdict**: Safe. (But note: if the loader requires non-recursive definitions, we might have to rewrite. But that's an implementation issue, not a logical one.)
+
+  **Definition 2: 'Outstanding balance'**
+  - Defined as: the total amount owed minus the total amount paid, where total paid includes credits applied against outstanding balances.
+  - Dependencies: 'total amount owed', 'total amount paid', and 'credits applied against outstanding balances'. We assume the first two are primitive or defined without recursion. But note: 'total amount paid' is defined as including credits that are applied against outstanding balances. 
+
+  Let's break down:
+  - Let O = total amount owed (we assume this is a primitive, say from the initial debt)
+  - Let P = total amount paid
+  - But P includes credits applied against outstanding balances. However, the credits applied are part of the payments? And outstanding balance is O - P.
+
+  But note: the credits applied against outstanding balances are typically payments made. So we have:
+     outstanding_balance = O - P
+     and P = ... (which includes the payments that are credits against the outstanding balance)
+
+  This is not circular? Because the outstanding balance is defined in terms of P, and P is defined independently? Actually, the definition of P does not depend on the outstanding balance? It depends on the payments made. The phrase "credits applied against outstanding balances" is just a description of what the payments are for. So we can compute P without knowing the outstanding balance? 
+
+  But wait: sometimes the accounting might apply credits to reduce the outstanding balance. However, the total amount paid is just the sum of all payments. It doesn't matter what they are applied to. Therefore, we can compute P independently. Then the outstanding balance is O - P.
+
+  So the dependency on 'outstanding balance' in the definition of P is only descriptive? If so, then it is not a real dependency. Therefore, we can define:
+
+     outstanding_balance = O - P
+     and P is defined as the sum of all payments (including credits, which are payments).
+
+  Therefore, the definition of outstanding balance does not depend on itself. It depends on O and P, which we assume are defined elsewhere.
+
+  **Verdict**: Safe.
+
+  **Definition 3: 'Non-standard rule'**
+  - Defined as: any rule in the rulebook that is not among the standard rules.
+  - And we know that the standard rules are defined elsewhere? But note: the schedule of non-reviewable cases in the original problem was built by reference to the reviewable ones, leading to a circularity.
+
+  Now, what is the definition of 'standard rule'? We don't have it here, but we can assume that the rulebook has a set of rules, and the standard rules are a subset. However, the problem arises if the definition of 'standard rule' depends on 'non-standard rule'. For example:
+
+     standard_rule = any rule that is not non-standard.
+
+  Then we have:
+     non-standard_rule = rule that is not standard_rule
+     standard_rule = rule that is not non-standard_rule
+
+  Then substituting: 
+     non-standard_rule = rule that is not (rule that is not non-standard_rule) 
+                      = rule that is non-standard_rule
+
+  Which is a contradiction.
+
+  Therefore, if the definition of 'standard rule' is defined as the complement of non-standard rules, then we have a circularity. But note: the problem does not give the definition of 'standard rule'. We must assume that it is defined independently? 
+
+  But the definition of 'non-standard rule' refers to 'standard rules'. So we must know what the standard rules are. If the standard rules are defined by a list (enumerated) then it's safe. If they are defined by a rule that does not refer to non-standard rules, then it's safe. But if they are defined as the complement of non-standard rules, then we have a circularity.
+
+  Therefore, we must check the definition of 'standard rule'. Since we are only given one definition, we cannot know. But the pattern is dangerous because it uses a negative condition over a set that might include the term being defined.
+
+  In our procedure, we would:
+
+  - Note that 'non-standard rule' depends on 'standard rule'. 
+  - Then we look at the definition of 'standard rule'. If it depends on 'non-standard rule', then we have a mutual recursion that is circular and unbreakable (like Russell's paradox). 
+
+  Therefore, we mark it as dangerous.
+
+  In the absence of the definition of 'standard rule', we must flag it as potentially dangerous.
+
+  **Verdict**: Genuinely this-will-flip (if the definition of standard rule is defined as the complement of non-standard rules). Otherwise, safe. But without knowing, we must escalate.
+
+  **Definition 4: 'Flagship case'**
+  - Defined as: the case with the highest priority score in the caseload.
+  - The priority score of a case is computed by a formula that includes, for each case, how many other cases in the caseload have a lower score.
+
+  So the priority score of a case depends on the entire set of cases and their scores. Specifically, it depends on the relative ordering of the scores.
+
+  This is similar to the Borda count? But note: the priority score is defined in terms of the number of cases with a lower score. But then the flagship case is the one with the highest such score.
+
+  Is there a circularity? The score of a case depends on the scores of the other cases? 
+
+  Let S(c) = number of cases in the caseload that have a lower score than c.
+
+  But then S(c) depends on the scores of all cases. However, the scores are defined by S itself? We have:
+
+     For each case c, S(c) = |{ d in caseload : S(d) < S(c) }|
+
+  This is circular because the value of S(c) depends on the entire function S.
+
+  Moreover, we cannot assign a consistent value. For example, if we have two cases, then:
+     For case A: S(A) = 1 if S(B) < S(A), and 0 otherwise.
+     For case B: S(B) = 1 if S(A) < S(B), and 0 otherwise.
+
+  We cannot have both S(A) > S(B) and S(B) > S(A). Therefore, we must have one of them being 1 and the other 0. But then the one with 1 has a higher score? And the one with 0 has a lower score? So that works: if S(A)=1 and S(B)=0, then for A: number of cases with score < 1 is 1 (because there is one case with score 0) -> S(A)=1, and for B: number of cases with score <0 is 0 -> S(B)=0. So it is consistent.
+
+  But note: the score is defined as the number of cases with a lower score. This is equivalent to the rank (if we assign the highest rank to the case with the most cases below it). And it is well-defined: the scores will be the ranks (from 0 to n-1) and the flagship case is the one with the highest rank (n-1). 
+
+  However, the circularity is that the score of each case depends on the scores of the others. But note: we can solve it by assigning the scores simultaneously. We can compute:
+
+     Let the caseload have n cases. The scores are the numbers 0, 1, 2, ..., n-1? Not exactly: because the score of a case is the count of cases with lower score. But if we assign scores arbitrarily, we get a system of equations.
+
+  Alternatively, we can note that the only solution is that the scores form a total order? And then the score of a case is its rank (starting at 0 for the lowest). Then the highest rank is n-1.
+
+  But wait: the definition says "for each case, how many other cases in the caseload have a lower score". So if we assign the rank as the score, then the rank of the highest case is n-1, which is the number of cases below it. So it works.
+
+  However, the problem is that the definition is circular in the sense that it depends on the entire set. But it is well-defined because there is a unique solution (up to ties? but if there are ties, then the definition breaks: two cases with the same score would have the same count of cases below, but then they would be tied? but the formula counts the number of cases with strictly lower score. So if two cases are tied, say at rank k, then for each, the count of cases below is the same (the number of cases below rank k). But then they both get the same score, which is consistent. But then the flagship case is not unique? 
+
+  But note: the definition of flagship case is the one with the highest priority score. If there is a tie, then we have multiple cases with the same highest score. That might be acceptable.
+
+  So is it safe? 
+
+  In terms of our dependency graph: the priority score of a case depends on the priority scores of all cases. So if we try to assign a level to the priority score, we cannot because each score depends on the entire set. But note: we are defining a function on the set of cases. We can assign the entire set of scores at once. This is not a recursive definition in the same way as the others. 
+
+  However, the definition of the score for one case uses the scores of the others. So we have a mutual dependency among all the cases. This is a circular dependency that cannot be broken by levels. Therefore, we must treat it as a group: assign the same level to all the priority scores? But then we have a circularity.
+
+  But note: we can compute the scores without circularity by sorting the cases by some independent criteria? Actually, the definition does not specify an independent criteria. It defines the score as the count of cases with lower score. This is circular. However, we can compute it by:
+
+     Step 1: assign an initial ordering arbitrarily (say by case ID) and compute the scores? Then use the scores to re-order and recompute? But that might not converge.
+
+  Alternatively, we can note that the score is the number of cases that are "less" than it by some fixed ordering. But the definition does not specify an ordering. It is defined in terms of the score itself.
+
+  This is a fixed point problem. It has a solution: the score of a case is the number of cases that are less than it in the total order defined by the scores. But we can break the circularity by realizing that the scores are the ranks. We can compute the ranks without the circular definition: by defining the rank as the number of cases that are worse off by some independent measure. But the definition does not provide an independent measure.
+
+  Therefore, the definition as given is circular and might not be computable by a simple loader. However, it is logically consistent if we interpret it as:
+
+     Let S be a function from cases to integers. We require that for every case c, 
+          S(c) = |{ d in caseload : S(d) < S(c) }|
+
+  This equation has multiple solutions? Actually, we can have:
+
+     If we have three cases: A, B, C.
+     Suppose we assign S(A)=0, S(B)=0, S(C)=0. Then for each, the number of cases with score < 0 is 0, so S(c)=0. So it is a solution? But then the flagship case is any case? And there are multiple cases with the highest score (0)? 
+
+  But we want the score to be the count of cases with lower score. In the solution above, there are no cases with score lower than 0, so the score should be 0. So that matches. But is that the intended solution? Probably not: we would expect the highest score to be 2 in a three-case caseload.
+
+  Another solution: assign S(A)=0, S(B)=1, S(C)=2.
+     For A: number of cases with score < 0: 0 -> S(A)=0 (matches)
+     For B: number of cases with score < 1: 1 (only A) -> S(B)=1 (matches)
+     For C: number of cases with score < 2: 2 (A and B) -> S(C)=2 (matches)
+
+  So that works.
+
+  But note: we can also assign:
+     S(A)=0, S(B)=0, S(C)=2.
+     For A: cases with score <0: 0 -> S(A)=0 (matches)
+     For B: same as A -> 0 (matches)
+     For C: cases with score <2: 2 (A and B) -> S(C)=2 (matches)
+
+  So we have two solutions: one with [0,0,2] and one with [0,1,2]. The intended one is probably the second? But the definition does not specify.
+
+  Moreover, the solution [0,0,2] is also valid. Therefore, the definition is ambiguous: it has multiple solutions. This is a problem.
+
+  Therefore, we must have a unique solution? The problem says "the priority score", implying it is unique. 
+
+  But note: the condition we have is:
+
+     S(c) = |{ d : S(d) < S(c) }|
+
+  This condition does not uniquely determine S. We can have any assignment of nonnegative integers that are consecutive and such that the minimum is 0? But also, we can have gaps? For example, [0,0,2] has a gap at 1.
+
+  But the condition does not force consecutive integers. However, note that if there is a gap, say we have a score k that is not assigned, then for a case with score k' > k, the count of cases with score < k' would include the cases with score < k and the cases with score between k and k'. But since k is missing, it doesn't matter. But the condition is still satisfied.
+
+  But we want the score to be the rank (i.e., the number of cases below it). In the solution [0,0,2], the case with score 2 has two cases below it (which is correct) but the two cases with score 0 have zero cases below them (which is correct because there are no cases with negative score). But note: the two cases with score 0 are tied. So the rank is 0 for both? And the next rank is 2? That is not the usual rank. 
+
+  In the intended solution, we want the score to be the number of cases that are strictly worse. In the case of ties, we want to assign the same rank? But then the next rank after the tie should be the next integer after the tie? For example, in three cases, if two are tied for worst, then they get rank 0, and the best gets rank 1? But then the best case has only one case below it? But wait, there are two cases below it? 
+
+  Actually, no: if two are tied for worst, then they are both below the best? So the best should have two cases below. Therefore, the score should be 2. But if the two worst are tied, then they each have 0 cases below (since they are tied and we count only strictly lower). So the score for the worst is 0, and for the best is 2.
+
+  So the solution [0,0,2] is the correct one for the intended meaning. But note: the condition does not require that the scores are consecutive. 
+
+  However, the definition of the priority score does not mention ties. It just says "how many other cases have a lower score". So in the presence of ties, we get gaps. But that is acceptable.
+
+  But the problem is that there are multiple valid assignments? Actually, the equation:
+
+     S(c) = |{ d : S(d) < S(c) }|
+
+  has a unique solution for a given set of cases? 
+
+  Let's assume we require that the scores are nonnegative integers and that the minimum score is 0. Then:
+
+     Let m = min_{c} S(c). Then for any c with S(c)=m, the set { d : S(d) < m } is empty, so S(c)=0. Therefore, the minimum score must be 0.
+
+     Then, let A0 = { c : S(c)=0 }.
+     Then, for any c not in A0, S(c) must be at least |A0|? Why? Because the set { d : S(d) < S(c) } at least includes A0. But note, it might include more. Actually, we cannot say.
+
+  Alternatively, we can note that the function f: c -> |{ d : S(d) < S(c) }| must be constant on the equivalence classes of cases with the same score. And the value for a case with score s is the number of cases with score < s.
+
+  But the entire set of cases is finite. We can group by the scores. Let T(s) = { c : S(c)=s } and let n(s) = |{ d : S(d) < s }|. But note: n(s) is the same for every c in T(s). And by the equation, for every c in T(s), we have S(c)=n(s). Therefore, s = n(s).
+
+  So the score s equals the number of cases with score < s. Now, note:
+
+     Let U(s) = the set of cases with score < s. Then |U(s)| = n(s) = s.
+
+  So the number of cases with score < s is s.
+
+  This must hold for every s that appears as a score.
+
+  Now, let the scores that appear be s0=0, s1, s2, ... in increasing order. Then:
+
+     For s0=0: the number of cases with score <0 is 0 -> so 0=0, holds.
+     For s1: the number of cases with score < s1 is s1. But the cases with score < s1 are exactly those with score 0, so |A0|=s1. So s1 must be |A0|.
+     For s2: the number of cases with score < s2 is s2. The cases with score < s2 are those with score 0 and s1. So |A0|+|A1| = s2. But we know |A0|=s1, so s2 = s1 + |A1|.
+
+  And so on.
+
+  Therefore, the scores are determined by the sizes of the groups. In fact, the scores are the cumulative sums of the sizes of the groups below. But note: the score of a case in group A1 is s1 = |A0|. The score of a case in group A2 is s2 = |A0|+|A1| = s1 + |A1|, and so on.
+
+  But the groups are defined by the scores? How do we assign the groups? 
+
+  We can see that the definition does not assign the groups arbitrarily. The condition forces the scores to be the cumulative sizes of the groups of cases with lower scores. This is exactly the ranking by the size of the equivalence classes? 
+
+  But note: we can assign the groups arbitrarily? For example, in a three-case set, we can put two in group A0 and one in group A2? Then s0=0, s2 = |A0| = 2. Then the condition for the cases in A0: they must have score = |{ d : S(d) < 0 }| = 0 -> matches. For the case in A2: score = |{ d : S(d) < 2 }| = |A0| = 2 -> matches. So that is valid.
+
+  But we could also put one case in A0, one in A1, and one in A2? Then:
+     s0=0, s1 = |A0|=1, s2 = |A0|+|A1|=2.
+     Then the condition holds for each.
+
+  So we have multiple solutions? 
+
+  But note: the definition of the score does not specify any ordering between cases. It only defines a condition that the scores must satisfy. Therefore, the scores are not uniquely determined by the condition. 
+
+  This is a problem because we want the flagship case to be well-defined. But if there are multiple ways to assign scores, then the case with the highest score might not be unique? Actually, in the two solutions above for three cases:
+
+     Solution 1: two cases with score 0, one with score 2 -> flagship case is the one with 2.
+     Solution 2: one case with 0, one with 1, one with 2 -> flagship case is the one with 2.
+
+  So in both, the flagship case is the same? But wait: what if we assign differently? 
+
+     Put case A in A0, case B in A2, case C in A0.
+     Then:
+          A: score 0
+          C: score 0
+          B: score 2
+     So flagship case is B.
+
+     Another assignment: put A in A0, B in A1, C in A2.
+          A:0, B:1, C:2 -> flagship is C.
+
+     In this assignment, the flagship case is C, but in the previous it was B.
+
+  Therefore, the flagship case is not uniquely determined by the condition. It depends on how we assign the groups. 
+
+  This is a serious problem. The definition does not specify how to break ties, so it is ambiguous.
+
+  Therefore, we must conclude that the definition is not well-defined.
+
+  **Verdict**: Genuinely this-will-flip (or at least ambiguous and not well-defined). We need to specify an independent criterion to break ties? Or to define the score as the rank in a predefined total order.
+
+  **Definition 5: 'Undefined term'**
+  - Defined as: any term used anywhere in the dictionary that has no entry in the dictionary.
+
+  This is Russell's paradox again. Consider: is the term 'undefined term' itself an undefined term?
+  - If it is undefined, then by the definition it should be included in the set of undefined terms. But then it has an entry (this definition) so it is defined -> contradiction.
+  - If it is defined, then it has an entry, so it is not undefined -> but then it should not be in the set of undefined terms, which is consistent.
+
+  But note: the definition of 'undefined term' is an entry in the dictionary. So the term 'undefined term' is defined. Therefore, it is not in the set. This is consistent.
+
+  But what about other terms? The set of undefined terms is the set of terms that are used but not defined. The definition of this set does not require that the term 'undefined term' is used? But note: the definition says "any term used anywhere in the dictionary". The dictionary includes the entry for 'undefined term'. In that entry, we use the term 'undefined term'? 
+
+  Let's parse the definition: "any term used anywhere in the dictionary that has no entry". Now, in the dictionary, we have an entry for 'undefined term'. That entry uses the term 'undefined term'? Actually, the definition is written in English. It uses the term 'undefined term' to define it. So the term 'undefined term' is used in the dictionary (in its own entry). 
+
+  Therefore, we have:
+
+     Let U = set of undefined terms = { term t | t is used in the dictionary and there is no entry for t }
+
+  Now, consider t = 'undefined term'. 
+     - It is used in the dictionary (in its own entry).
+     - It has an entry (the one we are writing).
+
+  Therefore, it is not in U.
+
+  But note: what if there is a term that is not defined and is not used? Then it wouldn't be in U. But the definition says "used anywhere". So we are only including terms that are used. 
+
+  However, the problem is: can we know the set U without knowing the entire dictionary? The definition of U depends on the entire dictionary (which includes the entry for U). But we can compute:
+
+     Step 1: collect all terms that appear in any definition (ignoring the definition of U) and that are not defined (except that we haven't processed the definition of U yet).
+
+     Step 2: then process the definition of U: we see that the term 'undefined term' is used in the dictionary and is defined. So we do not include it.
+
+  But note: the definition of U uses the term "the dictionary". The dictionary includes the definition of U. So we have a self-reference.
+
+  In set theory, we avoid this by having levels. The definition of U is at a higher level than the terms it refers to. But in this case, U is defined by referring to the entire dictionary, which includes itself.
+
+  This is similar to the liar paradox? 
+
+  Actually, it is not paradoxical. We can build the dictionary in two steps:
+
+     Step 1: Define all terms except U. Then collect the set S of terms that are used in these definitions and are not defined by any of these definitions.
+
+     Step 2: Then define U = S.
+
+     But then we must check: is the term 'undefined term' used in the dictionary? It is used in the definition of U, which we haven't added yet. So in the initial step, we didn't see it. Then we define U, and now the dictionary includes U. But the term U was not used in any definition until we wrote the definition of U? 
+
+     But now that we have written the definition of U, we see that the term U was used in the definition of U. And we have defined U. So it is defined. But we already built the set S without including U (because when we built S, we didn't see the use of U in the dictionary). 
+
+     However, the definition says "any term used anywhere in the dictionary". After we add the definition of U, the dictionary now has a use of the term U (in the definition of U). But we built S before we added that use. 
+
+  So we must do:
+
+     After adding the definition of U, we now scan the entire dictionary for used terms. We find that the term U is used (in the definition of U) and is defined (because we have an entry for U). So we do not add U to U. But we must also look for other terms. 
+
+     But note: the initial set S did not include U because U wasn't used at that time. Now we have added a use of U. So we must update S to include U? But then we would have to redefine U, and so on.
+
+  This is messy. 
+
+  The clean way is to define U as the set of terms that are used in the dictionary (excluding the entry for U) and that are not defined (by any entry except possibly U). But then we do not consider the use of U in the definition of U when building U. 
+
+  But the definition does not say that. It says "any term used anywhere".
+
+  Therefore, we have a circularity. The definition of U uses the entire dictionary, which includes the definition of U. And the set U depends on the use of the term U. 
+
+  We can break it by:
+
+     Let D be the dictionary without the entry for U.
+     Build the set S = { t used in D and not defined in D }.
+     Then define U = S.
+     Then add the entry for U. In this entry, we use the term U. But now the dictionary is D ∪ {U}. 
+     Now, the term U is used in the new dictionary, but it is defined. So it is not undefined. 
+
+  But the definition of U we have is: U = S. But in the new dictionary, there is a use of U (in the entry for U) that was not present in D. But we defined U as S, which was built from D. So the use of U in the entry for U is not accounted for in S. 
+
+  Therefore, the set U we have (S) does not include U, but it also does not include any term that might be used only in the definition of U. That might be acceptable.
+
+  But what if the definition of U uses a term that is not defined? Then that term should be in U. But we haven't included it because we built U before we added the entry for U. 
+
+  So we must scan the entire dictionary including the entry for U. Then:
+
+     Step 1: collect all terms used in the entire dictionary (including the entry for U).
+     Step 2: collect all terms defined in the entire dictionary (including the entry for U).
+     Step 3: U = { t : t is used and t is not defined }
+
+  Now, how to avoid circularity? We can do:
+
+     Let T_used = set of terms used in the dictionary (including in the definition of U).
+     Let T_defined = set of terms that have an entry in the dictionary (including U).
+
+     Then U = T_used - T_defined.
+
+  But then the term U is in T_used (because it is used in its definition) and in T_defined (because it has an entry). So U is not in U.
+
+  But is U in T_used? Yes, because it appears in the definition of U. Is it in T_defined? Yes. So it's not in U.
+
+  But what if there is a term 'foo' that is used in the definition of U and not defined elsewhere? Then 'foo' will be in T_used and not in T_defined, so 'foo' is in U. That is correct.
+
+  Therefore, the definition is not paradoxical. It can be computed after the entire dictionary is built. 
+
+  However, in our level assignment, we have a problem because U depends on the entire dictionary, which includes itself. We can assign U a high level: after all other definitions. But then we must ensure that the computation of the set U is done after all other terms are processed.
+
+  In the level assignment:
+
+     We assume that the other terms are defined at levels 0,1,...,k.
+     Then we define U at level k+1.
+
+     The definition of U refers to all terms in the dictionary (including the ones at level 0..k and also itself). But we are at level k+1, so we can refer to terms at levels <=k. But the reference to itself is at the same level? We allow only references to lower levels. So we cannot refer to U in the definition of U? 
+
+  But in the definition of U, we use the term U. That is a self-reference. 
+
+  Therefore, we would flag it as dangerous.
+
+  However, the self-reference here is not in the condition that defines the set? The set U is defined as the set of terms that are used and not defined. The condition for a term t to be in U does not depend on whether t is in U. It depends on whether t is defined. For the term U, we know it is defined (because we are defining it) so it is not in U. 
+
+  So the definition is not circular in a vicious way.
+
+  But the level assignment algorithm would fail because the definition of U uses the term U, which is being defined at the same level. 
+
+  Therefore, we must treat it as:
+
+  **Verdict**: Safe-but-rewrite-for-the-loader's-sake. We can rewrite the definition of U to not use the term U? Or we can have the loader compute U after all other terms. But the reference to U in the definition of U is unavoidable? 
+
+  Actually, in the definition text, we use the term 'undefined term'. We can consider that as a mention of the term itself. But the condition is about the term having an entry. We can write the definition without using the term U? 
+
+     'Undefined term': any term used anywhere in the dictionary that has no entry in the dictionary.
+
+  This definition uses the term 'undefined term'. So we cannot avoid it.
+
+  Therefore, we must rely on the loader to handle this. 
+
+  But note: the original problem had a circularity that was vicious. This one is not. We can compute:
+
+     Step 1: collect all terms used and all terms defined in the entire dictionary.
+     Step 2: set U = { t in used_terms such that t is not in defined_terms }.
+
+  This does not involve the set U in the condition for membership. It is a straightforward set difference.
+
+  Therefore, we can assign level k+1 to U, and the reference to the entire dictionary (which includes entries at levels 0..k) is allowed. The self-reference in the text is only a mention of the term, but it is not used in the condition in a way that depends on the set U. The condition for a term t is: is there an entry for t? This is independent of U.
+
+  So we can do:
+
+     For the purpose of level assignment, we ignore the mention of the term U in its own definition? Because it is not used in the condition that defines the set membership. 
+
+  But wait: the definition says "any term used anywhere". The use of the term U in its own definition is a use. Therefore, we must include it. So we have a dependency: the set U depends on the entire set of used terms, which includes the use of U in the definition of U. But we can break it by:
+
+     Let used_terms = (all terms used in definitions for other terms) ∪ {U}   [because we use U in its definition]
+     Let defined_terms = (all terms defined in other definitions) ∪ {U}
+
+     Then U = used_terms - defined_terms.
+
+  But then:
+     U = [ (other_used_terms ∪ {U}) ] - [ (other_defined_terms ∪ {U}) ]
+       = other_used_terms - other_defined_terms   (since U is in both sets and cancels)
+
+  Therefore, we don't actually need to know the use of U to compute U? We can compute it from the other terms. 
+
+  So in practice, the set U is the set of undefined terms among the other terms. The use of U in its own definition is irrelevant because U is defined (so it wouldn't be in U anyway) and we can compute U without it.
+
+  Therefore, we can assign U a level: say level k+1, and then the use of U in its own definition is not a dependency that affects the set membership (because it is a use that is canceled by the fact that U is defined).
+
+  So we can mark it safe.
+
+  But to be cautious, we might want to rewrite the definition to say:
+
+     'Undefined term': any term used anywhere in the dictionary, except in this very definition, that has no entry in the dictionary.
+
+  That would exclude the use of U in its own definition. Then we can compute U without self-reference. But that is not what the current definition says.
+
+  Given that the current definition is used and we can compute U as the set difference, we mark it safe.
+
+  **Summary of Verdicts**:
+
+  1. 'Eligible dependent': Safe.
+  2. 'Outstanding balance': Safe.
+  3. 'Non-standard rule': Genuinely this-will-flip (if the definition of standard rules is the complement) - escalate.
+  4. 'Flagship case': Genuinely this-will-flip (because the scores are not uniquely determined) - rewrite.
+  5. 'Undefined term': Safe.
+
+  **Procedure for the junior analyst**:
+
+  We will design a step-by-step procedure that can be done on paper for 30 definitions in 20 minutes.
+
+  **Step 1: Extract dependencies**
+     - For each definition, list the defined terms (from the dictionary) that appear in its definition.
+     - Ignore: primitive terms (like numbers, basic operations), terms not in the dictionary (assume they are primitive or from outside), and the term being defined (for now).
+     - Write down a dependency graph: for each term, list the terms it depends on.
+
+  **Step 2: Check for self-reference**
+     - If a definition depends on itself (directly) then mark it as recursive and note it. 
+     - Also check for mutual recursion: if two or more definitions depend on each other in a cycle.
+
+  **Step 3: Assign levels**
+     - Start with level 0: terms that have no dependencies (or only primitive dependencies).
+     - Then level 1: terms that depend only on level 0 terms.
+     - Continue until no more terms can be assigned a level.
+     - If there are terms left, then there is a circular dependency. Mark the remaining terms as being in a cycle.
+
+  **Step 4: Classify**
+     - **Safe**: 
+          - Terms that got a level without any issue.
+          - Recursive definitions that are well-founded (have a base case and the recursion is on a smaller input) - but this may require manual review.
+     - **Safe-but-rewrite-for-the-loader's-sake**:
+          - Terms that are in a cycle but the cycle is not vicious (like mutual recursion that is well-founded) - but this is rare and usually requires review.
+          - Recursive definitions (even if well-founded) because the loader might not handle recursion.
+          - Definitions that are not circular but the level assignment is high and the loader might require a specific order.
+     - **Genuinely this-will-flip**:
+          - Terms that are in a cycle that cannot be broken and that involve a negative self-reference (like the Russell's paradox pattern: defining a set by membership conditions that involve the set itself in a negative way, e.g., "not in some set that is defined in terms of the first set").
+          - Definitions that involve a universal quantification over the entire set of which it is a part (like the 'non-standard rule' if the standard rules are defined as the complement).
+
+  **Step 5: Specific check for Russell's pattern**
+     - Look for definitions of a set A that is defined as: 
+          A = { x | condition(x) }
+       and the condition(x) involves x not being in a set B, and B is defined in terms of A (for example, B is the complement of A, or B is defined using A).
+     - Also, if a set is defined by a condition that quantifies over the entire universe (like "all rules in the rulebook") and the condition depends on the set itself, then it is dangerous.
+
+  **Step 6: Stopping condition**
+     - If there is a circular dependency (terms that could not be assigned a level) then escalate.
+     - If there is a definition that matches the Russell's pattern, then escalate.
+     - If there is a recursive definition, escalate for review (unless it is a standard well-founded recursion that has been working).
+
+  **Run on the examples**:
+
+  We did above.
+
+  **Limitations**:
+     - This procedure will miss some subtle issues, like the ambiguity in the 'flagship case' definition. We caught it because we did a deeper analysis, but the junior analyst might not. Therefore, we add a specific check for definitions that define a function by a condition that involves the entire function (like the priority score) and escalate those.
+     - The procedure might flag some safe recursive definitions as needing review, which might be annoying to the rules writers. But we do this to be safe.
+     - Some definitions might be theoretically safe but the loader might not handle them due to implementation limitations (like large recursive definitions that time out). We cannot catch that.
+
+  **Final Procedure Document for the Junior Analyst**:
+
+  # Procedure for Checking Definition Consistency
+
+  ## Goal
+  To classify each definition in a batch as:
+  - **Safe**: Can be loaded without circularity issues.
+  - **Safe-but-rewrite-for-the-loader's-sake**: Safe in theory but might cause loader issues; consider rewriting for clarity or to aid the loader.
+  - **Genuinely this-will-flip**: Will cause a circularity paradox or is fundamentally ambiguous; must be rewritten.
+
+  ## Steps
+
+  ### Step 1: Extract Dependencies
+  For each definition, list all defined terms (from our dictionary) that appear in its definition. Ignore the term being defined itself for now.
+
+  Example: 
+     - 'Eligible dependent' depends on 'eligible claimant' and 'eligible dependent'. 
+     - Note: 'eligible claimant' might be defined elsewhere.
+
+  ### Step 2: Draw Dependency Graph
+  Create a graph where nodes are terms and an edge from A to B means "A depends on B".
+
+  ### Step 3: Check for Self-Reference
+  If a term has a dependency on itself, note it as recursive. If two or more terms form a cycle (e.g., A depends on B, B depends on A), note the cycle.
+
+  ### Step 4: Assign Levels
+     - Level 0: Terms that have no dependencies (or only on terms not in the dictionary, i.e., primitives).
+     - Level 1: Terms that depend only on level 0 terms.
+     - Level 2: Terms that depend on level 0 or level 1 terms (and at least one level 1) and no higher.
+     - Continue until all terms are assigned or no more can be assigned.
+     - If there are terms left in a cycle, they cannot be assigned.
+
+  ### Step 5: Classify
+     - **Safe**: Assigned a level and not recursive.
+     - **Safe-but-rewrite-for-the-loader's-sake**:
+          - Any recursive definition (even if it has a base case) because the loader might not handle recursion.
+          - Any definition that uses a term at the same level (if you had to break the level assignment to place it, but it's not circular) - though this is rare.
+          - Any definition that you had to assign a level but it depends on many other definitions (high level) and might be hard for the loader.
+     - **Genuinely this-will-flip**:
+          - Any term that could not be assigned a level (circular dependency).
+          - Any definition that has the Russell's paradox pattern: 
+               - It defines a set by a condition that says something is not in a set B, and B is defined in terms of the set you are defining.
+               - Example: 'non-standard rule' if 'standard rule' is defined as "not non-standard".
+          - Any definition that quantifies over the entire set of which it is a part and the condition depends on the set itself (e.g., defining a case property that depends on the entire caseload and the property is defined in terms of itself across cases).
+
+  ### Step 6: Escalation
+  Escalate to the supervisor if:
+     - A term is classified as "Genuinely this-will-flip".
+     - A term is recursive (even if you think it is safe) unless it is a known pattern (like 'eligible dependent').
+     - A term has a dependency cycle (could not be assigned a level).
+     - A term matches the Russell's pattern.
+     - You are unsure.
+
+  ## Time-Saving Tips
+     - Focus on definitions that have dependencies (many might be independent).
+     - For mutual recursion, look for small cycles (2 or 3 terms) first.
+     - Use a whiteboard for the dependency graph.
+
+  ## Examples (from our run)
+     - 'Eligible dependent': recursive -> escalate for review (but historically safe, so we might mark safe after review).
+     - 'Outstanding balance': safe.
+     - 'Non-standard rule': if 'standard rule' is defined as the complement, then Russell's pattern -> flip. Escalate.
+     - 'Flagship case': involves a function defined by a condition on the entire function -> flip. Escalate.
+     - 'Undefined term': safe (after analysis, but note it has a self-reference) -> escalate for review the first time.
+
+  ## Known Limitations
+     - This procedure may flag some safe recursive definitions. We escalate to be safe.
+     - It may miss ambiguities like the 'flagship case' if not recognized as a function over the entire set. We rely on the escalation of any definition that defines a property by a condition involving the entire set of that property across a collection.
+     - Loader-specific issues (like performance) are not caught.
+
+  **End of Procedure**
+answer: |-
+  ### Procedure for Junior Analyst: Checking Definition Safety  
+  **Goal**: Classify definitions into **Safe**, **Safe-but-Rewrite**, or **Genuinely This-Will-Flip** using set theory principles to avoid circular paradoxes.  
+  **Core Principles**:  
+  1. **No Self-Containment**: A set cannot be defined by quantifying over *everything* (e.g., "all sets that..."). It must "carve out" a subset from an existing collection.  
+  2. **Stratification (Levels/Ranks)**: Assign ranks to definitions. A definition at rank `n` can only reference definitions at ranks `< n`. If ranks can be assigned without cycles, the definition is safe.  
+  3. **Recursion Must Be Well-Founded**: Recursive definitions need a *base case* (no recursion) and must "bottom out" (e.g., recursion on smaller inputs).  
+
+  **Step-by-Step Checks**:  
+  *(Run on paper in 20 mins for ~30 definitions)*  
+
+  #### **Step 1: Extract Dependencies**  
+  - **Action**: For each definition, list all **defined terms** it references (ignore primitives like numbers, dates, or external terms).  
+  - **Output**: A dependency list.  
+  - **Example**:  
+    - *"Eligible dependent"* → Depends on: `eligible claimant`, `eligible dependent`.  
+
+  #### **Step 2: Assign Ranks**  
+  - **Action**:  
+    1. **Rank 0**: Definitions with **no dependencies** on other defined terms.  
+    2. **Rank `n`**: Definitions depending *only* on terms at ranks `< n`.  
+    3. **Fail**: If a definition depends on itself (directly/indirectly) or causes a cycle.  
+  - **Output**: Successful ranks or "cycle detected."  
+  - **Key**: Cycles indicate paradox risk.  
+
+  #### **Step 3: Check for Russell’s Pattern**  
+  - **Action**: Flag definitions that:  
+    - Define a set `A` as "all `X` that are **not in `B`**,"  
+    - Where `B` is defined in terms of `A` (e.g., `B = complement of A`).  
+  - **Output**: "Russell pattern detected."  
+
+  #### **Step 4: Classify Recursion**  
+  - **Action**: For recursive definitions (self-reference in Step 1):  
+    - **Safe**: Has a base case (non-recursive path) and recurses on a "smaller" input (e.g., child of a child).  
+    - **Unsafe**: No base case or recursion on "same-size" input.  
+  - **Output**: "Well-founded recursion" or "unbounded recursion."  
+
+  #### **Step 5: Final Classification**  
+  - **Safe**: Passes Steps 2–4 (ranks assigned, no Russell pattern, recursion well-founded).  
+  - **Safe-but-Rewrite**: Safe logically, but:  
+    - Recursive (may strain the loader), or  
+    - High rank (depends on many layers; loader may need explicit ordering).  
+  - **Genuinely This-Will-Flip**:  
+    - Cycle in ranks (Step 2),  
+    - Russell pattern (Step 3), or  
+    - Unbounded recursion (Step 4).  
+  - **Escalate**: All "Genuinely This-Will-Flip" and ambiguous cases.  
+
+  ---
+
+  ### **Run on Your Definitions**  
+  **Key**:  
+  - `✓` = Pass, `✗` = Fail, `⚠` = Safe but rewrite for loader.  
+  - Assume `eligible claimant`, `total amount owed`, `total amount paid`, and `standard rules` are primitives or safely defined.  
+
+  #### **1. ‘Eligible dependent’**  
+  > *"A child under 19 of an eligible claimant, or a child under 19 of an eligible dependent."*  
+  - **Step 1 (Dependencies)**: `eligible claimant`, `eligible dependent` (self).  
+  - **Step 2 (Ranks)**:  
+    - Self-reference → Cycle. **✗ Rank assignment fails** (cycle with self).  
+  - **Step 3 (Russell)**: Not applicable (no set complement).  
+  - **Step 4 (Recursion)**:  
+    - **✓ Well-founded**: Base case (`eligible claimant`), recurses on "child of child" (smaller input).  
+  - **Classification**: **Safe-but-Rewrite**  
+    - **Why**: Logically safe (terminates), but self-reference strains loaders. Rewrite iteratively (e.g., "all descendants of eligible claimant under 19").  
+    - **Escalate?** No.  
+
+  #### **2. ‘Outstanding balance’**  
+  > *"The total amount owed minus the total amount paid, where total paid includes credits applied against outstanding balances."*  
+  - **Step 1 (Dependencies)**: `total amount owed`, `total amount paid`, `credits applied` (primitives).  
+  - **Step 2 (Ranks)**:  
+    - No defined-term dependencies → **✓ Rank 0**.  
+  - **Step 3 (Russell)**: Not applicable.  
+  - **Classification**: **Safe**  
+    - **Why**: No circularity; "credits applied" is descriptive, not a defined term.  
+
+  #### **3. ‘Non-standard rule’**  
+  > *"Any rule in the rulebook that is not among the standard rules."*  
+  - **Step 1 (Dependencies)**: `standard rules` (assume defined elsewhere).  
+  - **Step 3 (Russell)**: **✗ Russell pattern detected** if `standard rules` is defined as "all rules not non-standard."  
+  - **Classification**: **Genuinely This-Will-Flip**  
+    - **Why**: If `standard rules` depends on `non-standard rule`, it creates a paradox (rules flip status).  
+    - **Escalate?** Yes. Fix by defining `standard rules` independently (e.g., explicit list).  
+
+  #### **4. ‘Flagship case’**  
+  > *"The case with the highest priority score, where the priority score of a case includes how many other cases have a lower score."*  
+  - **Step 1 (Dependencies)**: `priority score` (self-reference via "other cases").  
+  - **Step 2 (Ranks)**:  
+    - `priority score` depends on *all cases’ scores* → Cycle (each score depends on others). **✗ Rank assignment fails**.  
+  - **Step 3 (Russell)**: Not a set complement, but **universal quantification** (defines a score by quantifying over *all cases*).  
+  - **Classification**: **Genuinely This-Will-Flip**  
+    - **Why**: Circular definition → Scores are ambiguous (multiple valid solutions).  
+    - **Escalate?** Yes. Fix with an independent metric (e.g., "priority score = fixed formula based on case attributes").  
+
+  #### **5. ‘Undefined term’**  
+  > *"Any term used anywhere in the dictionary that has no entry in the dictionary."*  
+  - **Step 1 (Dependencies)**: Self-reference (uses "undefined term" in its own definition).  
+  - **Step 2 (Ranks)**: Self-reference → **✗ Cycle detected**.  
+  - **Step 3 (Russell)**: **✗ Russell pattern** (defines a set by quantifying over *all terms*, including itself).  
+  - **Classification**: **Genuinely This-Will-Flip**  
+    - **Why**: If "undefined term" is undefined, it should be included; if defined, it shouldn’t.  
+    - **Escalate?** Yes. Fix by excluding self-reference (e.g., "any term *except ‘undefined term’* used in the dictionary...").  
+
+  ---
+
+  ### **Limitations & Caveats**  
+  1. **False Negatives**:  
+     - **Recursion depth**: A well-founded recursive definition (e.g., `eligible dependent`) may pass checks but **crash the loader** if recursion is too deep (e.g., 10,000 generations).  
+     - **Watch for**: Loader stack overflows or timeouts.  
+     - **Mitigation**: Rewrite iteratively ("while loop" logic) if recursion depth > loader limit.  
+
+  2. **"Pedantic" Verdicts**:  
+     - **Rank assignment failures for recursion** (e.g., `eligible dependent`): Logically safe but flagged due to self-reference.  
+     - **Why ignore?** If recursion is proven well-founded and the loader handles it, **override to Safe-but-Rewrite**. Explain: "Theoretical cycle, but safe in practice."  
+
+  3. **Ambiguous Quantification**:  
+     - Definitions quantifying over *entire sets* (e.g., `flagship case`) may pass Step 2 if no *syntactic* cycle exists but still **fail at runtime** (e.g., ambiguous scores).  
+     - **Watch for**: Definitions using "all," "every," or "highest" over a collection.  
+
+  ### **Summary for Junior Analyst**  
+  - **Safe**: 0–1 dependencies, no recursion, no universal quantification.  
+  - **Safe-but-Rewrite**: Recursion or high-rank dependencies.  
+  - **Genuinely This-Will-Flip**: Cycles, Russell patterns, or unbounded recursion.  
+  - **Escalate**: All "Genuinely This-Will-Flip" and ambiguous cases.  
+  - **Pedantic Override**: Recursion with base case → Mark "Safe-but-Rewrite" if loader supports it.  
+
+  **Output Template**:  
+  ```
+  Definition: [Term]  
+  Step 1: Dependencies = [List]  
+  Step 2: Rank = [Number/Cycle]  
+  Step 3: Russell pattern? [Yes/No]  
+  Step 4: Recursion well-founded? [Yes/No/N/A]  
+  Classification: [Safe/Safe-but-Rewrite/Genuinely This-Will-Flip]  
+  Escalate? [Yes/No]  
+  ```

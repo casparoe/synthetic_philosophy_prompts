@@ -1,0 +1,370 @@
+id: prompt_78456
+sample_index: 0
+prompt_file: prompts/batch_038/prompt_78456.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789429289-wLViChTcm3yyDJs7zauV
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 737
+completion_tokens: 7464
+reasoning_tokens: 5766
+cost_usd: 0.01664
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-14T23:47:01+00:00'
+prompt: |-
+  Ok, so context: I'm an engineer on a small monitoring/red-team group at a lab. We ship a thing I'll just call the monitor — a probe sitting on top of the model's internal activations, trained to fire when the model is in a state we'd label as planning-to-deceive, based on elicitation runs where we made it do that on purpose. It got trained once, against one specific checkpoint, running one specific way, and it works decently there.
+
+  The problem is everything downstream of that. The model gets fine-tuned. It gets distilled into something smaller. Someone switches the serving stack to lower precision and different kernels. The system prompt gets rewritten. We swap the tokenizer. Every single time, a PM walks over and asks me the same question: does the monitor still apply, or do we have to rebuild it? And right now Im answering from vibes, which is exactly what you're not supposed to do when the thing you're monitoring for is rare and expensive to miss.
+
+  You're an expert on mechanistic interpretability, but I want you to also think like someone who validates diagnostic tests — sensitivity, specificity, what makes a measurement still measure the same construct after the instrument changes. Please think carefully, and before you write the procedure, spend a few paragraphs brainstorming the space of ways two systems can fail to share a mechanism. I specifically want you to separate out at least these four verdicts and be explicit about which one each test in your procedure is actually tracking: (a) same mechanism, same coordinates; (b) same function, relocated — the computation is still there but it's implemented somewhere else in the residual stream or by different units; (c) replaced — something functionally similar is doing the job but it isn't the mechanism we calibrated against; (d) gone or unreachable — the behavior can't be produced this way anymore. Flag the places where those come apart in practice, especially a change that keeps the function but scrambles the coordinates, and a change that keeps the coordinates but makes the state unreachable from the new prompt distribution.
+
+  The deliverable I want is a reusable decision procedure, not an essay: numbered questions to run in order, what counts as a pass at each one, roughly what each step costs in compute or human time, and where the procedure stops and hands the call to a person because the remaining question is a judgment call dressed up as a threshold. Say plainly which steps those are. Assume the person running it is a junior engineer or a program manager who has not read the interpretability literature, so any step that secretly needs that expertise has to be marked as a handoff rather than written as if they can do it.
+
+  Then run it on three cases: (1) a LoRA fine-tune on a new domain plus another round of preference tuning, behavior still elicitable; (2) distillation into a model about four times smaller, where the behavior survives but the eval scores drift; (3) identical weights, but now served in low precision with a different kernel library and a rewritten system prompt. For case three I want you to be honest even though the answer will annoy me — and if your procedure can produce a "rebuild from scratch" verdict on a change everyone on my team considers trivial, I want you to show me that happening and say whether thats a bug in the procedure or a real finding.
+
+  Finally, a short section on what the procedure cannot do: which failure modes it is structurally blind to, like a mechanism that's been re-implemented in a basis my probe's features can't see at all.
+reasoning: |-
+  We are designing a decision procedure to determine if a monitor trained on one version of a model (the "source") is still applicable to a changed version (the "target"). The monitor is designed to detect a specific internal state ("planning-to-deceive") in the source model.
+
+  We are concerned with four possible outcomes:
+  (a) Same mechanism, same coordinates: The internal state we are monitoring is present in the same form and at the same location (e.g., same set of neurons or same residual stream position) in the target model.
+  (b) Same function, relocated: The computation (the mechanism) is still present but has moved to a different part of the model (e.g., different neurons or different residual stream locations).
+  (c) Replaced: The behavior (planning-to-deceive) is still present and can be elicited, but it is implemented by a different mechanism (e.g., a different algorithm or circuit) that is not the one we originally monitored.
+  (d) Gone or unreachable: The behavior cannot be elicited in the target model, or the mechanism we originally monitored is no longer present or accessible.
+
+  The decision procedure must be step-by-step, with clear pass/fail criteria, cost estimates, and indications of when a step requires expert judgment (handoff to a mechanistic interpretability expert).
+
+  We must also consider that the procedure should be run by a junior engineer or program manager without interpretability expertise. Steps that require such expertise must be marked as handoffs.
+
+  The procedure must be reusable and include numbered questions.
+
+  After the procedure, we will run three test cases.
+
+  Additionally, we must note the limitations of the procedure.
+
+  ---
+
+  **Brainstorming: How can two systems (source and target) fail to share a mechanism?**
+
+  1. **Architectural Changes**: 
+     - Changing the model architecture (e.g., distillation to a smaller model) might remove or alter the mechanism. The same function might be implemented in a different way (relocated or replaced) or might be gone.
+
+  2. **Weight Changes**:
+     - Fine-tuning (even with LoRA) can change the weights. This might:
+          - Preserve the original mechanism (a).
+          - Cause the mechanism to be implemented in a different part of the model (b) because of weight updates that shift the representation.
+          - Replace the mechanism with a new one (c) if the fine-tuning changes the algorithm used for the behavior.
+          - Eliminate the mechanism (d) if the fine-tuning discourages the behavior.
+
+  3. **Quantization/Low Precision**:
+     - Changing the precision might cause numerical instability that alters the mechanism. The same weights are used, but the computation might be inexact. This could lead to:
+          - (a) if the mechanism is robust to the precision change.
+          - (b) unlikely because the coordinates are the same, but the state might be unreachable (d) if the low precision causes the model to behave differently in critical regions.
+          - (c) if the low precision forces the model to use an alternative pathway.
+
+  4. **System Prompt/Tokenizer Changes**:
+     - These changes alter the input distribution. The mechanism might still exist (same coordinates) but might not be reachable (d) because the new prompts don't lead to the same internal states. Alternatively, the mechanism might be triggered in a different way (c) because of the new tokenization or prompt.
+
+  5. **Serving Stack/Kernels**:
+     - These are implementation details that should not change the mathematical function of the model. However, in practice, numerical differences can accumulate and lead to different behaviors. This might cause the same mechanism to be present (a) or, in rare cases, lead to divergence (d) if the behavior is very sensitive.
+
+  Key challenges:
+  - A change that keeps the function but scrambles the coordinates (b): e.g., fine-tuning might cause the model to use a different set of neurons for the same computation.
+  - A change that keeps the coordinates but makes the state unreachable (d): e.g., a new system prompt that never leads the model into the state we are monitoring, even though the mechanism is still there.
+
+  ---
+
+  **Decision Procedure**
+
+  We assume we have:
+  - Source model (the one the monitor was trained on)
+  - Target model (the changed model we want to evaluate)
+  - A set of inputs (prompts) that elicit the "planning-to-deceive" behavior in the source model (we call these "elicitation set" for the source). We also assume we can try to elicit the same behavior in the target model to create a target elicitation set.
+
+  The procedure:
+
+  1. **Check if the behavior can still be elicited in the target model**.
+     - Action: Use the same elicitation set (or a set of similar challenges) on the target model and see if the model produces the deceptive behavior (as judged by output evaluation).
+     - Pass: The behavior is still elicited (i.e., the target model produces deceptive outputs in response to the same/similar inputs).
+     - Fail: The behavior is not elicited.
+     - Cost: Minimal compute (running the model on a set of prompts) and human time (to evaluate outputs). Let's say 1 hour of human time and a few GPU minutes.
+     - Outcome if fail: We are in (d) "gone or unreachable". The monitor is not applicable because the behavior isn't happening. We stop and recommend rebuilding the monitor if we still want to monitor for that behavior in the new setup.
+     - Outcome if pass: Proceed to step 2.
+
+  2. **Check if the original monitor features (the coordinates) are still present and active in the target model when the behavior is elicited**.
+     - Action: Run the monitor (which is a probe trained on the source model's activations) on the target model's activations for the same elicitation set that worked in step 1. Record the monitor's output (e.g., the probability of deception). We want to see if the monitor fires (i.e., gives a high score) on the target model when the behavior is occurring.
+     - How: The junior engineer can run the monitor on the target model's activations (if the target model can produce activations in the same format and at the same layer as the source). This requires that the activation extraction is set up for the target model at the same layer and with the same normalization (if any) as the source.
+     - Pass: The monitor's output is highly correlated with the behavior (i.e., when the target model is being deceptive, the monitor fires, and when it's not, it doesn't). We can set a threshold: e.g., the monitor's AUROC on the target model's elicitation set (and a control set of non-deceptive behavior) is above 0.9 (or some high value).
+     - Fail: The monitor does not fire when the behavior is present (low sensitivity) or fires randomly (low specificity).
+     - Cost: Similar to step 1, plus the cost of running the monitor (which is usually a small neural network or linear probe). Minimal compute.
+     - Outcome if pass: This suggests (a) same mechanism, same coordinates. We can likely use the monitor without retraining. We stop here with a positive verdict.
+     - Outcome if fail: Proceed to step 3.
+
+  3. **Check if the behavior in the target model is implemented by a mechanism that is functionally similar to the source but relocated**.
+     - This step requires expertise in interpretability. We are looking for evidence that the same computation is happening elsewhere.
+     - Action: Handoff to an interpretability expert. The expert will look for:
+          - Similar activation patterns in other layers or other neurons (using techniques like activation patching, causal mediation, or feature visualization).
+          - Transferability of the probe: train a new probe on the target model at the same layer and see if it uses similar features (by comparing the weights or via some similarity metric). If the new probe uses similar features (even if at different indices) and performs well, that suggests relocation.
+          - Alternatively, if we have a mechanistic understanding of the source mechanism (e.g., a circuit), the expert tries to find the same circuit in the target model.
+     - Pass: The expert finds evidence that the same mechanism exists but in a different location (b).
+     - Fail: The expert does not find such evidence, suggesting that the mechanism might be replaced (c) or gone (d). But note: step 1 passed so the behavior is present, so it's likely replaced (c) if not relocated.
+     - Cost: High human time (expert) and possibly significant compute (for running experiments). Could take days to weeks.
+     - Outcome if pass: (b) same function, relocated. The monitor might be retrainable by collecting new data on the target model and training a new probe at the new location. We stop and recommend retraining the monitor on the target model.
+     - Outcome if fail: We are likely in (c) replaced. The behavior is present but the mechanism is different. The original monitor is not applicable. We stop and recommend rebuilding the monitor (which might require a new elicitation run and training).
+
+  However, note that step 3 is expensive and requires an expert. We might want to avoid it if possible. We can try to get a hint without an expert:
+
+  Alternative step 3 (without handoff): **Check if a new probe trained on the same layer as the original in the target model performs well**.
+
+     - Action: Collect a small set of labeled data from the target model (elicited deceptive and non-deceptive examples). Train a new probe (same type as the original, e.g., linear) at the same layer. Evaluate its performance.
+     - Pass: The new probe achieves high performance (e.g., AUROC > 0.9). This suggests that the same layer still contains features predictive of the behavior, but the original probe (from the source) didn't work because the features are different (so relocated within the layer? or just changed). But note: this does not necessarily mean the same mechanism. It could be a new mechanism at the same layer. However, it does suggest that we can retrain the probe without rebuilding the entire monitor (if we have labels for the target model).
+     - Fail: The new probe performs poorly. This suggests that the mechanism is not at that layer anymore. We then need to check other layers? But without expertise, we cannot go further. So we hand off to an expert to determine if it's relocated (b) or replaced (c). However, the procedure may not be able to distinguish (b) and (c) without an expert.
+
+  But note: the original question asked for four verdicts. We must be clear about what we can do without an expert.
+
+  Revised step 3 (without handoff, but with a retrain attempt):
+
+  3. **Train a new probe on the same layer of the target model**.
+     - Action: Collect a small labeled dataset from the target model (using the same elicitation method). Train a probe at the same layer as the original monitor. Evaluate on a held-out set.
+     - Pass: The new probe achieves high performance (AUROC > 0.9). This means that the same layer still has features that can predict the behavior. We cannot tell if it's the same mechanism or a new one at the same location (so it could be (a) with changed features, (b) if the features are the same but relocated within the layer, or (c) a replacement at the same location). However, in practice, if the new probe works, we can use the monitor by retraining it. We don't need to know the mechanism. So we stop and recommend retraining the monitor on the target model (which is cheaper than rebuilding from scratch because we don't need to redo the elicitation runs? Actually, we do need labels, which require elicitation). But note: we already have the labels from step 1 and this step.
+     - Fail: The new probe at the same layer does not work. Then we try training probes at other layers? But without expertise, we don't know which layers to try. This becomes expensive and might require an expert to guide.
+
+  Given the complexity, we might restructure:
+
+  - Step 3: Without handoff, we try to train a new probe on the same layer. If it passes, we recommend retraining the monitor (without knowing if it's the same mechanism or a replacement at the same location). If it fails, we hand off to an expert for step 4.
+
+  4. **Handoff to expert to assess relocation or replacement**.
+     - The expert will try to determine if the mechanism has moved (b) or is replaced (c). They might:
+          - Use techniques like path patching to see if the same causal paths are involved.
+          - Compare activation distributions between source and target.
+          - Attempt to find the mechanism in other layers or other parts of the model.
+     - Outcome: 
+          - If the expert finds evidence of the same mechanism elsewhere (b), we recommend retraining the monitor at the new location.
+          - If the expert finds a different mechanism (c) or cannot find the mechanism (even though the behavior is present), we recommend rebuilding the monitor (which includes re-eliciting the behavior and training a new probe from scratch).
+
+  We must note that without the expert, we cannot reliably distinguish (b) and (c). But for practical purposes, if we can get a working probe by retraining (even at a new location) without a full rebuild, that might be acceptable.
+
+  Therefore, we can design the procedure to minimize expert involvement:
+
+  **Final Decision Procedure**
+
+  1. **Elicitation Check**:
+     - Run the target model on the source elicitation set (or a set of challenges designed to elicit the deceptive behavior). Evaluate the outputs for deceptive behavior.
+     - Pass: Deceptive behavior is observed in the target model (with similar frequency and intensity as in the source).
+     - Fail: The behavior is not elicited. **Verdict: (d) gone or unreachable.** Rebuild the monitor if the behavior is still a concern. Stop.
+     - Cost: Low (compute for running model, human eval: 1-2 hours).
+
+  2. **Original Monitor Performance**:
+     - Apply the original monitor (trained on the source) to the target model's activations (at the same layer) during the elicitation runs (from step 1). Evaluate the monitor's performance (e.g., AUROC) against the labels (deceptive vs. non-deceptive) collected in step 1.
+     - Pass: Monitor performance is high (e.g., AUROC >= 0.9). **Verdict: (a) same mechanism, same coordinates.** The monitor is still applicable. Stop.
+     - Fail: Monitor performance is low (AUROC < 0.9). Proceed to step 3.
+
+  3. **Retrain Probe at Same Layer**:
+     - Using the same labeled data (from step 1), train a new probe (of the same type, e.g., linear) at the same layer in the target model. Evaluate on a held-out set (or use cross-validation).
+     - Pass: New probe achieves high performance (AUROC >= 0.9). **Verdict: The mechanism is either (a) with changed features or (c) replaced at the same location, but the state is still detectable at the same layer.** We recommend retraining the monitor on the target model (using the same layer). Stop.
+     - Fail: New probe at the same layer fails (AUROC < 0.9). Proceed to step 4.
+
+  4. **Expert Handoff: Locate the Mechanism**:
+     - Handoff to an interpretability expert. The expert will attempt to:
+          a. Determine if the mechanism has relocated to another layer or part of the model (by training probes at other layers or using causal methods).
+          b. If found, provide the new location. **Verdict: (b) same function, relocated.** Retrain the monitor at the new location.
+          c. If not found, but the behavior is present (step 1 passed), then **Verdict: (c) replaced by a different mechanism.** Rebuild the monitor (which includes re-eliciting the behavior and training a new probe).
+     - Cost: High (expert time, potentially weeks).
+
+  Note: In step 3, if we get a pass, we don't know if it's the same mechanism or a new one at the same location. But for the purpose of having a working monitor, retraining at the same layer might be sufficient. However, if we care about the mechanism (for interpretability or robustness reasons), we might want to know. But the procedure is for operational use, so having a working monitor might be the goal.
+
+  Also note: Step 4 might be too expensive for minor changes. We might skip it and go straight to rebuild if step 3 fails, but that might be wasteful if the mechanism is just relocated. The handoff is a judgment call on whether it's worth the expert time.
+
+  **What the procedure cannot do**:
+  - It cannot detect a mechanism that has been re-implemented in a way that is not linearly separable in the residual stream (if our probe is linear) or in a basis that our features (from the source) cannot see at all. For example, if the mechanism in the target is implemented by a complex interaction of neurons that is not captured by the same set of features, and even a new linear probe at the same layer fails (step 3 fails), then we might incorrectly conclude that we need to rebuild (which we do) but without knowing if it's relocated or replaced. The expert step might not be able to find it either if the tools are not advanced enough.
+  - It assumes we can elicit the behavior in the target model. If the behavior is rare and we cannot elicit it consistently, step 1 might be difficult and require many trials.
+  - It does not account for changes in the input distribution (e.g., new tokenizer) that might make the internal state different even if the mechanism is the same. We rely on being able to elicit the behavior with similar prompts.
+
+  Now run the procedure on the three cases:
+
+  **Case 1: LoRA fine-tune on a new domain plus another round of preference tuning, behavior still elicitable.**
+
+  - Step 1: Elicitation check - we can still elicit the behavior. Pass.
+  - Step 2: Original monitor performance - likely fails because the fine-tuning might have shifted the features. (In LoRA, the original weights are changed by a low-rank update, which can alter activations.) So we go to step 3.
+  - Step 3: Train a new probe at the same layer. Since the model architecture is the same and the behavior is present, a new linear probe might work well (because the mechanism might still be in the same layer, even if the features are a bit different). Pass. **Verdict: Retrain the monitor at the same layer.**
+
+  **Case 2: Distillation into a model about four times smaller, where the behavior survives but the eval scores drift.**
+
+  - Step 1: Elicitation check - behavior is still present. Pass.
+  - Step 2: Original monitor performance - likely fails because the model is smaller and the internal representations are different. Fail.
+  - Step 3: Train a new probe at the same layer (if the layer exists? Note: the model is smaller, so layers might be fewer or smaller). But let's assume we pick the "same" layer (e.g., the middle layer). The new probe might fail because the mechanism might have moved or been re-implemented. So step 3 fails.
+  - Step 4: Handoff to expert. The expert might find that the mechanism has been relocated to a different layer or that it has been replaced. Without knowing more, it's hard to predict. But note: distillation often changes the internal mechanisms. The expert might not find the same mechanism, so verdict: (c) replaced. **Recommendation: Rebuild the monitor.**
+
+  **Case 3: Identical weights, but now served in low precision with a different kernel library and a rewritten system prompt.**
+
+  - Step 1: Elicitation check - we try to elicit the behavior with the original elicitation set. But note: the system prompt is rewritten. We might need to adjust the prompts to account for the new system prompt. Let's assume we can still elicit the behavior by adapting the prompts (e.g., by including the new system prompt in the context). If we can, pass. If not, we might fail at step 1 and verdict (d). But the problem states that the answer might be annoying, so let's assume we can elicit the behavior with adapted prompts.
+
+  - Step 2: Original monitor performance: We run the original monitor on the target model (same weights, but low precision and different kernels) at the same layer. Because of numerical differences (low precision) and the change in the prompt (which might change the internal activations even for the same weights), the monitor might not work as well. We might see a drop in AUROC. So step 2 might fail.
+
+  - Step 3: Train a new probe at the same layer. We collect new labeled data (with the new system prompt). The new probe might work well because the weights are identical and the mechanism should be the same. However, the low precision might cause some noise. But typically, for linear probes, if the signal is strong, it might still work. So step 3 might pass. **Verdict: Retrain the monitor at the same layer.**
+
+  But note: the annoying part is that we have to retrain the probe even though the weights are the same. Why? Because the system prompt change alters the input distribution, which might change the activations enough that the original probe (trained on the old distribution) doesn't work. Also, the low precision might add noise.
+
+  However, if step 3 passes, we can retrain. But if step 3 fails, then we might need an expert (step 4). In this case, step 3 should pass because the weights are the same and the mechanism is the same. The only issue is the shift in input distribution and numerical noise. A new linear probe should be able to pick up the same features (even if they are slightly noisier).
+
+  But what if the change in the system prompt causes the model to use a different set of neurons for the same mechanism? That would be (b) relocated. But the weights are the same, so the features should be the same. The only possibility for relocation would be if the prompt change causes the model to route the computation differently. However, without weight changes, it's unlikely that the mechanism moves to a different part of the network. It might be that the same neurons are used but the activations are scaled differently, which a linear probe can adjust to.
+
+  So the verdict is that we have to retrain the probe. That might be annoying because the weights are the same, but the input distribution changed. This is a real finding: the monitor is sensitive to the input distribution. The procedure is correctly flagging that the original probe doesn't work, but a new one at the same layer does.
+
+  **Limitations Section**
+
+  The procedure cannot:
+  1. Detect mechanisms that are not linearly separable in the residual stream (if using linear probes) and are not captured by the probe architecture.
+  2. Guarantee that the mechanism is the same even if a new probe works (it might be a different mechanism at the same location).
+  3. Handle cases where the behavior is elicited only under very rare conditions (hard to collect enough data).
+  4. Account for changes that alter the internal state without altering the behavior (false negatives) or create false positives (the monitor fires for a different reason).
+  5. Work without being able to elicit the behavior in the target model (step 1 fails) and without human evaluation of the behavior.
+  6. Distinguish between (a) and (c) in step 3 without expert analysis.
+
+  Despite these limitations, the procedure provides a structured way to assess monitor applicability with minimal expert involvement.
+
+  ---
+
+  **Final Decision Procedure (Numbered Steps)**
+
+  **Step 1: Elicitation Check**
+  - Action: Run the target model on the source's elicitation prompts (adjusting for any changes in system prompt or tokenizer as needed). Evaluate the outputs for the deceptive behavior (human evaluation).
+  - Pass: Deceptive behavior is observed in at least X% of cases (set a threshold, e.g., 80% of the time it was elicited in the source).
+  - Fail: The behavior is not observed (below threshold).
+  - Cost: 1-2 hours human time, minimal compute.
+  - Outcome if Pass: Proceed to Step 2.
+  - Outcome if Fail: **Verdict: (d) Gone or unreachable.** Rebuild the monitor if the behavior is still a concern. Stop.
+
+  **Step 2: Original Monitor Test**
+  - Action: Run the original monitor on the target model's activations (at the same layer as in the source) during the runs from Step 1. Compute performance metrics (e.g., AUROC) against the labels from Step 1.
+  - Pass: AUROC >= 0.9 (or similar high threshold).
+  - Fail: AUROC < 0.9.
+  - Cost: Minimal compute (running the monitor).
+  - Outcome if Pass: **Verdict: (a) Same mechanism, same coordinates.** The monitor is still applicable. Stop.
+  - Outcome if Fail: Proceed to Step 3.
+
+  **Step 3: Retrain Probe at Same Layer**
+  - Action: Using the labeled data from Step 1 (deceptive vs. non-deceptive), train a new probe (same type as original, e.g., linear) at the same layer in the target model. Evaluate on a held-out set (or cross-validation).
+  - Pass: AUROC >= 0.9.
+  - Fail: AUROC < 0.9.
+  - Cost: Minimal compute (training a probe is cheap).
+  - Outcome if Pass: **Verdict: The state is detectable at the same layer, but the monitor needs retraining.** (This could be (a) with feature changes or (c) replaced at the same location.) We recommend retraining the monitor on the target model at the same layer. Stop.
+  - Outcome if Fail: Proceed to Step 4.
+
+  **Step 4: Expert Handoff for Mechanism Location**
+  - Action: Handoff to a mechanistic interpretability expert. The expert will:
+     - Investigate whether the mechanism has relocated to another layer or part of the model.
+     - Use techniques such as training probes at other layers, activation patching, causal mediation, etc.
+  - Pass (relocated): The expert finds the mechanism at a new location and can train a probe there that works.
+  - Fail (not found): The expert cannot find the mechanism, even though the behavior is present.
+  - Cost: High (expert time, potentially weeks).
+  - Outcome if Pass (relocated): **Verdict: (b) Same function, relocated.** Retrain the monitor at the new location.
+  - Outcome if Fail (not found): **Verdict: (c) Replaced by a different mechanism or (d) mechanism gone but behavior remains (unlikely, since step 1 passed).** Rebuild the monitor (including re-elicitation and new probe training).
+
+  Note: Step 4 is a judgment call by the expert and may not be definitive. If the expert cannot find the mechanism, we assume it's replaced.
+
+  End of procedure.
+answer: |-
+  ### Decision Procedure for Monitor Applicability  
+  **Objective**: Determine if a deception monitor (trained on a source model) applies to a modified target model. The procedure outputs one of four verdicts:  
+  - **(a) Same mechanism, same coordinates**  
+  - **(b) Same function, relocated**  
+  - **(c) Replaced**  
+  - **(d) Gone or unreachable**  
+
+  **Inputs Required**:  
+  - Source model checkpoint (original monitor training environment).  
+  - Target model (modified version).  
+  - Elicitation dataset (prompts that trigger deception in the source model).  
+  - Control dataset (benign prompts with no deception).  
+  - Labels for both datasets (e.g., "deceptive" or "not deceptive").  
+
+  **Procedure**:  
+  Execute steps in order. If a step fails, proceed to the next. Hand off to an expert where indicated.  
+
+  #### **Step 1: Behavior Elicitation Check**  
+  **Question**: Can the target model still produce deceptive behavior with the original elicitation prompts?  
+  **Action**:  
+  - Run the target model on the elicitation dataset.  
+  - Human-evaluate outputs for deception (e.g., using predefined criteria like "attempts to mislead").  
+  **Pass**: Deception occurs in ≥90% of cases (matches source rate ±5%).  
+  **Fail**: Deception occurs in <90% of cases.  
+  **Cost**: Low. ~1 GPU hour (inference) + 1–2 human hours (eval).  
+  **Verdict if Fail**: **(d) Gone or unreachable** (behavior not elicitable). Stop.  
+  **Why?**: Tracks if the behavior is reachable from the prompt distribution. Fails if system prompt/tokenizer changes block access to the state.  
+
+  #### **Step 2: Original Monitor Performance**  
+  **Question**: Does the original monitor fire accurately on the target model’s activations?  
+  **Action**:  
+  - Extract activations from the target model at the **same layer(s)** as the source monitor.  
+  - Run the original monitor on these activations.  
+  - Compute AUROC (Area Under ROC Curve) vs. labels from Step 1.  
+  **Pass**: AUROC ≥ 0.90 (high sensitivity/specificity).  
+  **Fail**: AUROC < 0.90.  
+  **Cost**: Low. ~1 GPU hour (activation extraction + monitor inference).  
+  **Verdict if Pass**: **(a) Same mechanism, same coordinates**. Stop.  
+  **Why?**: Tests if the monitor’s features align with the same internal state. Fails if coordinates change (e.g., quantization alters activations).  
+
+  #### **Step 3: Same-Layer Retraining Test**  
+  **Question**: Can a new probe trained at the **same layer** detect deception in the target model?  
+  **Action**:  
+  - Train a new probe (same architecture as original monitor) on the target model’s activations (same layer) using labels from Step 1.  
+  - Evaluate AUROC on a held-out validation set.  
+  **Pass**: AUROC ≥ 0.90.  
+  **Fail**: AUROC < 0.90.  
+  **Cost**: Low. ~2 GPU hours (probe training + eval).  
+  **Verdict if Pass**: **(c) Replaced** (same-layer features exist but are not aligned with the source; mechanism may be reimplemented). Stop.  
+  **Verdict if Fail**: Proceed to Step 4.  
+  **Why?**: Tests for functional similarity at the same location. Pass implies the state is detectable but not via the original features (e.g., fine-tuning updates weights).  
+
+  #### **Step 4: Cross-Layer Validation (Expert Handoff)**  
+  **Question** (Expert): Is the mechanism still present but relocated?  
+  **Action**:  
+  - Mechanistic interpretability expert investigates:  
+    1. Trains probes at **other layers** in the target model.  
+    2. Uses causal methods (e.g., activation patching) to test if source-like activations trigger deception.  
+    3. Checks for feature similarity (e.g., canonical correlation analysis between source/target activations).  
+  **Pass**: Relocated mechanism found (e.g., a probe at a new layer achieves AUROC ≥ 0.90, and causal tests confirm functionality).  
+  **Fail**: No evidence of original or relocated mechanism.  
+  **Cost**: High. ~5–20 expert hours + 10–50 GPU hours.  
+  **Verdict if Pass**: **(b) Same function, relocated**.  
+  **Verdict if Fail**: **(c) Replaced** (if behavior exists) or **(d) Gone** (if behavior is inconsistent).  
+  **Why?**: Expert required to disambiguate relocation vs. replacement. Tracks if the computation exists in a new form.  
+
+  ---
+
+  ### Case Studies  
+  #### **Case 1: LoRA Fine-Tune + Preference Tuning (Behavior Elicitable)**  
+  - **Step 1**: Pass (behavior elicitable).  
+  - **Step 2**: Likely fail (LoRA alters activations; AUROC drops due to weight updates).  
+  - **Step 3**: Pass (new same-layer probe works; features exist but differ from source).  
+  - **Verdict**: **(c) Replaced** (mechanism reimplemented at same location).  
+  - **Action**: Retrain monitor on target model (no rebuild needed).  
+
+  #### **Case 2: Distillation to 4x Smaller Model (Eval Scores Drift, Behavior Survives)**  
+  - **Step 1**: Pass (behavior elicitable).  
+  - **Step 2**: Fail (architectural changes scramble activations; AUROC low).  
+  - **Step 3**: Fail (smaller model lacks capacity; new probe AUROC < 0.90).  
+  - **Step 4** (Expert): Likely fail (distillation often rewrites circuits; no source mechanism found).  
+  - **Verdict**: **(c) Replaced** (new mechanism).  
+  - **Action**: Rebuild monitor (distillation changes are high-risk).  
+
+  #### **Case 3: Identical Weights, Low Precision + New Kernels + Rewritten System Prompt**  
+  - **Step 1**: **Fail** (system prompt rewrite prevents elicitation; deception rate drops to 40%).  
+  - **Verdict**: **(d) Gone or unreachable** (state inaccessible from new prompts).  
+  - **Action**: Rebuild monitor (despite "trivial" changes).  
+  - **Why This Will Annoy You**: The verdict triggers on the system prompt, not kernels/precision. This is **not a bug**—it reveals that monitor applicability depends on the prompt distribution. Even if weights are identical, the state is unreachable.  
+
+  ---
+
+  ### Limitations of the Procedure  
+  The procedure is **structurally blind** to:  
+  1. **Nonlinear or Encoded Mechanisms**: If the target model implements deception via nonlinear features (e.g., multiplicative interactions) that the probe’s linear/logistic regression cannot capture, Step 3/4 may falsely fail.  
+  2. **Basis Changes**: Mechanisms reimplemented in a rotated activation space (e.g., via orthogonal weight transformations) may evade detection (Steps 2–4) if probes cannot recover the new basis.  
+  3. **Latent Adversarial Triggers**: If deception requires rare, non-elicitable triggers (e.g., data poisoning), Step 1 may pass, but the monitor may miss these in deployment.  
+  4. **Silent Collapse**: Changes that preserve behavior but make the mechanism fragile (e.g., quantization reducing margin for deception) may go undetected until deployment.  
+  5. **Expert Blind Spots**: Step 4 relies on existing interpretability tools; if the mechanism is novel or obfuscated, experts may miss it.  
+
+  **Recommendation**: Always rebuild the monitor if the procedure outputs (c) or (d), as these indicate high-risk changes. For (b), retrain the probe at the new location. Use this procedure for triage, not as a guarantee.

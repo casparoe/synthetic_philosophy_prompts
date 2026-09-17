@@ -288,6 +288,15 @@ parameters and 8-bit-or-better endpoints only.
 | run_003 | DeepSeek R1 0528 | 1,000 | 0 | 0 | 0 | 2,605 / 3,809 | 37% | $5.89 |
 | run_004_imported | Qwen3.5-397B-A17B-FP8 (imported, see README) | 22,367 x 2 | 29 | 0 | 0 | 3,936 / 5,405 | about 55% by words | none (self-hosted) |
 | run_005_imported | DeepSeek R1 0528 (imported) | 22,367 x 2 | 18 | 0 | 5 (all truncated inside the reasoning) | 2,349 / 3,091 | about 34% by words | none (self-hosted) |
+| run_006 | DeepSeek R1 0528 | 9,930 (batch 033) | 0 | 0 | 0 | 2,656 / 3,894 | 38% | $59.71 |
+| run_007 | Qwen3.5-397B-A17B | 9,930 (batch 033) | 5 | 0 | 5 (the truncated ones) | 4,510 / 6,627 | 62% | $152.95 |
+| run_008 | Qwen3.5-397B-A17B | 19,998 (batch 035) | 10 | 0 | 10 (the truncated ones) | 4,795 / 6,997 | 64% | $329.62 |
+| run_009 | DeepSeek R1 0528 | 19,998 (batch 035) | 0 | 0 | 0 | 2,790 / 3,967 | 38% | $127.37 |
+| run_010 | DeepSeek R1 0528 | 19,997 (batch 038) | 0 | 0 | 0 | 3,065 / 5,030 | 41% | $141.57 |
+| run_011 | Qwen3.5-397B-A17B | 19,997 (batch 038) | 13 | 0 | 12 (truncated ones) | 5,363 / 7,738 | 66% | $371.74 |
+| run_012 | Qwen3.5-397B-A17B | 39,944 (batch 041) | 22 | 0 | 19 (truncated ones) | 4,907 / 7,247 | 66% | $677.77 |
+| run_013 | DeepSeek R1 0528 | 39,944 (batch 041) | 1 | 0 | 0 | 2,845 / 4,409 | 40% | $259.13 |
+| run_014 | DeepSeek R1 0528 | 7,149 x 2 (`r1_gap`) | 0 | 0 | 0 | 2,687 / 3,938 | 38% | $87.33 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -298,6 +307,19 @@ DeepSeek V4 Pro, none of 1,000 for R1 0528). The repeated-phrase flags were refr
 The one truncated response (run 000, prompt 32085, on Solomonoff induction) spent
 its whole 32,768-token budget reasoning and never reached an answer; it is kept
 with `finish_reason: length` and an empty `answer`.
+
+Runs 006–014 (2026-09-12 to 2026-09-16, $2,207 in total) show the same pattern. The
+refusal-phrase flags (0.1–0.6% per run) are "as an AI" used analytically ("As an AI,
+I am biased toward formal consistency"), "AI safety mechanism", and quoted
+disclaimers; the repeated-phrase flags (0.3–0.8%) are refrains, rubric rows, and
+probability tables, with one genuine degenerate loop: run 012's response to a sestina
+prompt (100372) repeats its refrain 73 times until the 32,768-token budget, and is
+kept with `finish_reason: length` like the other 22 truncated Qwen responses of that
+run. The Qwen runs truncate 0.1% of the time (5, 10, 13, and 22 responses), the R1
+runs almost never (one response in 90,000). SiliconFlow rate-limited R1 for stretches
+of the night of 2026-09-14/15, and 49 prompts of run 013 exhausted their six attempts;
+the resume-until-complete queue answered them in a second pass, so coverage is
+complete everywhere.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers
