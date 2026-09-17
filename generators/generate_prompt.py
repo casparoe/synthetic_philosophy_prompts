@@ -19,6 +19,7 @@ Usage:
 """
 
 import argparse
+import fcntl
 import re
 import sys
 import threading
@@ -76,15 +77,23 @@ def create_batch_dir():
 
 
 def next_output_path(batch_dir, first_id=1):
-    """Path for the next prompt: one past the highest ID anywhere under
-    prompts/, but never below first_id (to stay clear of a batch that is
-    being generated on another machine at the same time)."""
-    indices = [
-        int(m.group(1))
-        for p in PROMPTS_DIR.glob("**/prompt_*.txt")
-        if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
-    ]
-    return batch_dir / f"prompt_{max(max(indices, default=0) + 1, first_id):05d}.txt"
+    """Claim the path for the next prompt: one past the highest ID anywhere
+    under prompts/, but never below first_id (to stay clear of a batch that
+    is being generated on another machine at the same time). Generators on
+    the same machine, even into different batches, are serialized by a lock
+    file, and the claimed file is created empty here, so no two of them can
+    take the same number; the caller writes the text right after."""
+    with open(PROMPTS_DIR / ".numbering.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        indices = [
+            int(m.group(1))
+            for p in PROMPTS_DIR.glob("**/prompt_*.txt")
+            if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
+        ]
+        path = batch_dir / f"prompt_{max(max(indices, default=0) + 1, first_id):05d}.txt"
+        path.touch(exist_ok=False)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+    return path
 
 
 def extract_output(assistant_blocks):

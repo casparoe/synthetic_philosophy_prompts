@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 120,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 122,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -92,6 +92,8 @@ fetching available for fact-checking and verbatim quotation.
 | 037 | Muse Spark 1.3 (Meta, proprietary) | OpenRouter, Meta's own endpoint, standard tier; client-executed web tools offered but almost never used |
 | 039 | DeepSeek V4.1 Flash | OpenRouter, fp8 provider (Novita), Io Net and GMICloud excluded; stopped by hand after 488 prompts; client-executed web tools (DuckDuckGo search + page fetch) |
 | 041 | DeepSeek V4.1 Flash | OpenRouter, fp8 hosts load-balanced (Novita, Morph, Venice, Parasail, DeepInfra), Io Net and GMICloud excluded; client-executed web tools (DuckDuckGo search + page fetch) |
+| 042 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded because its tool-call grammar rejects the web tools); 1,000-prompt test batch; client-executed web tools (DuckDuckGo search + page fetch) |
+| 043 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 1,000-prompt test batch, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -299,8 +301,9 @@ proprietary Meta model accessed through the standard tier of the
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
 032–033 with DeepSeek V4 Pro and batches 039 and 041 with DeepSeek V4.1 Flash,
-open-weights models released under the MIT license,
-and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
+open-weights models released under the MIT license, batch 042 with Thinking Machines'
+Inkling and batch 043 with Tencent's HY4 preview, both open-weights models released
+under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
 above $10 billion in annual revenue; it places no restrictions on the use of
 outputs). Batches 036 and 038 were generated with Qwen3.8 2.4T-A95B, an open-weights model

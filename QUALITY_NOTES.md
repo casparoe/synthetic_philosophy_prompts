@@ -47,6 +47,8 @@ re-render from the batch's snapshot; those should simply be zero.
 | 039 | DeepSeek V4.1 Flash (OpenRouter) | 488 | 4.7% | 15.6% | 8.2% / 5.2% | classroom-activity example 0, 6; procedure example 0, 4 |
 | 040 | Qwen3.8-27B (local) | 442 | 10.4% | 32.4% | 9.8% / 11.3% | classroom-activity example 0, 7; procedure and adversarial-collaboration examples 0, 5 each |
 | 041 | DeepSeek V4.1 Flash (OpenRouter) | 39,944 | 4.4% | 16.7% | 7.6% / 5.2% | classroom-activity example 0, 377; procedure example 0, 350 |
+| 042 | Inkling (OpenRouter, BaseTen) | 1,000 | 2.5% | 11.2% | 14.1% / 3.0% | exam-question example 0, 3; what-would-count-against example 0, 3 |
+| 043 | HY4 preview (OpenRouter, Tencent) | 1,000 | 3.0% | 17.3% | 2.5% / 2.1% | procedure example 0, 10 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -55,7 +57,8 @@ what here".
 ## Observations
 
 1. **Echo is mostly a property of the generating model.** Sonnet 5 sits at 1-2%
-   heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, DeepSeek V4.1
+   heavy echo, Muse Spark 1.3 under 1%, Qwen3.8 2.4T at about 2%, Inkling at 2.5%
+   and HY4 at 3% in their thousand-prompt test batches, DeepSeek V4.1
    Flash at about 5%, DeepSeek V4 Pro and GLM-5.3 at about 6%, Qwen3.8-27B at about 7% in batch 028 and 10-16% in
    batches 040 and 031, whose task-type snapshots add the adversarial-collaboration, procedure, and
    classroom-activity examples that are the strongest magnets for every model.
@@ -332,6 +335,29 @@ write down the formula") and quoted phrases, and Qwen's 130 answers under 40 wor
 are 93 JSON-only answers and 37 requested one-liners. The records were imported as
 they were; consumers should filter on `finish_reason` and on a `<think>` tag in the
 answer, as with the other runs.
+- Test batches 042 (Thinking Machines Inkling, 975B/41B MoE, Apache 2.0) and 043
+  (Tencent HY4 preview, Apache 2.0), 1,000 prompts each on 2026-09-15, both at
+  reasoning effort high with the web tools, fp8 endpoints only: Inkling via BaseTen
+  ($17 per 1,000 prompts; mean 4,300 input and 3,500 output tokens; 0.4 searches
+  and 0.03 fetches per prompt; 16 prompts a minute at concurrency 24; median prompt
+  254 words, the shortest of any batch), HY4 via Tencent's endpoint ($22 per 1,000;
+  10,400 input and 7,400 output tokens; 0.9 searches and 0.4 fetches per prompt; 10
+  a minute; median 666 words, the longest). HY4's card asks for temperature 0.9 and
+  top-p 1.0, so the OpenAI-compatible generator gained `--top-p` (default 0.95, the
+  value every earlier batch used). DeepInfra cannot serve Inkling with the web
+  tools: its tool-call grammar rejects the definitions ("Failed to compile
+  structural_tag grammar: unknown name: web_search"), so every request errored until
+  the provider was excluded.
+- Two generators on one machine used to be able to take the same prompt number.
+  Each computed "highest existing number plus one" by listing all prompts (about a
+  second with 120,000 files), so two processes finishing within that window wrote
+  the same ID into different batches. Batches 042 and 043, generated at the same
+  time on 2026-09-15, collided 131 times in 2,000 prompts; the HY4 copies were
+  renumbered to 122870–123000 (sidecars updated, texts unchanged), which is why
+  batch 043 has a second ID range. `next_output_path` now serializes the claim
+  across processes with a lock file (`prompts/.numbering.lock`, ignored by git) and
+  creates the file while holding it. Batches on different machines still need
+  `--first-id`.
 
 ## Preference pairs
 

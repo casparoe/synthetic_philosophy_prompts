@@ -334,6 +334,7 @@ def main():
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--max-tokens", type=int, default=24576)
     parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--top-p", type=float, default=0.95, help="top-p sampling (default: 0.95; some model cards ask for 1.0)")
     parser.add_argument(
         "--top-k",
         type=int,
@@ -422,7 +423,7 @@ def main():
         "reasoning_effort": args.reasoning_effort,
         "quantizations": quantizations,
         "temperature": args.temperature,
-        "top_p": 0.95,
+        "top_p": args.top_p,
         "top_k": args.top_k,
         "max_tokens": args.max_tokens,
         "web_tools": args.web_tools,
@@ -470,7 +471,7 @@ def main():
                     "messages": messages,
                     "max_tokens": args.max_tokens,
                     "temperature": args.temperature,
-                    "top_p": 0.95,
+                    "top_p": args.top_p,
                 }
                 if args.top_k is not None:
                     request["top_k"] = args.top_k
