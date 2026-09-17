@@ -1,0 +1,60 @@
+I run incident review for a mid-sized payments platform, and two of my strongest engineers have spent roughly a year talking past each other about what our postmortem's "root cause" and "contributing factors" fields actually mean. I have to ship an incident document either way, so I want to force the issue as an adversarial collaboration with a written deliverable rather than another meeting. I'd like you to draft the joint statement they could both sign.
+
+I have no philosophy training. As I understand it, the two positions are usually called the interventionist (or manipulability) account and the counterfactual-dependence account — I think the surnames Woodward and Lewis get attached to them, but please don't do exegesis of either author and don't treat their published formulations as binding. Roughly, in my own words:
+
+- The manipulability camp: c causes e when, holding other things suitably fixed, changing c in the right kind of way changes e. Causes are the knobs that do something.
+- The counterfactual camp: c causes e when, had c not happened, e would not have happened (possibly via a chain of such dependencies).
+
+Treat the following case as fully stipulated: don't re-litigate the facts, don't redescribe them, and answer within them. "INC-1129: ninety seconds of checkout." Service O calls service I; I has a fixed thread pool of 200 workers. Candidate factors:
+
+- C1: a deploy at 13:58 removed client-side jitter on O's retries, so retries from many clients now arrive in synchronized bursts.
+- C2: a feature-flag rollout at 13:59 increased inventory request payloads roughly 8x, so each worker thread is held about 5x longer per request.
+- A (an omission): I's autoscaler scale-up policy was disabled weeks earlier and never re-enabled. Its trigger fires on the derivative of queue depth, so it would have begun adding capacity at 14:00:30.
+- B: one node in the pool ran a stale kernel whose TCP retransmit backoff differs; it held threads roughly 30% longer than its peers. This is a hardware/history fact we cannot intervene on in reality; we can only remove it inside the replay simulator.
+- U: once the first errors appeared, customers refreshed checkout, multiplying request volume about 1.6x from 14:01:20 onward. This is downstream of the failure and is not something we can manipulate at all; we can only model it.
+
+Counterfactual profile, established by a replay simulator the whole team trusts plus a partial production canary. SLO is 99.9% availability measured in 30-second windows, so a "breach" means three consecutive bad windows.
+
+1. Actual (C1 and C2 both present): pool saturates 14:01:12, error rate peaks at 14%, breach lasts 90 seconds, revenue loss X.
+2. C1 only, no C2: pool peaks at 62%; no breach.
+3. C2 only, no C1: pool peaks at 88%, with one 4-second excursion to 94% — not a breach under the 30-second windowing.
+4. Both present but autoscaler enabled (i.e., A removed): pool peaks at 84%; no breach.
+5. Both present, stale-kernel node removed: breach still occurs, 40 seconds instead of 90.
+6. Both present, customer refresh behavior suppressed: breach still occurs, 60 seconds instead of 90.
+7. Both present, and a routed alert actually reaches a human who runs the runbook and reverts the flag at 14:02:25: breach still occurs, about 70 seconds. (That alert was misrouted to a channel nobody watched — a second omission.)
+8. Everything in 5, 6, 7 changes only the magnitude of the breach, not whether a breach occurs; 2, 3, 4 change whether there is one at all.
+
+Please produce, in this order:
+
+1. Agreed claims, numbered A1…An, in plain language, with any term of art defined inline the first time you use it. Both camps must be able to sign every line. Cover at least: what causal claims are for in this setting (prediction, credit assignment, choosing what to change, assigning responsibility — and whether those pull apart); whether any causal question is implicitly relativized to an outcome variable, a contrast class, or a granularity; what this stipulated profile does and does not settle; and whether either view can read causation off a counterfactual profile alone, without also having a causal model. Then, for each of C1, C2, A, B, U, state whether each camp calls it a cause, a mere contributing factor, or neither — and where the two camps give the same verdict, say so plainly. A document that manufactures disagreement is as useless to me as one that papers over it.
+
+2. Formulations. One sentence stating each camp's principle, worded so that camp would sign it, plus one line from the other camp confirming the wording is fair (or a correction if it isn't). I care that these are neither vacuous nor slanted toward either side.
+
+3. A disagreements table with exactly these columns: ID | question at issue | manipulability camp's answer | counterfactual camp's answer | genuine or merely verbal | if verbal, what each was really saying | probe or argument both accept as bearing on it | each side's predicted outcome of that probe, written down in advance | what result would move which side, and by how much. I expect the interesting rows to include (at least): whether the absence A can be a cause; whether B and U are causes given that they change only magnitude; whether a factor we cannot manipulate even in principle (U) can be a cause on the manipulability view; whether a factor that is itself partly an effect of the outcome (U again, the feedback loop) can be a cause of it; and whether interventions performed on a validated simulator rather than on the real system are the right kind of thing for the manipulability account to quantify over. If you think the granularity point (binary "was there a breach" versus duration-in-seconds) is the deepest of these, say so and put it high in the table.
+
+4. Cruxes. Pick the two or three rows that actually decide what goes in the incident ticket, and for each spell out what a decisive observation, argument, or variant case would look like — agreed in advance, with each side's prediction recorded so neither can retrofit afterward. Where a crux would be settled by a further piece of information about this incident that the stipulations above don't give you, name that missing measurement precisely instead of inventing a fact.
+
+5. The ticket. Given all that, what can I actually write in "root cause" and "contributing factors" that both camps would sign off on, and what would each camp insist must not go in? If they can't both sign, state the blocker exactly and say what would unblock it.
+
+6. A short "note to the facilitator" section: any place where my framing embeds a confusion, a hidden assumption, or a term I'm using inconsistently. Don't silently correct me — flag it.
+
+7. A structured summary as a single JSON object, after the prose, with exactly this schema:
+
+{
+  "candidates": [
+    {"id": "C1", "label": "string", "manipulability_verdict": "cause | contributing_factor | neither", "counterfactual_verdict": "cause | contributing_factor | neither", "verdicts_agree": true, "divergence_reason": "string, empty if verdicts_agree"}
+  ],
+  "agreed_claims": [{"id": "A1", "claim": "string", "scope": "string"}],
+  "formulations": {
+    "manipulability": {"signed_wording": "string", "other_camp_calls_fair": true, "other_camp_correction": "string"},
+    "counterfactual": {"signed_wording": "string", "other_camp_calls_fair": true, "other_camp_correction": "string"}
+  },
+  "cruxes": [
+    {"id": "K1", "question": "string", "genuine_or_verbal": "genuine | verbal | partly_verbal", "if_verbal_really_about": "string", "decisive_probe": "string", "manipulability_prediction": "string", "counterfactual_prediction": "string", "moves_manipulability": "not_at_all | a_little | a_lot", "moves_counterfactual": "not_at_all | a_little | a_lot"}
+  ],
+  "ticket_consensus": {"root_cause_text": "string", "contributing_factors": ["string"], "both_sign": true, "residual_objection": "string"},
+  "facilitator_notes": ["string"],
+  "missing_measurements": ["string"]
+}
+
+Constraints. No citations, bibliographies, reading lists, or paper titles — we have no library access and couldn't evaluate them, so argue the substance. Don't settle any question by appeal to authority or to what most people in the field supposedly think. Don't turn this into a verdict about which camp is right overall; if one view handles one sub-case better, record that in the row and move on. Represent both camps at full strength. Aim for something I could circulate internally as about two pages plus the table.

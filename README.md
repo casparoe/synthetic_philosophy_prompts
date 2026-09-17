@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 122,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 160,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -63,8 +63,9 @@ QUALITY_NOTES.md          known quality issues and per-batch measurements
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
-offered during sampling (from batch 046 on also which of each type's examples were
-shown, in which order, under `task_type_examples`), the additional instructions drawn (persona, writing style,
+offered during sampling (from batch 046 on, and for the second half of batch 044, also
+which of each type's examples were shown, in which order, under `task_type_examples`),
+the additional instructions drawn (persona, writing style,
 length, and from batch 029 on further groups such as epistemic and output-format
 requests; recorded as one `additional_instructions` mapping from batch 029 on and as
 separate `length`/`persona`/`writing_style` keys before), token counts, the number
@@ -82,7 +83,9 @@ a model to write one prompt. Each offered genre comes with example prompts of th
 genre; from batch 046 on, only a random subset of them is shown (a number from one to
 five is drawn, that many examples are sampled without replacement, and they appear in
 random order), so that no single example shapes every prompt of a genre. Earlier
-batches showed every example in file order. The generating models had web search and page
+batches showed every example in file order, except that the 10,617 prompts of batch
+044 generated after its pause already used the subsets (their sidecars carry
+`task_type_examples`). The generating models had web search and page
 fetching available for fact-checking and verbatim quotation.
 
 | Batches | Model | Notes |
@@ -99,6 +102,8 @@ fetching available for fact-checking and verbatim quotation.
 | 041 | DeepSeek V4.1 Flash | OpenRouter, fp8 hosts load-balanced (Novita, Morph, Venice, Parasail, DeepInfra), Io Net and GMICloud excluded; client-executed web tools (DuckDuckGo search + page fetch) |
 | 042 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded because its tool-call grammar rejects the web tools); 1,000-prompt test batch; client-executed web tools (DuckDuckGo search + page fetch) |
 | 043 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 1,000-prompt test batch, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
+| 044 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded); 20,000 prompts; paused for six hours during a BaseTen outage and continued from the batch's own snapshot; client-executed web tools (DuckDuckGo search + page fetch) |
+| 045 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 20,000 prompts, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -306,9 +311,9 @@ proprietary Meta model accessed through the standard tier of the
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
 032–033 with DeepSeek V4 Pro and batches 039 and 041 with DeepSeek V4.1 Flash,
-open-weights models released under the MIT license, batch 042 with Thinking Machines'
-Inkling and batch 043 with Tencent's HY4 preview, both open-weights models released
-under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
+open-weights models released under the MIT license, batches 042 and 044 with Thinking
+Machines' Inkling and batches 043 and 045 with Tencent's HY4 preview, both open-weights
+models released under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
 above $10 billion in annual revenue; it places no restrictions on the use of
 outputs). Batches 036 and 038 were generated with Qwen3.8 2.4T-A95B, an open-weights model

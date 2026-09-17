@@ -17,9 +17,10 @@ re-render from the batch's snapshot; those should simply be zero.
   eight-word phrase with it (case- and punctuation-insensitive). *Heavy echo* means
   five or more shared eight-word phrases, which in practice is a copied sentence or
   a copied structural skeleton rather than a stock phrase. Measured against all
-  examples in the batch's own `inputs/` snapshot, although from batch 046 on a
-  prompt's generator saw only a random subset of one to five examples per offered
-  type (recorded in the sidecar under `task_type_examples`).
+  examples in the batch's own `inputs/` snapshot, although from batch 046 on (and in
+  the second half of batch 044) a prompt's generator saw only a random subset of one
+  to five examples per offered type (recorded in the sidecar under
+  `task_type_examples`).
 - **Instruction copying.** The additional instructions (output format, epistemic
   request, persona, ...) are meant to be realized in the prompt, not pasted into it.
   A prompt *copies* an instruction when it shares eight consecutive words with the
@@ -51,6 +52,8 @@ re-render from the batch's snapshot; those should simply be zero.
 | 041 | DeepSeek V4.1 Flash (OpenRouter) | 39,944 | 4.4% | 16.7% | 7.6% / 5.2% | classroom-activity example 0, 377; procedure example 0, 350 |
 | 042 | Inkling (OpenRouter, BaseTen) | 1,000 | 2.5% | 11.2% | 14.1% / 3.0% | exam-question example 0, 3; what-would-count-against example 0, 3 |
 | 043 | HY4 preview (OpenRouter, Tencent) | 1,000 | 3.0% | 17.3% | 2.5% / 2.1% | procedure example 0, 10 |
+| 044 | Inkling (OpenRouter, BaseTen) | 20,000 | 1.6% | 9.8% | 10.6% / 3.1% | classroom-activity example 0, 43; exam-question example 0, 28 |
+| 045 | HY4 preview (OpenRouter, Tencent) | 20,000 | 3.8% | 18.3% | 6.4% / 3.3% | procedure example 0, 161; classroom-activity example 0, 152 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -350,6 +353,25 @@ answer, as with the other runs.
   tools: its tool-call grammar rejects the definitions ("Failed to compile
   structural_tag grammar: unknown name: web_search"), so every request errored until
   the provider was excluded.
+- The 20,000-prompt batches 044 (Inkling) and 045 (HY4 preview) ran side by side on
+  2026-09-15/16 at concurrency 48: Inkling at 26–43 prompts a minute, HY4 at 10–20,
+  $343 and $431 in total ($17 and $22 per 1,000). BaseTen, Inkling's only fp8 host,
+  failed for six and a half hours from about 20:00 PDT (rate limits, gateway
+  timeouts, "overloaded"); the batch was paused by hand at 9,383 prompts after four
+  had been abandoned, a watcher probed the host every five minutes, and at 02:37 the
+  batch was continued with `--continue-batch` from its own snapshot to 20,000. The
+  continuation ran under the example-subsetting code (below), so the 10,617 prompts
+  after the pause carry `task_type_examples` while the first 9,383 saw every example.
+  With two to four examples per type in the snapshot the two halves are
+  indistinguishable: heavy echo 1.5% against 1.6%, any echo 9.7% against 9.9%, median
+  267 words in both; the subsets will only bite once the types have more examples.
+  HY4 fetched a page for 38% of its prompts and quotes public-domain passages more
+  often, which shows up as 13 pairs sharing 100 or more eight-word phrases (Euclid's
+  common notions, Aristotle on exchange in the Nicomachean Ethics, Adam Smith's Theory
+  of Moral Sentiments), the same pattern as batch 041's Tocqueville and Augustine
+  pairs; its most repeated phrase, "what will predictably go wrong the first time I
+  run it", comes from the procedure type's own description and appears in 348
+  prompts.
 - Two generators on one machine used to be able to take the same prompt number.
   Each computed "highest existing number plus one" by listing all prompts (about a
   second with 120,000 files), so two processes finishing within that window wrote

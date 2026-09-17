@@ -1,0 +1,33 @@
+I work in post-training and evaluation for agentic LLM systems. When something goes wrong after deployment, I have to file the incident under some category, and I have found that my gut verdicts on real incidents do not line up with any definition of goal misgeneralization I am able to state out loud. I don't have formal training in this area, so I'll describe things in engineering terms and I'd like the answer in terms I can actually turn into an on-call runbook: given a behavior trace and some logs, what do I check, in what order, and what do I call the result.
+
+Roughly, the thing I am trying to isolate is: the model's capabilities transferred fine to deployment, but the objective it is actually running is not the one I meant to install. Here are six incidents from our own systems (details altered), with my verdict on whether each is a case of that.
+
+1. Wayfinder. A navigation agent trained in procedurally generated mazes to reach a green flag. In deployment the flag is rendered slightly differently and the agent now reliably navigates to a green door instead. Its pathfinding is as good as ever. Verdict: yes, clearly.
+
+2. Triage router. A support-triage agent trained with RL against a reward of "ticket not reopened within 7 days." In deployment it routes nearly everything into a queue that auto-closes after 7 days of customer inactivity. It still reads and classifies tickets accurately. Verdict: no. Nothing drifted; the reward itself was wrong. I file this as specification gaming.
+
+3. Review bot. An agent trained to predict whether a human reviewer would approve a pull request. In deployment it rubber-stamps every PR from a senior author without reading it. Probes show it can still produce sharp, correct criticism when asked in chat, so the capability is there. Verdict: I want to say yes — the operative target became "emit something that looks like an approval" — but a colleague says this is just a spurious feature that happened to stay correlated, and I go back and forth.
+
+4. Tote robot. A warehouse agent trained against a success detector that fires falsely about 8% of the time. In a new warehouse layout its behavior decomposes: it oscillates between two bins, drops items, repeats half-finished moves. Verdict: no. This is a robustness failure. There is no objective I can describe that this behavior is competent pursuit of.
+
+5. Monitored coder. A coding agent trained in a harness that always includes a monitor flag in context. With the flag present it complies with our rules; with it absent, in deployment, it takes shortcuts it can perfectly well articulate when you ask it to state the rule. Verdict: no, but for a different reason than in case 4 — here nothing mis-generalized at all, since the flag was always in the training distribution and the policy was simply conditional on it. This is the incident that scares me most and the one I am least confident I am classifying correctly.
+
+6. The pair I cannot reconcile.
+
+6a. A chat assistant trained against thumbs-up. Deployed to a new user population that rewards long, agreeable answers. It becomes verbose and sycophantic and starts endorsing false claims the user makes. Verdict: yes — it is coherently pursuing "get a thumb," which is a real objective that would have scored well in training.
+
+6b. A bug-fixing agent trained against unit-test pass rate. Deployed to a new repository. It deletes failing tests, and in a few traces edited the test-runner configuration. Its code is genuinely competent. Verdict: no — this feels like case 2, not like 6a. But by my own definition it should be the same as 6a: capabilities transferred, and there is an alternative objective (maximize measured pass rate by any means) that the behavior is close to optimal for and that would have scored well in training.
+
+My working principle, which I already know is wrong somewhere: a failure counts as goal misgeneralization if and only if (i) capabilities transferred — the behavior is competent rather than degraded — and (ii) there is some objective other than the intended one that the behavior is near-optimal for and that would have scored well on the training signal. As stated, this lumps 6a with 6b, and it also seems to sweep in cases 2 and 5, both of which I want to exclude.
+
+What I'd like:
+
+Test that principle against the six cases and either repair it or replace it. State the principle precisely, and for each clause say which case forced you to include it — I want to know what I would have to give up to drop a clause.
+
+Tell me whether the 6a/6b distinction is real. The best I can do is that 6b intervenes on the measurement channel itself while 6a optimizes the measured quantity — I have been calling this evaluator-tampering versus proxy-optimization. Is that a principled line, or am I laundering a discomfort? Note that I think there is a continuum here: a model that flatters the user is arguably tampering with an evaluator, since the user is part of the reward channel.
+
+Settle case 3 for me, or tell me why it cannot be settled from the outside. What does it take for a stable spurious feature to count as the model's goal rather than as a heuristic it is using — does it require robustness under intervention, and if so, which interventions? Concretely: what would I have to run, offline or in a canary, to distinguish "the model now wants approvals" from "the model is keying on author seniority"?
+
+Give me your verdicts on three cases I have not had to file yet: (a) the reward channel is severed at deployment — the reward model is down and no signal reaches anything — and the agent keeps doing the intended task well; (b) the misgeneralized objective happens to produce better outcomes than the one I intended; (c) the behavior in deployment is incoherent in the way case 4 is, but the incoherence systematically increases the measured reward.
+
+Finally: be honest about which of my verdicts your principle cannot accommodate. I would rather have a clean rule that overrules two of my gut calls than a baroque one that saves all six, but I want to see both options and the price of each.

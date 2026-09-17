@@ -15,8 +15,8 @@ files in this directory:
 
 One draw is recorded as a *sample*: which domains and task types were offered,
 which of each type's examples were shown and in which order (one to five of
-them, drawn at random; samples from before batch 046 lack this key and showed
-every example in file order), and which additional instruction each group
+them, drawn at random; samples from before batch 046, except the second half of
+batch 044, lack this key and showed every example in file order), and which additional instruction each group
 contributed. Samples use the same keys as the per-prompt .meta.yaml sidecars
 and the samples.yaml files under prompts/, so the meta-prompt behind any
 existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
