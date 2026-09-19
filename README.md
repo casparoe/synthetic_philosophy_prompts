@@ -77,8 +77,10 @@ generator's reasoning, and a timestamp.
 For each prompt, the pipeline samples a handful of domains, three candidate
 genres, and additional instructions (a persona, a writing style, and a length
 instruction; from batch 029 on, `meta_prompt/additional_instructions.yaml` defines
-the groups, which also include epistemic requests, output-format requests, and
-prompt-engineering phrasing, each drawn with its own probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
+the groups, which also include epistemic requests, output-format requests,
+prompt-engineering phrasing, and, in batches generated from 2026-09-19 on, an
+occasional request to build the prompt around a verbatim passage from a primary
+source, each drawn with its own probability), renders them into the meta-prompt (`meta_prompt/prompt.j2`), and asks
 a model to write one prompt. Each offered genre comes with example prompts of that
 genre; from batch 046 on, only a random subset of them is shown (a number from one to
 five is drawn, that many examples are sampled without replacement, and they appear in
