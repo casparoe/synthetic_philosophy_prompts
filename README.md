@@ -175,6 +175,7 @@ Runs so far:
 | run_012 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_041` | 39,944 | temperature 0.6, top-p 0.95, top-k 20 | same endpoints; 22 truncated |
 | run_013 | DeepSeek R1 0528 (MIT) | `batch_041` | 39,944 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; 1 truncated |
 | run_014 | DeepSeek R1 0528 (MIT) | `r1_gap` | 14,298 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
+| run_015 | Qwen3.5-397B-A17B (Apache 2.0) | `qwen397b_gap` | 98,298 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 57 truncated |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -192,6 +193,12 @@ Set `r1_gap` lists the 7,149 prompts of batches 022–040 that had no R1 respons
 that (`tools/make_prompt_set.py --without-response`); run 014 answered them twice with
 R1, so that, as for batches 000–021, two independent R1 samples exist for them. Every
 prompt of batches 000–041 now has at least one R1 response.
+Set `qwen397b_gap` lists the 49,149 prompts of batches 022–045 that had no
+Qwen3.5-397B-A17B response after runs 007–012 (42,000 of them in the Inkling and HY4
+batches 042–045); run 015 answered them twice with Qwen. Every prompt of batches
+000–045 now has at least one Qwen3.5-397B-A17B response, and all but the prompts of
+batches 033, 035, 038, and 041 and the `open_1k` prompts (which keep their single
+run 000 response) have two.
 
 **Imported runs.** The two runs whose directory names end in `_imported` were not
 produced by `generate_responses.py`. They are the teacher-data collections of the

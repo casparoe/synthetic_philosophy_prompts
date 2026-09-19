@@ -305,6 +305,7 @@ parameters and 8-bit-or-better endpoints only.
 | run_012 | Qwen3.5-397B-A17B | 39,944 (batch 041) | 22 | 0 | 19 (truncated ones) | 4,907 / 7,247 | 66% | $677.77 |
 | run_013 | DeepSeek R1 0528 | 39,944 (batch 041) | 1 | 0 | 0 | 2,845 / 4,409 | 40% | $259.13 |
 | run_014 | DeepSeek R1 0528 | 7,149 x 2 (`r1_gap`) | 0 | 0 | 0 | 2,687 / 3,938 | 38% | $87.33 |
+| run_015 | Qwen3.5-397B-A17B | 49,149 x 2 (`qwen397b_gap`) | 57 | 0 | 54 (truncated ones) | 4,789 / 7,126 | 67% | $1,678.67 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -328,6 +329,18 @@ runs almost never (one response in 90,000). SiliconFlow rate-limited R1 for stre
 of the night of 2026-09-14/15, and 49 prompts of run 013 exhausted their six attempts;
 the resume-until-complete queue answered them in a second pass, so coverage is
 complete everywhere.
+
+Run 015 (2026-09-16 to 2026-09-18, $1,679; two Qwen samples for the 49,149 prompts
+that had none) shows the same pattern at a larger scale: 57 truncations (0.06%), 54
+of them without an answer, four answers with a stray `<think>` tag, refusal-phrase
+flags (0.3%) that are analytic "as an AI" openings and quoted disclaimers, and
+repeated-phrase flags (0.5%) that are refrains and table rows. Load-balanced across
+the four fp8 hosts, DeepInfra served 31% of the responses, AtlasCloud 28%, GMICloud
+23%, and Parasail 17%, at about 1,900 responses an hour with 48 concurrent requests.
+The run paused twice with the laptop (a lid-close sleep and a change of network,
+about half an hour each) and resumed on its own; one request that GMICloud ended
+without a finish reason exhausted its attempts and was answered in the queue's second
+pass.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers

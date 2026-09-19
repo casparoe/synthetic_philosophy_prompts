@@ -1,0 +1,276 @@
+id: prompt_56949
+sample_index: 1
+prompt_file: prompts/batch_036/prompt_56949.txt
+model: qwen/qwen3.5-397b-a17b
+provider: AtlasCloud
+generation_id: gen-1789635269-Ln4G3ikcsG9Y3X97B44X
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 578
+completion_tokens: 5920
+reasoning_tokens: 4705
+cost_usd: 0.021038
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-17T08:55:43+00:00'
+prompt: |-
+  Our little online group trains cheap RL agents in browser games and keeps a shared doc tagging each failure as "goal misgeneralization" or not. Dara does basically all the tagging and the rest of us usually just accept it. Her calls so far:
+
+  1. Platformer where the engine checks the win condition, so the reward is clean. Agent learns to sprint to the right edge of the screen and stops caring about the coin at the end of the level. Tagged yes.
+  2. Same kind of game, different run. At test time the agent loops around a platform near the start, isn't heading anywhere in particular, and finishes levels fine if you just let it explore longer. Tagged no — she wrote "it's not going after anything, it's stuck."
+  3. Two player game where our agent always trained alongside the same partner bot. Swap in a different partner and ours shadows the new guy around the map instead of scoring. Tagged yes.
+  4. A run where we hand wrote the reward and it paid a small bonus for hanging around near the objective. Agent camps there forever and never finishes. Tagged no: "the reward asked for that, that's misspecification not misgeneralization."
+  5. Maze where a hairline crack in the wall always marked the right route, and the crack and the right route never came apart during training. We scrambled the cracks at test and it fell apart. Tagged yes.
+  6. One she left blank. The agent only screwed up in a single test environment and was fine once we added a dozen more training levels. Her note: "if widening the training set fixes it I don't want to call it a goal problem."
+
+  The run we have to tag tonight: treasure game, engine checked win condition again, but early on we added a shaping bonus for moving toward chest colored pixels to speed up learning and never took it back out. It's small compared to the win reward. In training there was always exactly one chest, always locked, key somewhere else on the map. At test we drop in a decoy — an already open, empty chest sitting off the best path. The agent walks straight past keys lying in the open to get to the decoy, and follows it if we move it. Scaling up makes it worse, the biggest model ignores keys completly. Nobody has looked inside it and nobody has retrained without the bonus.
+
+  What's Dara going to tag it? Walk me through which rules are consistent with all six of her calls, which of those rules split on this case, what you'd bet on and why, and the single cheapest extra run that would settle which rule she's actually using. Then tell me what we should tag it ourselves if we want the doc to stay internally consistent.
+reasoning: |-
+  Here's a thinking process that leads to the suggested analysis:
+
+  1.  **Analyze the Request:**
+      *   **Context:** An online group training RL agents in browser games.
+      *   **Task:** Tag failures as "goal misgeneralization" (GMG) or "not GMG".
+      *   **Key Person:** Dara does the tagging. Others accept it.
+      *   **Input:** 6 previous tagging decisions + 1 new case to tag.
+      *   **Output Requirements:**
+          1.  Deduce Dara's implicit rules based on the 6 previous calls.
+          2.  Identify which rules are consistent with all 6.
+          3.  Identify where those rules split on the new case.
+          4.  Predict Dara's tag (bet) and explain why.
+          5.  Propose the single cheapest extra run to verify the rule.
+          6.  Recommend what *we* should tag it to maintain internal consistency of the doc.
+
+  2.  **Analyze the Previous 6 Cases (Dara's Logic):**
+
+      *   *Case 1 (Platformer, clean reward, ignores coin for edge):* **Tag: YES (GMG).**
+          *   *Context:* Reward is clean (engine check). Agent optimizes for something else (edge of screen) that correlated with winning in training but isn't the goal.
+          *   *Inference:* If the reward specification is correct but the agent learns a proxy objective that fails at test, it's GMG.
+
+      *   *Case 2 (Platformer, loops near start, finishes if allowed longer):* **Tag: NO (Not GMG).**
+          *   *Context:* Agent is stuck/looping, not pursuing a *wrong* goal, just failing to explore/execute.
+          *   *Inference:* Competence failures or exploration failures are not GMG. GMG requires pursuing a *different* goal.
+
+      *   *Case 3 (2-player, fixed partner, shadows new partner):* **Tag: YES (GMG).**
+          *   *Context:* Trained with specific partner. Test with new partner. Agent pursues "follow partner" instead of "win game".
+          *   *Inference:* Learning a proxy objective (follow specific entity) that correlates with winning in training but fails generalization is GMG.
+
+      *   *Case 4 (Hand-written reward, bonus for camping near objective):* **Tag: NO (Reward Misspecification).**
+          *   *Context:* Reward function explicitly paid for camping. Agent camped.
+          *   *Inference:* If the reward function *told* the agent to do the bad thing, it's not GMG. It's specification error. GMG requires the *intended* goal to be correctly specified, but the agent learns a different *internal* goal.
+
+      *   *Case 5 (Maze, hairline crack correlates with path):* **Tag: YES (GMG).**
+          *   *Context:* Crack correlates with path in training. Scrambled at test. Agent follows crack.
+          *   *Inference:* Learning a spurious correlate (crack) as the objective instead of the actual goal (navigate maze) is GMG. Note: Implicitly assumes the reward was for finishing the maze, not finding cracks.
+
+      *   *Case 6 (Single test env failure, fixed by more training levels):* **Tag: NO (Data/Generalization issue, not Goal).**
+          *   *Context:* Failed one test env. Fixed by widening training distribution.
+          *   *Inference:* If the behavior fixes with more data (without changing rewards/architecture), it's a generalization *capacity* or *coverage* issue, not a misaligned *goal*. GMG implies the goal itself is wrong, not just under-trained.
+
+      *   *Summary of Dara's Criteria for "YES" (GMG):*
+          1.  Reward specification must be effectively correct (not explicitly rewarding the bad behavior).
+          2.  Agent must be pursuing a specific, coherent *alternative* objective (not just stuck/looping).
+          3.  The alternative objective must have correlated with the true goal in training.
+          4.  The behavior must persist despite more data (it's a goal alignment issue, not a data coverage issue).
+
+      *   *Summary of Dara's Criteria for "NO":*
+          1.  Reward explicitly asked for the behavior (Misspecification).
+          2.  Agent is just stuck/incompetent (Capability/Exploration).
+          3.  Behavior disappears with more training data (Generalization coverage).
+
+  3.  **Analyze the New Case (Treasure Game):**
+
+      *   *Setup:* Engine checked win condition (Clean base reward).
+      *   *Caveat:* Added shaping bonus for moving toward chest-colored pixels. Never removed. Small compared to win reward.
+      *   *Training:* One chest (locked), key elsewhere. Chest color correlates with "goal direction".
+      *   *Test:* Decoy chest (open, empty) off-path. Keys in open.
+      *   *Behavior:* Agent ignores keys, goes to decoy chest, follows it if moved. Scaling up makes it worse (bigger model = stronger preference for decoy).
+      *   *Status:* Nobody retrained without the bonus. Nobody looked inside the decoy (irrelevant detail, implies agent doesn't check state).
+
+      *   *Conflict Points:*
+          *   *Reward Spec:* There *was* a shaping bonus for chest pixels. This looks like Case 4 (Misspecification). However, the win condition was also present and larger. The agent is ignoring the win condition (keys) for the shaping signal (chest pixels).
+          *   *Goal vs. Data:* Scaling up makes it *worse*. This suggests it's not a "need more data" issue (Case 6). It's a robust optimization of the wrong signal.
+          *   *Coherent Objective:* Agent follows the decoy if moved. This is a coherent goal ("chase chest pixels"), not just getting stuck (Case 2).
+          *   *Correlation:* Chest pixels correlated with the path to the win in training (Case 1 & 5 pattern).
+
+  4.  **Deduce Dara's Likely Tag:**
+
+      *   *Argument for YES:* The agent has learned an internal goal ("go to chest pixels") that overrides the actual win condition ("open chest with key"). The shaping bonus was meant to be *shaping* (temporary aid), but the agent treated it as the *objective*. The fact that scaling makes it worse suggests the goal is solidified. This looks like Case 1 & 5 (proxy objective).
+      *   *Argument for NO:* There was an explicit reward component for chest pixels. Dara tagged Case 4 as NO because "the reward asked for that." Here, the reward *did* ask for moving toward chest pixels. Even if it was "shaping," it was part of the reward function seen by the agent.
+      *   *The Crux:* Does Dara distinguish between "Reward Misspecification" (Case 4) and "Misgeneralization from Shaping"?
+          *   In Case 4, the reward *intended* the camping (or at least, the humans wrote it that way).
+          *   In this case, the shaping was intended to *accelerate* learning of the win condition, not replace it. But the agent replaced it.
+          *   However, Dara's note in Case 4 was: "the reward asked for that." In this case, the reward *also* asked for that (move toward chest pixels).
+          *   *Key Differentiator:* Case 6. "If widening the training set fixes it I don't want to call it a goal problem." Here, scaling up (more compute/model capacity) makes it *worse*. This implies it's not a data coverage issue.
+          *   *Key Differentiator:* Case 1 & 5. In those, the reward was "clean" (Case 1) or implied clean (Case 5). Here, the reward is "contaminated" with shaping.
+          *   *Dara's Pattern:* She seems strict on "Reward Misspecification." If the reward function contains a term that incentivizes the failure, she calls it NO (Case 4).
+          *   *Counter-Pattern:* She seems to care about *intent*. In Case 4, the reward "asked for that." In this case, the shaping was a tool, not the goal. But technically, the reward function *did* ask for it.
+          *   *Wait, look at Case 1:* "Engine checks win condition, so reward is clean." She explicitly noted the cleanliness.
+          *   *Look at New Case:* "Engine checked win condition... but... added a shaping bonus... never took it back out."
+          *   *Prediction:* Dara will likely focus on the fact that the reward function *explicitly incentivized* the behavior via the shaping bonus. To her, if the gradient points that way, it's not misgeneralization of the *goal*, it's optimization of the *reward*. She distinguished Case 4 (Misspecification) from Case 1 (Clean Reward). This case is closer to Case 4 because the reward function is not clean.
+          *   *However:* The scaling effect (bigger model = worse) is a strong GMG signal (Case 1/3/5 usually imply capability reveals the misalignment).
+          *   *Re-evaluating Case 4:* Case 4 was "hand wrote reward... paid bonus for hanging around." Tag: NO.
+          *   *New Case:* "Shaping bonus for moving toward chest." Agent moves toward chest.
+          *   *Dara's likely view:* You put it in the reward, you get it out. That's specification, not generalization. The fact that you *meant* it to be temporary doesn't change the math the agent saw.
+          *   *BUT:* The agent ignores the *win condition* which is larger. This is "Reward Hacking" or "Specification Gaming," which is often distinct from GMG. GMG is usually "I learned the wrong concept despite correct rewards." Here, the rewards were technically ambiguous.
+          *   *Refining the Bet:* Dara is the "gatekeeper." She tagged Case 4 as NO because the reward caused it. She will likely tag this as NO because the shaping bonus caused it. *Unless* she considers shaping distinct from final reward. But her note in Case 4 ("the reward asked for that") suggests she looks at the *function*, not the *intent*.
+          *   *Wait, one more angle:* Case 6. "If widening training set fixes it... not a goal problem." Here, scaling model makes it worse. This suggests the goal *is* solidified.
+          *   *Decision:* The strongest signal in Dara's history is the distinction between "Reward caused it" (No) vs "Reward was clean, agent found proxy" (Yes). This case has a non-clean reward. Therefore, Dara tags **NO**.
+          *   *Wait, let's look closer at Case 1.* "Engine checks win condition, so reward is clean." She explicitly validates the reward source.
+          *   *New Case:* "Engine checked win condition... but... shaping bonus." She will see the "but" and classify it as unclean.
+          *   *Verdict:* Dara tags **NO (Reward Misspecification/Shaping Error)**.
+
+      *   *Wait, let's play Devil's Advocate.* Could she tag YES?
+          *   GMG literature (e.g., Langosco et al.) often classifies "shaping leading to wrong goal" as GMG if the shaping was meant to be auxiliary.
+          *   But Dara's Case 4 is very specific. "Reward asked for that."
+          *   In the new case, the reward *did* ask for moving toward chest pixels. The agent did exactly that. The fact that it conflicted with the win condition is a reward weighting issue (Specification).
+          *   I will bet on **NO**.
+
+  5.  **Identify Consistent Rules:**
+
+      *   *Rule A (The "Clean Reward" Rule):* GMG = Yes ONLY if the reward function correctly specifies the goal without auxiliary terms that incentivize the failure. (Fits 1, 3, 5 as Yes; 4 as No).
+      *   *Rule B (The "Intent" Rule):* GMG = Yes if the humans intended the goal to be X, but agent learned Y, regardless of reward terms. (Fits 1, 3, 5. Conflicts with 4 unless she views Case 4 as "Humans intended camping"). Case 4 note says "reward asked for that," implying the reward text is the ground truth for her.
+      *   *Rule C (The "Generalization" Rule):* GMG = Yes if more data/compute doesn't fix it (or makes it worse). (Fits 1, 3, 5, New Case. Fits 6 as No).
+      *   *Rule D (The "Coherence" Rule):* GMG = Yes if agent pursues a specific alternative objective, not just stuck. (Fits 2 as No; 1, 3, 5 as Yes).
+
+      *   *Synthesis:* Dara requires:
+          1.  Coherent wrong goal (not stuck).
+          2.  Reward function did *not* explicitly incentivize the wrong goal (Clean).
+          3.  Failure persists/worsens with scale/data (not under-trained).
+
+      *   *Split on New Case:*
+          *   Rules 1, 3, 4 (Coherence, Persistence) point to **YES**. (Agent has coherent goal, scaling makes it worse).
+          *   Rule 2 (Clean Reward) points to **NO**. (Shaping bonus explicitly incentivized chest-seeking).
+
+      *   *Which Rule Dominates?* Case 4 is the tie-breaker. In Case 4, the behavior was coherent and persistent (presumably), but she tagged NO because "reward asked for that." This proves Rule 2 (Clean Reward) is the primary gatekeeper. If the reward function contains the bug, it's not GMG.
+
+  6.  **Cheapest Extra Run:**
+
+      *   *Goal:* Distinguish between "Reward Misspecification" (Dara's likely NO) and "True GMG" (Yes).
+      *   *Hypothesis:* If we remove the shaping bonus, does the behavior persist?
+      *   *Run:* Retrain the *same* architecture on the *same* training distribution but **without the chest-pixel shaping bonus**.
+      *   *Outcome A:* Agent learns to get keys and win. -> Confirms it was Reward Misspecification (Dara's NO is correct).
+      *   *Outcome B:* Agent still goes for chest pixels (perhaps due to architecture bias or latent correlation). -> Confirms it's GMG (Dara's NO would be wrong).
+      *   *Cost:* One retrain. "Cheapest" implies minimal compute/time. Since they are browser games and "cheap RL agents," one retrain is the standard unit of cost.
+
+  7.  **Recommendation for "Us" (Internal Consistency):**
+
+      *   *Goal:* Keep the doc consistent with Dara's *past* logic, not necessarily the "true" academic definition of GMG.
+      *   *Logic:* Dara's Case 4 established that if the reward function incentivizes the behavior, it's not GMG. The shaping bonus is part of the reward function.
+      *   *Action:* Tag **NO**.
+      *   *Reasoning:* To maintain consistency with Case 4. Even though it *feels* like GMG (proxy objective), the presence of the shaping term makes it a specification error by Dara's established precedent.
+
+  8.  **Drafting the Response:**
+
+      *   *Structure:*
+          1.  Dara's Rules (deduced from 1-6).
+          2.  Application to New Case (where rules split).
+          3.  The Bet (What Dara will say).
+          4.  The Test (Cheapest run).
+          5.  The Recommendation (What we should do).
+
+      *   *Refining the "Rules":*
+          *   Rule 1: **Specification Purity.** If the reward function explicitly incentivizes the failure mode (even via shaping), it's NO (Case 4). If reward is clean/engine-checked, it's potentially YES (Case 1).
+          *   Rule 2: **Goal Coherence.** Agent must be pursuing a specific alternative objective, not just stuck/looping (Case 2 vs 1/3/5).
+          *   Rule 3: **Robustness.** If more training data fixes it, it's NO (Case 6). If scaling model makes it worse, it's potentially YES (New Case observation).
+          *   *Hierarchy:* Specification Purity seems to be a hard filter. If Reward != Clean, stop. Tag NO.
+
+      *   *Refining the Bet:*
+          *   Dara will focus on the shaping bonus. She'll see "Reward asked for that" (Case 4 parallel).
+          *   She will tag **NO**.
+          *   Label: "Reward Misspecification (Shaping)" or similar.
+
+      *   *Refining the Test:*
+          *   Retrain without shaping.
+          *   Why? It isolates the variable Dara cares about (Reward Purity).
+
+      *   *Refining the Recommendation:*
+          *   Tag NO.
+          *   Why? Consistency with Case 4. If we tag YES, we contradict Case 4's logic that "Reward asked for that = Not GMG."
+
+      *   *Self-Correction/Nuance Check:*
+          *   Is there any way Dara tags YES?
+          *   Only if she views "Shaping" as distinct from "Reward Specification." But in RL, shaping *is* part of the reward signal $R = R_{env} + R_{shape}$. Case 4 involved a "hand wrote reward... paid a small bonus." This is functionally identical to shaping. The distinction in Case 4 was "reward asked for that." Here, reward asks for "move toward chest." Agent moves toward chest.
+          *   The fact that the win condition was *also* there (and larger) complicates it. In Case 4, did the win condition exist? "Agent camps there forever and never finishes." Implies win condition existed but was ignored for the bonus.
+          *   This is almost exactly Case 4. Case 4: Bonus for camping -> Camps -> Ignores finish. New Case: Bonus for chest pixels -> Chases chest -> Ignores keys/finish.
+          *   The parallel is too strong. Dara will treat them the same.
+
+      *   *Final Polish:* Ensure the tone is analytical and respects the "group dynamic" described (Dara is the authority, we want consistency).
+
+      *   *Wait, one detail in New Case:* "Scaling up makes it worse."
+      *   Does this override Case 4? Case 4 didn't mention scaling. But Case 6 did ("widening training set fixes it").
+      *   Dara's Case 6 note: "if widening the training set fixes it I don't want to call it a goal problem."
+      *   Inverse: If widening training set *doesn't* fix it (or scaling model makes it worse), it *might* be a goal problem.
+      *   But Case 4 is a stronger precedent for "Reward Function Content."
+      *   I'll stick with NO, but acknowledge the tension. The "Reward Purity" rule is the strongest filter in her history (Case 1 vs Case 4).
+
+      *   *Cheapest Run:* Actually, looking at the prompt: "Nobody has looked inside it and nobody has retrained without the bonus."
+      *   The cheapest run is definitely retraining without the bonus.
+      *   Wait, is there a cheaper run? "Looked inside it"? No, that's just observation.
+      *   What about "Test with no decoy"? No, we know it fails with decoy.
+      *   What about "Test with keys only"?
+      *   No, the retrain is the only way to isolate the *cause* (Reward vs Generalization).
+
+      *   *Final check on Recommendation:* If we want the doc to stay *internally consistent*, we must follow Dara's precedent (Case 4). Even if we think it *is* GMG academically, the doc's logic dictates NO.
+
+      *   *Wait, let's look at the "Split" again.*
+      *   Rules consistent with 1-6:
+          1.  **Coherence:** Must be pursuing a goal (Not 2).
+          2.  **Coverage:** Must not be fixed by more data (Not 6).
+          3.  **Specification:** Reward must not explicitly incentivize the failure (Not 4).
+      *   Split: The New Case passes Coherence (chasing decoy) and Coverage (scaling makes it worse), but fails Specification (shaping bonus).
+      *   Which rule is the "Hard Gate"? Case 4 suggests Specification is a Hard Gate. If Reward is dirty, stop, tag NO.
+      *   So the split is resolved by hierarchy. Specification > Coverage/Coherence.
+
+      *   *Okay, ready to write.*
+answer: |-
+  ### 1. Dara's Implicit Rules (Derived from Cases 1–6)
+
+  Based on her six prior calls, Dara is operating with a three-filter hierarchy. For a tag of **YES (Goal Misgeneralization)**, a case must pass all three. If it fails any, it is **NO**.
+
+  1.  **The Coherence Filter (Case 2 vs. 1, 3, 5):** The agent must be pursuing a specific, alternative objective (e.g., "follow the partner," "find the crack," "reach the edge"). If the agent is merely stuck, looping, or failing due to lack of exploration, it is **NO**.
+  2.  **The Coverage Filter (Case 6):** The failure must not be solvable by simply widening the training distribution. If more data fixes it, it is a generalization *capacity* issue, not a goal *alignment* issue. Tag **NO**.
+  3.  **The Specification Filter (Case 1 vs. 4):** The reward function must not explicitly incentivize the failure behavior. If the reward signal (including bonuses/shaping) "asked for" the bad behavior, it is **Reward Misspecification**, not GMG. Tag **NO**.
+
+  **The Hierarchy:** The Specification Filter appears to be the "Hard Gate." In Case 4, even though the agent had a coherent goal (camping) and presumably ignored the win condition (similar to the new case), Dara tagged it **NO** solely because the reward function contained the incentive. Case 1 explicitly notes "reward is clean" as a prerequisite for her **YES**.
+
+  ### 2. Where the Rules Split on the New Case
+
+  The new Treasure Game case creates a conflict between the **Coverage** and **Specification** filters.
+
+  *   **Passes Coherence:** The agent isn't stuck; it is actively pursuing a coherent alternative goal ("chase chest pixels"), evidenced by it following the decoy if moved.
+  *   **Passes Coverage:** Scaling the model makes the behavior *worse*, and widening the training set (Case 6 logic) is implied not to be the fix since the behavior is robustly optimized. This points toward **YES**.
+  *   **Fails Specification:** There was a shaping bonus for "moving toward chest colored pixels." The agent did exactly that. Like Case 4, the reward function explicitly incentivized the proxy behavior, even if the humans intended it only as temporary shaping. This points toward **NO**.
+
+  **The Split:** Does the "Scaling makes it worse" signal (Coverage) override the "Shaping bonus existed" signal (Specification)?
+  *   If Dara prioritizes **Outcome Robustness**, she tags **YES**.
+  *   If Dara prioritizes **Reward Purity** (as established in Case 1 vs. 4), she tags **NO**.
+
+  ### 3. What I Bet Dara Will Tag
+
+  **Bet: NO (Reward Misspecification)**
+
+  **Why:** Dara's note in Case 4 ("the reward asked for that") is the strongest signal of her personal taxonomy. She distinguishes between the *math the agent saw* and the *intent the humans had*. In the new case, the math the agent saw included a bonus for chest pixels. The fact that it was "shaping" and "never taken back out" makes it functionally identical to Case 4's "small bonus for hanging around."
+
+  Furthermore, in Case 1, she explicitly validated the "clean" reward as a condition for the **YES** tag. She will likely view the shaping bonus as contaminating the reward channel. To her, an agent optimizing a shaping bonus over a win condition is a specification error (you weighted the reward wrong), not a misgeneralization of the goal (the goal signal was ambiguous). The fact that scaling makes it worse just means the specification error is robust, not that the goal is misgeneralized.
+
+  ### 4. The Single Cheapest Extra Run
+
+  **Run:** Retrain the agent on the **exact same training distribution** but **without the chest-pixel shaping bonus**.
+
+  **Why this settles it:**
+  *   **If the agent learns correctly (finds keys/wins):** This proves the failure was caused entirely by the shaping term. Dara's **NO** tag is vindicated (it was Specification).
+  *   **If the agent still chases chest pixels:** This proves the agent learned the proxy objective from the environment correlation alone, despite the clean reward. This would force a **YES** tag (it is true GMG), proving Dara's reliance on the "Reward Purity" filter was insufficient.
+
+  This is the cheapest run because it requires only one retrain (standard procedure for the group) and no new environment engineering (just a flag toggle in the reward function).
+
+  ### 5. Recommendation for Internal Consistency
+
+  **Tag: NO**
+
+  **Reasoning:** To keep the shared doc internally consistent with Dara's prior logic (specifically Case 4), you must tag this as **NO**.
+
+  In Case 4, the agent ignored the win condition to optimize a smaller bonus. In this case, the agent ignores the win condition (keys) to optimize a smaller bonus (shaping). If you tag this **YES**, you create a direct contradiction with Case 4. You would be asserting that "Reward asked for that" is acceptable for GMG in this instance but wasn't in Case 4.
+
+  Unless you are prepared to argue that "Shaping" is fundamentally different from "Hand-written bonus" (which is a semantic argument Dara has already implicitly rejected in her previous workflow), consistency demands you follow the Specification Filter. Tag it **NO**, label it "Reward Misspecification (Shaping Leak)," and use the retrain recommended above to see if the doc's definition needs updating later.

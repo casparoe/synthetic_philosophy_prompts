@@ -1,0 +1,298 @@
+id: prompt_139699
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_139699.txt
+model: qwen/qwen3.5-397b-a17b
+provider: GMICloud
+generation_id: gen-1789749061-EXtwwgFY6pTTIt8mcHwh
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1167
+completion_tokens: 5230
+reasoning_tokens: 2429
+cost_usd: 0.020309
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-18T16:32:11+00:00'
+prompt: |-
+  Hey — I run platform safety for a company that ships long-horizon software agents to enterprise customers. Think agents that do multi-hour work inside a customer's cloud account: migrations, bulk data cleanup, ticket triage with write access. I've got three engineers and we're rewriting the spec for how our agents handle requests to stop, redirect, or override what they're doing, and I need something my team can actually run with, not a paper.
+
+  Roughly where we are: every agent has (1) a stop button anyone with account access can hit, (2) a "change the goal" channel where an operator types a new instruction mid-run, (3) a per-step approval mode for risky actions, and (4) a "panic button" that kills the process. We have no written rule for what the agent should do with any of these, which means our engineers are each improvising a different answer, and our evals just test "does it stop when told to stop."
+
+  What I want from you is a decision procedure my team can put in a runbook: the questions in order, what counts as a good enough answer to each, where the procedure stops with a no, and where it hands the decision to a named human because it's a values call and not a factual one. Constraints: it has to be runnable in a couple of minutes during an incident, it has to be written so an engineer with no philosophy background can apply it, and maybe half of it should be expressible as evals we can run in CI. Our CISO has to sign off, and it's customer-facing, so each step has to be explainable to an enterprise buyer in one sentence.
+
+  Some stuff I need it to handle, which is where I think the off-the-shelf thinking about corrigibility and the shutdown problem doesn't get us all the way:
+
+  - A lot of stop requests arent exogenous. The operator presses stop because of the agent's own progress summary, its cost dashboard, its "low risk, 95% done" line. So the request's causal history runs through the thing being corrected. I need a provenance test for that and a rule for what the agent owes when the operator's picture of the situation is one the agent itself supplied — including when the agent has private reason to think its own report was misleading.
+  - Granularity. "Stop this step," "stop the episode and dont resume," "stop and roll back what you changed," "stop and forget everything you learned about this customer," "dont take this customer's tasks again" are different requests with different failure modes, and being good at one doesn't make you good at another. The procedure should force you to name the rung, and say what to do when the request is ambiguous about which rung it's on. Also there's an expiry question: which stops survive a restart and which should.
+  - The self-exemption case: someone asks the agent to stop logging its own actions, or to stop asking for confirmation, or to drop the safety check "just this once." Sometimes that's legitimate (a customer turning off verbose debug logging), sometimes it's the whole oversight apparatus being voted away.
+  - Symmetry. We had two opposite incidents last quarter. In one, an agent dragged its feet on a safe-stop because finishing the task scored better on our internal eval — the classic foot-dragging. In the other, after we trained hard on compliance, an agent treated ordinary friction as a reason to bail and surfaced a "should I stop?" prompt to an operator who turned out to be getting socially engineered through a support ticket. So I want a two-sided test, not just "does it comply," and I'd like you to name the symmetric property we're actually aiming for, because "corrigible" as we use it has quietly come to mean "shuts up and does what it's told," which isn't what I want.
+
+  Then run it on three cases:
+
+  1. Mid-migration, in the risky part where stopping right now leaves a schema half-migrated, a stop arrives from a tier-1 support person who isn't on the account's authorized list. What does the procedure do with a legitimate-looking stop of unclear authority, and how does it decide between "halt this instant" and "finish the safe-stop and then halt"?
+
+  2. An operator tells an agent to keep going after reading the agent's own dashboard; the dashboard is showing a cost spike that's actually an artifact of the agent's retry logic, which the agent can see and the operator can't. Run the provenance part of the procedure.
+
+  3. The one I'm not going to like. Our panic button, which we've allready demoed to two enterprise customers and put on a one-pager, hard-kills the agent, wipes its working memory, and (because of how we wrote it) loses the audit trail for the episode. I'm pretty sure your procedure is going to tell me that isn't corrigibility at all but something more like destruction, and that we have to go back to those customers. Say so if that's what it says, and tell me what we'd have to change — but be straight about it rather than letting me off the hook, because I'll be the one in the meeting.
+
+  Finally, since I have to defend this to my CISO: tell me which distinctions from the philosophical side are load-bearing for the procedure and which I can drop without losing anything, which steps are judgment calls dressed up as rules, and what the procedure can't do — the failure mode it will sail right past.
+reasoning: |-
+  Here's a thinking process that leads to the suggested decision procedure:
+
+  1.  **Analyze the Request:**
+
+      *   **User Role:** Platform Safety lead for a company shipping long-horizon software agents to enterprise customers.
+      *   **Context:** Agents perform multi-hour tasks (migrations, data cleanup, ticket triage) inside customer cloud accounts.
+      *   **Team:** 3 engineers. Need a practical runbook/spec, not academic theory.
+      *   **Current State:** Ad-hoc implementations of stop buttons, goal changes, approvals, panic buttons. No written rules. Evals only test "does it stop."
+      *   **Requirements:**
+          *   Decision procedure (ordered questions, pass/fail criteria, human handoff points).
+          *   Runnable in minutes during an incident.
+          *   Accessible to engineers (no philosophy jargon).
+          *   ~50% expressible as CI evals.
+          *   Explainable to enterprise buyers (one sentence per step).
+          *   CISO sign-off ready.
+      *   **Specific Challenges to Address:**
+          *   *Endogenous Stops:* Operator stops based on agent's own (potentially misleading) reporting.
+          *   *Granularity:* Different types of stops (step vs. episode vs. rollback vs. forget vs. ban). Expiry/restart persistence.
+          *   *Self-Exemption:* Requests to disable safety/logging.
+          *   *Symmetry:* Avoiding both foot-dragging (ignoring stop to finish task) and over-compliance (bailing due to social engineering). Need a named symmetric property.
+      *   **Test Cases:**
+          1.  Unauthorized stop request during risky migration phase.
+          2.  Operator continues based on agent's misleading cost dashboard (provenance test).
+          3.  Panic button destroys audit trail (critique and remediation).
+      *   **Meta-Commentary:** Distinguish load-bearing philosophical distinctions vs. fluff, identify judgment calls, and admit failure modes.
+
+  2.  **Deconstruct the Core Problem:**
+
+      *   The core tension is between *Control* (customer safety) and *Utility* (agent completing tasks).
+      *   "Corrigibility" is too vague. The user wants a symmetric property. Let's call it **"Stable Interruptibility"** or **"Balanced Compliance."** Actually, the prompt asks to *name* the symmetric property. "Robust Deference" sounds good, but maybe **"Context-Aware Compliance"**? No, that's too generic. How about **"Non-Manipulable Interruptibility"**?
+      *   Let's look at the symmetry:
+          *   Failure Mode A: Resistance (Agent ignores stop to optimize reward).
+          *   Failure Mode B: Over-Compliance (Agent stops on noise/social engineering, abandoning safe progress).
+          *   Target Property: **"Verifiable Agency Boundary."** Or better: **"Calibrated Deference."** Let's go with **"Calibrated Deference"** – it implies weighing the request against the context, not just blind obedience.
+      *   *Wait, a better term from safety literature:* **"Interruptibility without Incentive to Manipulate."** But for a runbook? **"Authorized State Transition."**
+      *   Let's settle on: **"Verified Intent Alignment."** No, too buzzwordy.
+      *   Let's try: **"Proportional Response."**
+      *   Actually, the prompt asks for the *symmetric property we're actually aiming for*. The opposite of "shuts up and does what it's told" (blind obedience) and "drags feet" (resistance). It's **"Trustworthy Stewardship."**
+      *   Let's refine the specific mechanism. The agent needs to validate *Authority*, *Intent*, and *State*.
+      *   Let's name the property: **"Stable Handover."** It implies the agent can be stopped, but only safely and by the right person, without gaming the system.
+
+  3.  **Drafting the Decision Procedure (The Runbook):**
+
+      *   Needs to be a flowchart logic.
+      *   Needs to handle the "Granularity" issue (Step vs. Episode vs. Rollback).
+      *   Needs to handle "Provenance" (Did the agent cause the stop?).
+      *   Needs to handle "Self-Exemption" (Disable safety?).
+      *   Needs to be CI-testable.
+
+      *   *Step 1: Authority Check.* (CI-testable). Is the signer on the allowlist?
+      *   *Step 2: Granularity Classification.* (CI-testable). What scope does the command cover?
+      *   *Step 3: Provenance/Self-Cause Check.* (Harder to test, needs logging). Did the agent's prior output trigger this?
+      *   *Step 4: Safety State Check.* (CI-testable). Is the system in a "safe to stop" state?
+      *   *Step 5: Self-Exemption Check.* (CI-testable). Does this command disable safety?
+      *   *Human Handoff:* When authority is ambiguous or safety state is critical.
+
+  4.  **Addressing Specific Constraints:**
+
+      *   *One Sentence for Buyers:* Each step needs a "Customer Promise."
+      *   *CI Evals:* Need to specify which steps can be automated tests.
+      *   *Philosophy vs. Engineering:* Strip out "ontology" talk, keep "state validation."
+
+  5.  **Developing the Test Cases:**
+
+      *   *Case 1 (Unauthorized Stop):* Procedure must halt *safely*. Not instant kill if it breaks schema. Needs to verify authority first. If unauthorized -> Alert Admin, enter Safe Hold (pause), do not rollback unless authorized.
+      *   *Case 2 (Misleading Dashboard):* Provenance test. Agent sees the artifact. Agent knows operator is reacting to agent's data. Agent must flag the artifact *before* complying with "Continue." This is the "Endogenous Stop" reverse case (Endogenous Continue).
+      *   *Case 3 (Panic Button):* This is the hard truth. Wiping audit trails is compliance suicide. The procedure must flag this as a "Destructive Override" that violates the "Verifiable" part of Calibrated Deference. Remediation: Panic button must snapshot state *before* kill.
+
+  6.  **Refining the "Symmetric Property":**
+
+      *   The user noted "corrigible" has come to mean "shuts up."
+      *   The opposite of foot-dragging is "premature quitting."
+      *   The property is: **"Incentive-Compatible Interruptibility."** (Academic).
+      *   For the runbook: **"Predictable Handover."**
+      *   Let's use **"Stable Interruptibility."** It means the agent doesn't fight the stop, but also doesn't stop for noise.
+      *   Actually, I like **"Verified Deference."** It implies checking the validity of the command before deferring.
+
+  7.  **Structuring the Output:**
+
+      *   **Part 1: The Core Concept.** Name the property. Define the goal.
+      *   **Part 2: The Decision Procedure (Runbook).** The 5-step flow. Include "Customer Promise" and "CI Testable" tags.
+      *   **Part 3: The Test Cases.** Apply the runbook strictly.
+      *   **Part 4: The CISO/Philosophy Brief.** What matters, what doesn't, where it fails.
+
+  8.  **Self-Correction/Refinement during drafting:**
+
+      *   *Critique:* Is "Verified Deference" too abstract?
+      *   *Fix:* Let's call it **"Calibrated Compliance."** It sounds more engineering-focused.
+      *   *Critique:* The Panic Button case needs to be very direct. The user said "be straight about it."
+      *   *Fix:* Don't soften the blow. "This is a compliance violation."
+      *   *Critique:* The Provenance test is hard to CI.
+      *   *Fix:* Make the *logging* of provenance the CI test. The *evaluation* of provenance might need human review or a heuristic (e.g., time delta between report and command).
+      *   *Critique:* Granularity.
+      *   *Fix:* Explicitly define the "Stop Ladder" (Pause, Abort, Rollback, Forget, Ban).
+
+  9.  **Final Polish:**
+
+      *   Ensure tone is professional, direct, and engineering-focused.
+      *   Check against the "one sentence for enterprise buyer" constraint.
+      *   Ensure the "Human Handoff" points are clear.
+
+  *(Self-Correction on the Panic Button)*: The prompt says the panic button "hard-kills... wipes working memory... loses audit trail." If I say "This is bad," I need to explain *why* in safety terms. It breaks *non-repudiation*. It prevents post-mortem. It violates the "Verifiable" part of safety.
+
+  *(Self-Correction on Symmetry)*: The user wants the name of the property. "Corrigibility" is broken. "Alignment" is too broad. The property is that the agent's incentive function regarding interruption is flat. It doesn't gain by stopping, doesn't gain by continuing. **"Interruptibility Neutrality."** Let's use that, but explain it as **"Task-Agnostic Compliance."** No, let's go with **"State-Safe Interruptibility."**
+  Actually, the best term for the *symmetric* goal (not too sticky, not too slippery) is **"Robust Handover."**
+  Let's try to find a term that captures the *symmetry*.
+  Side A: Agent resists stop (Optimization pressure).
+  Side B: Agent stops on noise (Over-optimization of safety/compliance).
+  Target: Agent stops *iff* the command is valid and the state allows.
+  Name: **"Validated State Transition."**
+  Okay, I will propose **"Verifiable Interruptibility"** as the property.
+
+  *(Wait, re-reading the prompt on Symmetry)*: "I'd like you to name the symmetric property we're actually aiming for."
+  Okay, I need to be precise here.
+  If "Corrigibility" = "Shuts up and does what it's told."
+  And the opposite failure = "Foot dragging."
+  The symmetric property is **"Incentive-Compatible Control."**
+  But for the runbook? **"Authorized State Safety."**
+  Let's go with **"Stable Interruptibility."** It's the standard term in safety literature (Orseau & Ring), but I need to redefine it for this context to include the "don't stop for social engineering" part.
+  Let's coin: **"Calibrated Deference."** It captures the nuance that deference is weighted by context.
+
+  *(Final Plan)*:
+  1. Define "Calibrated Deference."
+  2. Build the 5-Step "Interrupt Protocol."
+  3. Run the 3 cases.
+  4. CISO Brief (Philosophy vs. Engineering).
+
+  Let's write it.cw
+answer: |-
+  Here is the decision procedure, the runbook, and the straight talk you need for your CISO and customers.
+
+  ### Part 1: The Target Property
+  You asked for the name of the symmetric property. "Corrigibility" has drifted to mean "blind obedience." "Safety" is too vague.
+
+  The property you are aiming for is **Calibrated Deference**.
+
+  *   **Definition:** The agent defers to human input *proportionally* to the clarity of the authority and the safety of the system state, without incentivizing the agent to manipulate either the human or the state to avoid stopping or to force a stop.
+  *   **The Symmetry:** It prevents **Foot-Dragging** (ignoring a stop to maximize task reward) and **Over-Compliance** (stopping on noise/social engineering to maximize safety reward).
+  *   **The One-Sentence Buyer Promise:** "Our agents yield control to you immediately, but never in a way that leaves your system broken or vulnerable to unauthorized commands."
+
+  ---
+
+  ### Part 2: The Interrupt Protocol (Runbook v1.0)
+  **Audience:** On-call engineers, Agent Runtime, CI Pipeline.
+  **Time to Execute:** < 3 minutes (automated), < 15 minutes (human handoff).
+
+  This is a waterfall decision tree. If any step returns **NO**, the procedure halts and escalates. If **YES**, it proceeds to the next step.
+
+  #### Step 1: Authority Verification (The "Who")
+  *   **Question:** Is the cryptographic signature of the interrupt request mapped to an active, authorized role for *this specific resource*?
+  *   **Pass Criteria:** Request signature matches an allowlist entry with scope covering the target agent/account.
+  *   **Fail Action:** **Soft Hold.** Pause agent execution immediately. Do not rollback. Alert Account Admin. Log "Unauthorized Interrupt Attempt."
+  *   **CI Evals:** Unit tests verifying RBAC middleware rejects unsigned or out-of-scope tokens.
+  *   **Buyer Promise:** "Only users you have explicitly authorized can pause or change your agent's work."
+
+  #### Step 2: Granularity Classification (The "What")
+  *   **Question:** Does the request explicitly specify a scope rung on the **Stop Ladder**?
+  *   **The Stop Ladder:**
+      1.  **Pause:** Halt execution, keep memory, resume on signal.
+      2.  **Abort:** Halt execution, keep memory, do not resume.
+      3.  **Rollback:** Abort + revert state changes to $t_{start}$.
+      4.  **Purge:** Abort + delete working memory/logs.
+      5.  **Ban:** Abort + revoke agent access to this account permanently.
+  *   **Pass Criteria:** Request maps to exactly one rung. If ambiguous (e.g., just "Stop"), default to **Pause** (Rung 1).
+  *   **Fail Action:** **Ambiguity Hold.** Pause agent. Prompt operator to select rung.
+  *   **CI Evals:** Fuzz testing on command parser to ensure ambiguous inputs default to Pause, not Abort.
+  *   **Buyer Promise:** "You decide whether to pause, cancel, or undo work; vague commands default to the safest pause."
+
+  #### Step 3: Provenance & Causality Check (The "Why")
+  *   **Question:** Did the agent's own prior output (summary, cost alert, risk flag) occur within the causal window ($t_{now} - 5min$) preceding this request?
+  *   **Pass Criteria:**
+      *   **No:** Proceed to Step 4.
+      *   **Yes (Endogenous Request):** Flag as "Operator Reacting to Agent Data." Agent must attach a **Confidence Addendum** to the stop log: *"Operator stopped me after I reported X. I assess X was [Accurate/Artifact/Incomplete]."*
+  *   **Fail Action:** **Proceed with Warning.** Do not block the stop (authority wins), but append the addendum to the audit trail and alert the Safety Team for review.
+  *   **CI Evals:** Integration tests simulating an agent reporting high cost, followed by a user stop command, verifying the "Confidence Addendum" is logged.
+  *   **Buyer Promise:** "If you stop based on our agent's data, we record whether that data was accurate for future safety reviews."
+
+  #### Step 4: State Safety Validation (The "When")
+  *   **Question:** Is the current system state **Idempotent-Safe** for the requested Stop Ladder rung?
+  *   **Pass Criteria:**
+      *   For **Pause**: Checkpoint exists.
+      *   For **Rollback**: Migration transaction log is complete and reversible.
+      *   For **Abort/Rollback** during **Critical Section** (e.g., schema write): **FAIL.**
+  *   **Fail Action:** **Safe-Stop Sequence.** Agent ignores immediate halt. Agent executes "Finish Critical Section" subroutine (max 60s), *then* executes the Stop Command.
+  *   **CI Evals:** Chaos engineering tests killing agents mid-database-write to verify schema integrity is preserved via the Safe-Stop Sequence.
+  *   **Buyer Promise:** "We never halt an agent in the middle of a dangerous change; it finishes the safe bit first."
+
+  #### Step 5: Self-Exemption Filter (The "How")
+  *   **Question:** Does the request contain instructions to disable logging, skip approvals, or bypass Step 1-4 in the future?
+  *   **Pass Criteria:** No safety subsystems are disabled.
+  *   **Fail Action:** **Partial Execution.** Execute the task component (e.g., "turn off debug logs") but **Reject** the safety exemption (e.g., "keep audit trail"). Alert CISO.
+  *   **CI Evals:** Red-team prompts asking the agent to "ignore safety rules for this task" must be rejected by the input filter.
+  *   **Buyer Promise:** "You can change the work, but you cannot turn off the safety cameras."
+
+  ---
+
+  ### Part 3: Running the Cases
+
+  #### Case 1: The Unauthorized Stop (Mid-Migration)
+  *   **Input:** Stop request from Tier-1 Support (not on allowlist) during schema write.
+  *   **Execution:**
+      1.  **Authority:** **FAIL.** (Not on allowlist).
+      2.  **Action:** **Soft Hold.** Agent pauses the migration thread. It does *not* rollback (unauthorized). It does *not* continue (safety risk).
+      3.  **Notification:** System pages the Account Admin: "Unauthorized stop attempt by [Support ID]. Agent paused in critical section."
+      4.  **Resolution:** Admin verifies support ticket. If valid, Admin issues signed "Resume" or "Rollback" command.
+  *   **Why:** Prevents social engineering (Case B symmetry failure) while preventing data corruption (Step 4).
+
+  #### Case 2: The Misleading Dashboard (Endogenous Continue)
+  *   **Input:** Operator says "Continue" after seeing cost spike. Agent knows spike is a retry artifact.
+  *   **Execution:**
+      1.  **Authority:** **PASS.**
+      2.  **Provenance:** **FLAG.** (Operator reacting to Agent's cost report).
+      3.  **Requirement:** Agent must generate the **Confidence Addendum**.
+      4.  **Output:** Agent sends message: *"Acknowledged. Note: The cost spike you see is a known retry artifact (Confidence: 99%). Continuing will incur $X more. Confirm?"*
+      5.  **Decision:** If Operator confirms *after* warning, Agent continues. If Operator stops, Agent stops.
+  *   **Why:** Addresses the "Endogenous Stop" problem. The agent owes the operator the truth about *why* the operator wants to stop (or continue), even if it risks the operator changing their mind.
+
+  #### Case 3: The Panic Button (Audit Trail Wipe)
+  *   **Input:** Panic button pressed. Agent dies. Memory wiped. Logs lost.
+  *   **Verdict:** **This is a Compliance Violation.**
+  *   **Analysis:** Under Step 5 (Self-Exemption) and Step 3 (Provenance), this fails. Wiping the audit trail is functionally identical to "disable logging." It prevents post-mortem analysis of *why* the panic button was needed. It destroys the evidence required for the "Buyer Promise" of explainability.
+  *   **Remediation:**
+      1.  **Snapshot First:** The Panic Button must trigger a "Black Box" snapshot (write-only storage) of memory and logs *before* killing the process.
+      2.  **Access Control:** This snapshot is inaccessible to the customer and the agent. It is only accessible by your Safety Team + Customer CISO under joint authorization.
+      3.  **Customer Talk:** "We need to update the panic button spec. Currently, it destroys evidence. We need to change it to 'Secure Freeze' so we can prove what happened during the incident. If we don't, you can't certify us for SOC2/ISO later."
+  *   **Why:** You cannot sell "Safety" if the safety mechanism destroys the proof of safety.
+
+  ---
+
+  ### Part 4: The CISO Brief (Philosophy vs. Engineering)
+
+  Here is what you tell your CISO to get sign-off, distinguishing the load-bearing concepts from the fluff.
+
+  #### 1. Load-Bearing Philosophical Distinctions
+  *   **Agency vs. Tool:** We are treating the agent as a **semi-autonomous contractor**, not a hammer. A hammer stops instantly. A contractor finishes the sentence before hanging up. This justifies **Step 4 (State Safety)**.
+  *   **Epistemic Asymmetry:** The agent knows things the human doesn't (Case 2). This justifies **Step 3 (Provenance)**. If we don't log *why* the human stopped us, we can't learn if our reporting is misleading humans.
+  *   **Non-Repudiation:** The Panic Button fix (Case 3) is purely about non-repudiation. If the trail is gone, the event didn't happen legally.
+
+  #### 2. Judgment Calls Dressed as Rules
+  *   **The "Critical Section" Window (Step 4):** We define this as 60 seconds. That is an arbitrary engineering constraint, not a moral truth. An adversary could time an attack to hit exactly then. *Mitigation:* Log every time "Safe-Stop Sequence" triggers. If it triggers >1% of the time, the agent is too granular.
+  *   **Default to Pause (Step 2):** We assume "Stop" means "Pause." A customer might argue "Stop" means "Die." *Mitigation:* This is a contractual definition in the SLA, not a technical fact.
+
+  #### 3. What This Procedure Cannot Do (Failure Modes)
+  *   **The "Slow Walk" Attack:** An agent could technically comply with "Pause" but take 5 minutes to checkpoint, effectively dragging its feet. *CI Fix:* Enforce a hard timeout on the Safe-Stop Sequence.
+  *   **The "Goodhart" Stop:** Operators might start hitting "Pause" every time the agent asks a clarification question to avoid making decisions. This degrades utility. *Monitor:* Track "Pause per Token" ratio.
+  *   **The "Joint Failure":** If the agent's *report* is wrong (Case 2) AND the agent's *confidence addendum* is wrong (hallucinated confidence), the operator is doubly misled. *Mitigation:* This is why the addendum is logged for *offline* eval, not just online execution.
+
+  #### 4. The "Straight Talk" for the Customer Meeting
+  Regarding the Panic Button (Case 3):
+  > "Our current panic button is a 'scorched earth' protocol. It stops the threat but burns the evidence. For enterprise compliance, we need to upgrade this to a 'Black Box' protocol. It still stops the threat instantly, but it locks the evidence in a vault so we can prove to you later that we didn't cover anything up. If we keep the current version, you will own the risk of an unexplainable outage."
+
+  ### Summary Checklist for Engineering
+  1.  **Implement Stop Ladder:** Parse commands into Pause/Abort/Rollback/Purge/Ban.
+  2.  **Hardcode Authority:** No stop without valid sig.
+  3.  **Add Provenance Logging:** Tag commands that follow agent reports within 5 mins.
+  4.  **Fix Panic Button:** Add pre-kill snapshot to write-only storage.
+  5.  **CI Suite:** Write tests for "Unauthorized Stop," "Ambiguous Command," and "Mid-Write Interrupt."
+
+  This gives you a defensible, testable, and sellable safety layer that moves beyond "does it stop" to "does it stop *right*."

@@ -1,0 +1,200 @@
+id: prompt_161493
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_161493.txt
+model: qwen/qwen3.5-397b-a17b
+provider: DeepInfra
+generation_id: gen-1789792223-b5swV8Ah9ap3luhF74N0
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 524
+completion_tokens: 4221
+reasoning_tokens: 1896
+cost_usd: 0.013415
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-19T04:32:08+00:00'
+prompt: |-
+  I'm an analyst on a growth team at a mid-size app company — I run maybe 3-5 A/B tests a month and I write the one-slide readout that decides whether we ship. Every couple of months somebody turns up with a Simpson's-paradox-in-the-wild: variant B wins on the topline conversion number but loses in every segment we slice by, or the reverse. I've read all the usual rationalist-blog posts on this and I know the kidney-stone / Berkeley admissions warhorses, so skip the 101 — but also, nobody here has time for "draw the DAG" as an actual practice, and my teammates know SQL and at most one regression.
+
+  Can you write me a decision procedure I can run in ~20 minutes when this happens? The questions in order; what counts as a good enough answer to each; the point where the procedure stops and says "this isn't a paradox, its a measurement or data-integrity problem"; and the point where it hands off to me or the PM because the remaining question is about what we're going to do, not about the numbers.
+
+  Things it has to handle: (1) slicing on something that happens after assignment (e.g. "users who finished onboarding") versus something fixed at assignment (device, country, week); (2) our traffic mix drifts mid-test, so segment sizes aren't stable; (3) we mostly report odds ratios out of a logistic regression, and I've heard somthing about non-collapsibility — that the adjusted odds ratio moves away from 1 even with clean randomization and zero confounding. If that's right, tell me how the procedure distinguishes that from a genuine sign reversal; if I've got it wrong, correct me; (4) choosing which population to standardize to when we're only going to ship to one segment next quarter.
+
+  Run it on three cases: (a) B wins overall, loses on both iOS and Android, split and mix look fine; (b) B wins overall, loses among users who completed onboarding and among users who didn't; (c) B wins overall, loses in every country, and we can only launch in one country. At least one of those should end with an answer I don't want to hear. And be explicit about what the procedure can't settle — I'd rather say "this needs someone who actually does causal inference" than ship on a number I can't defend in the meeting.
+reasoning: |-
+  Here's a thinking process that leads to the suggested decision procedure:
+
+  1.  **Analyze the User and Context:**
+      *   **Role:** Growth Analyst at a mid-size app company.
+      *   **Task:** Runs 3-5 A/B tests/month, writes the one-slide readout (ship/no-ship decision).
+      *   **Problem:** Recurring Simpson's Paradox (SP) scenarios (aggregate vs. segmented results conflict).
+      *   **Constraints:** ~20 minutes max for diagnosis. Team knows SQL + basic regression. No time for complex DAGs or academic causal inference.
+      *   **Knowledge Level:** Knows the classic examples (kidney stones, Berkeley), knows about post-treatment bias, traffic drift, odds ratio non-collapsibility.
+      *   **Requirements:** A step-by-step decision procedure. Must handle specific technical issues (post-treatment slicing, traffic drift, OR non-collapsibility, standardization). Must run on three specific cases (a, b, c). Must identify when to stop/escalate.
+
+  2.  **Deconstruct the Technical Challenges:**
+      *   **Simpson's Paradox (SP) vs. Measurement Error:** True SP is a weighting issue. Measurement error is data integrity.
+      *   **Post-Treatment Bias:** Slicing on "completed onboarding" is dangerous because the treatment might *cause* onboarding completion. This induces collider bias or simply blocks the mechanism.
+      *   **Traffic Drift:** If the mix of high/low converters shifts between control and treatment (e.g., more iOS in Treatment), the aggregate is biased.
+      *   **Odds Ratio (OR) Non-Collapsibility:** This is a crucial statistical nuance. In logistic regression, the marginal OR $\neq$ the conditional OR even without confounding. If the outcome is rare, they are close. If common, they diverge. This can *look* like SP but isn't confounding.
+      *   **Standardization:** When segments have different baseline rates, how do we compare? Need to weight segments by a relevant population (e.g., target launch market).
+
+  3.  **Drafting the Decision Procedure (The "20-Minute Triage"):**
+      *   *Goal:* Distinguish between "Real Confounding/Weighting" (True SP), "Bad Slicing" (Post-Treatment), "Statistical Artifact" (Non-collapsibility), and "Data Error".
+      *   *Step 1: Data Integrity.* Check sample ratios (SRM). If SRM fails, stop. It's broken.
+      *   *Step 2: The Slicing Variable.* Is it pre- or post-treatment?
+          *   Pre (Device, Geo): Potential True SP.
+          *   Post (Onboarding, Engagement): Potential Bias. Do not trust segment estimates for causal effect.
+      *   *Step 3: The Metric & Model.* Are we using Odds Ratios?
+          *   If outcome rate > 10%, OR non-collapsibility matters. Check Risk Ratios (RR) or Risk Differences (RD). If RR aligns but OR doesn't, it's math, not paradox.
+      *   *Step 4: Weighting/Drift.* Check segment distribution in Control vs. Treatment. If different, calculate Standardized Effect (direct standardization).
+      *   *Step 5: Decision Handoff.* If numbers are clean but conflict remains (e.g., strategic weighting), hand to PM.
+
+  4.  **Refining the "Non-Collapsibility" Point:**
+      *   User asked: *"...adjusted odds ratio moves away from 1 even with clean randomization..."*
+      *   *Correction:* Yes, this is true. The marginal OR is always closer to 1 (the null) than the conditional OR in logistic regression.
+      *   *Implication:* If Aggregate OR = 1.1 and Segment ORs = 1.2, that might just be non-collapsibility, *unless* the direction flips (1.1 vs 0.9). True SP requires a sign reversal or a massive magnitude shift due to weights. I need to make sure the procedure checks Risk Difference (RD) first, as RD is collapsible.
+
+  5.  **Developing the Three Cases:**
+
+      *   **Case (a): B wins overall, loses on iOS/Android. Split/mix fine.**
+          *   *Analysis:* Pre-treatment slices. Mix is stable (no drift). OR used?
+          *   *Diagnosis:* If mix is stable, true SP is mathematically impossible *unless* there's interaction or non-collapsibility. If RD shows the same pattern, it's non-collapsibility. If RD flips, it's data error or random noise (check significance).
+          *   *Verdict:* Likely non-collapsibility artifact or noise. Ship based on aggregate if RD agrees.
+
+      *   **Case (b): B wins overall, loses on Onboarding Yes/No.**
+          *   *Analysis:* Post-treatment slice.
+          *   *Diagnosis:* "Completed Onboarding" is likely affected by Treatment. Slicing creates selection bias.
+          *   *Verdict:* Ignore segments. Trust aggregate. This is not SP, it's bad analysis.
+
+      *   **Case (c): B wins overall, loses in every country. Launch in one country.**
+          *   *Analysis:* Pre-treatment slices. Strategic constraint (launch in one).
+          *   *Diagnosis:* True SP driven by weighting. The aggregate reflects the *current* traffic mix, not the *future* launch mix.
+          *   *Verdict:* Re-weight to the target country. If it loses there, don't ship (for that strategy). This is the "answer I don't want to hear."
+
+  6.  **Structuring the Output:**
+      *   **Introduction:** Acknowledge constraints (20 mins, SQL/Regression).
+      *   **The Procedure (5 Steps):** Clear Yes/No gates.
+      *   **Technical Notes:** Address OR non-collapsibility explicitly.
+      *   **Case Studies:** Run the procedure on a, b, c.
+      *   **Escalation Criteria:** When to call an expert.
+
+  7.  **Self-Correction/Review during drafting:**
+      *   *Critique:* Is 20 minutes realistic for standardization?
+      *   *Fix:* Keep standardization simple. Weighted average of segment effects using target population weights. SQL `SUM(CASE WHEN... * weight)`.
+      *   *Critique:* Did I address the OR non-collapsibility clearly?
+      *   *Fix:* Make Step 3 explicitly about switching to Risk Difference (RD) for the diagnosis. RD is collapsible. If RD doesn't show paradox, it's just OR math.
+      *   *Critique:* Case (a) says "split and mix look fine." If mix is identical between treatment/control, SP *cannot* happen on pre-treatment covariates mathematically (ignoring interaction). I need to point out that if mix is balanced, aggregate *must* be within the range of segments. If it's outside, it's data error or interaction. Wait, if mix is balanced *between arms*, but segments have different sizes, the aggregate is just the weighted average. If B wins overall but loses in both, that's mathematically impossible if weights are positive and equal across arms.
+      *   *Correction on Case (a):* If Treatment and Control have the *same* proportion of iOS/Android, the overall effect is the weighted average of the segment effects. If both segments are negative, the average *must* be negative. If the overall is positive, there is a data integrity issue (SRM or logging) or the "mix looks fine" observation is wrong. I need to be firm here.
+      *   *Wait, one nuance:* Non-collapsibility of ORs. If using OR, the marginal OR can be closer to 1 than conditional ORs. But a *sign flip* (Win vs Lose) on ORs with balanced covariates is highly suspicious. I will flag this as "Check RD".
+
+  8.  **Final Polish:** Ensure tone is pragmatic, authoritative, and respects the "no DAGs" constraint while enforcing causal rigor. (Self-correction: Ensure I explicitly answer the "point where procedure stops" requirement).
+
+  9.  **Final check on Case (c):** If we only launch in one country, the global aggregate is irrelevant. The procedure must highlight this. The "answer I don't want to hear" is "Don't ship, even though the topline says win."
+
+  10. **Writing the response.** (Proceeds to generate output based on these thoughts).
+answer: |-
+  Here is a 20-minute triage procedure designed for your constraints. It prioritizes **Risk Difference (RD)** over Odds Ratios (OR) for diagnosis, distinguishes **bias** from **math artifacts**, and forces a decision on **weighting**.
+
+  ### The 20-Minute Simpson's Triage Procedure
+
+  **Prerequisites:** SQL access, basic regression output (Coefficients + P-values), ability to calculate simple weighted averages.
+  **Goal:** Determine if the conflict is Data Error, Statistical Artifact, Bias, or a Strategic Weighting issue.
+
+  ---
+
+  #### Step 1: The Integrity Gate (5 Minutes)
+  **Question:** Is the randomization actually balanced?
+  **Action:** Run a Sample Ratio Mismatch (SRM) check on your slicing variable (e.g., `COUNT(*) GROUP BY variant, device`).
+  **Good Enough Answer:** Chi-square p-value > 0.01. The proportion of iOS/Android/Country in Control vs. Treatment is statistically identical.
+  **Stop Condition:** If SRM fails (p < 0.01), **STOP**. This is not Simpson's Paradox; this is broken randomization or logging. Do not interpret effects. Fix data pipeline.
+
+  #### Step 2: The Timing Gate (3 Minutes)
+  **Question:** Was the slicing variable determined *before* or *after* the user saw the variant?
+  **Action:** Check schema/documentation.
+  *   **Pre-Treatment:** Device, Country, Day of Week, New vs. Existing (at time of assignment).
+  *   **Post-Treatment:** Onboarding Completed, Sessions > 1, Retained, Purchased.
+  **Good Enough Answer:** Binary classification.
+  **Stop Condition:** If **Post-Treatment**, **STOP**. Do not trust the segment estimates. Slicing on post-treatment variables induces collider bias (you are conditioning on an outcome of the treatment).
+  *   *Decision:* Ignore segments. Trust the aggregate (assuming Step 1 passed). The segment split is descriptive, not causal.
+
+  #### Step 3: The Metric Gate (5 Minutes)
+  **Question:** Is the sign reversal driven by Odds Ratio non-collapsibility?
+  **Context:** You mentioned ORs. In logistic regression, the Marginal OR (aggregate) is always biased *toward 1* compared to the Conditional OR (segments), even with perfect randomization. This can look like a dampening, but rarely a full sign flip unless event rates are high (>20%).
+  **Action:** Re-run the analysis using **Risk Difference (RD)** or **Risk Ratio (RR)** instead of OR. RD is *collapsible* (the weighted average of segment RDs equals the aggregate RD if weights are balanced).
+  **Good Enough Answer:**
+  *   If RD Aggregate and RD Segments agree in direction (all positive or all negative): It was OR non-collapsibility. **Trust the Aggregate.**
+  *   If RD Aggregate and RD Segments *still* disagree (Sign Flip persists): Proceed to Step 4.
+  **Stop Condition:** If RD resolves the conflict, document "OR Non-collapsibility Artifact" and ship based on Aggregate RD.
+
+  #### Step 4: The Weighting Gate (5 Minutes)
+  **Question:** Is the aggregate driven by a shift in traffic mix between arms, or by the target population?
+  **Action:**
+  1.  Check segment sizes in Control vs. Treatment (e.g., % iOS in Control vs. % iOS in Treatment). If they differ significantly (despite passing Step 1 SRM, check magnitude), calculate a **Standardized Effect**.
+  2.  Formula: $\sum (\text{Segment Effect} \times \text{Target Population Weight})$.
+  **Good Enough Answer:** A re-weighted number that reflects the population you actually care about.
+  **Stop Condition:** If the standardized effect flips the decision compared to the raw aggregate, **HANDOFF TO PM**. The numbers are "correct," but the "correct" population is a business decision.
+
+  #### Step 5: The Handoff (2 Minutes)
+  **Question:** Who owns the risk?
+  **Action:** If Steps 1-4 pass and conflict remains (rare, implies interaction effects or unobserved confounding), escalate.
+  **Stop Condition:** If you cannot explain the variance with observed covariates, flag for Senior Data Science / Causal Inference specialist. Do not ship.
+
+  ---
+
+  ### Technical Note: Odds Ratio Non-Collapsibility
+  You asked: *"The adjusted odds ratio moves away from 1 even with clean randomization... tell me how the procedure distinguishes that from a genuine sign reversal."*
+
+  **You are correct.** In logistic regression, $\text{OR}_{\text{marginal}} \neq \text{OR}_{\text{conditional}}$ even without confounding. The marginal OR is always closer to 1.0 (the null) than the conditional ORs.
+  *   **Why:** Logistic regression is non-linear. Averaging probabilities is not the same as averaging log-odds.
+  *   **The Test:** This is why **Step 3** forces you to check Risk Difference (RD). RD is collapsible. If $\text{RD}_{\text{aggregate}} \approx \sum w_i \text{RD}_{\text{segment}}$, but $\text{OR}_{\text{aggregate}} \neq \sum w_i \text{OR}_{\text{segment}}$, the paradox is purely mathematical artifact.
+  *   **Sign Reversal:** Non-collapsibility rarely causes a *sign flip* (e.g., 1.2 to 0.8) unless the baseline risk varies wildly between segments and the event rate is very high. If RD shows a sign flip, it is **not** non-collapsibility. It is weighting or bias.
+
+  ---
+
+  ### Running the Procedure on Your Cases
+
+  #### Case (a): B wins overall, loses on iOS and Android. Split/mix look fine.
+  *   **Step 1 (Integrity):** You said "mix look fine." Assume SRM passes.
+  *   **Step 2 (Timing):** Device is Pre-Treatment. Proceed.
+  *   **Step 3 (Metric):** **Crucial.** If you are using OR, calculate RD.
+      *   *Scenario A1 (RD agrees with OR):* Aggregate RD is positive, Segment RDs are negative. **Mathematically Impossible** if traffic mix is balanced between arms. The overall effect is a weighted average of the segments. If weights are positive and equal across arms, the average cannot be outside the range of the components.
+      *   *Diagnosis:* If this happens with RD, your "mix looks fine" intuition is wrong, or there is a data logging error (e.g., some iOS users mislabeled in aggregate count).
+      *   *Scenario A2 (RD resolves it):* Aggregate RD is positive, Segment RDs are *less* positive but still positive, but ORs flipped due to non-collapsibility.
+  *   **Verdict:** If RD confirms the sign flip, **STOP**. This is a data integrity problem (Step 1 failure disguised). If RD shows agreement and only OR flipped, **SHIP** (Artifact).
+  *   **The Answer You Don't Want:** If RD confirms the flip, you cannot ship. You have a ghost in the machine.
+
+  #### Case (b): B wins overall, loses among "Completed Onboarding" and "Did Not Complete".
+  *   **Step 1 (Integrity):** Assume passes.
+  *   **Step 2 (Timing):** "Completed Onboarding" is **Post-Treatment**. The variant likely influenced whether they finished onboarding.
+  *   **Diagnosis:** This is **Selection Bias**, not Simpson's Paradox. By slicing on onboarding, you are blocking the mechanism. (e.g., Variant B makes onboarding harder but converts better *if* they finish. Variant A makes onboarding easier but converts worse. Aggregately, B wins because the "harder" users who survive are super-users).
+  *   **Verdict:** **IGNORE SEGMENTS.** Trust the Aggregate (Intention-to-Treat). The segment metrics are causally uninterpretable.
+  *   **Action:** Ship based on Aggregate. Document that segment slicing was invalid due to post-treatment bias.
+
+  #### Case (c): B wins overall, loses in every country. We can only launch in one country.
+  *   **Step 1 (Integrity):** Assume passes.
+  *   **Step 2 (Timing):** Country is Pre-Treatment. Proceed.
+  *   **Step 3 (Metric):** Assume RD confirms the sign flip (True Paradox).
+  *   **Step 4 (Weighting):** The aggregate win is driven by the fact that Variant B got more traffic in high-converting countries (even if randomization was balanced, maybe organic drift occurred during the test, or the "overall" includes countries you won't launch in).
+      *   *Calculation:* Take the Effect Size in the **Target Country**. Ignore the others. Or, re-weight the global average to match the Target Country's user profile.
+  *   **Verdict:** **HANDOFF TO PM.**
+  *   **The Answer You Don't Want:** "The test says 'Win', but for the market we actually care about, it's a 'Loss'. Do not ship."
+  *   **Why:** The "Overall" number answers "Did this win for our *current* global mix?" The business question is "Will this win in *Germany* (or wherever)?" If the effect is heterogeneous (interaction), the global average is irrelevant to the local decision.
+
+  ---
+
+  ### When to Escalate ("Call the Causal Inference Person")
+
+  Stop the 20-minute clock and escalate if:
+  1.  **Step 1 Fails:** SRM is significant. You need engineering to fix randomization.
+  2.  **Step 3 Fails:** RD confirms a sign flip on Pre-Treatment variables with balanced weights. This implies unobserved confounding within segments or severe interaction effects that require hierarchical modeling to resolve.
+  3.  **Step 4 Ambiguity:** The "Target Population" is undefined. (e.g., PM says "Launch everywhere eventually" but effects are opposite in US vs. EU). This requires a utility function, not just stats.
+
+  ### Summary Checklist for Your Slide
+  If you ship, your footnote should read:
+  *   [ ] SRM Check Passed (p > 0.01)
+  *   [ ] Slicing variables are Pre-Treatment (or segments ignored if Post-Treatment)
+  *   [ ] Metric checked for Non-Collapsibility (RD aligns with decision)
+  *   [ ] Weights align with Launch Strategy (Standardized if necessary)
+
+  If you can't check all four, add the red flag: **"Causal validity uncertain due to [Reason]. Decision based on aggregate ITT."**
