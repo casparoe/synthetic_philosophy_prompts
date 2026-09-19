@@ -42,7 +42,7 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
   domains.txt             753 philosophical domains sampled from
-  task_types.yaml         49 prompt genres, with examples and notes
+  task_types.yaml         66 prompt genres, with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
                           mutually exclusive groups, each drawn with a set probability
