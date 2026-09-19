@@ -11,7 +11,8 @@ files in this directory:
                                   style, ...) in mutually exclusive groups; each
                                   group contributes at most one option, with a
                                   configurable probability, optionally led in by
-                                  a preamble shared by the whole group
+                                  a preamble shared by the whole group or opened
+                                  by a prefix written once for all its options
 
 One draw is recorded as a *sample*: which domains and task types were offered,
 which of each type's examples were shown and in which order (one to five of
@@ -89,12 +90,18 @@ class InstructionGroup:
 
 def _parse_group(spec):
     if not isinstance(spec, dict) or "options" not in spec:
-        raise ValueError("expected a mapping with options (and optionally probability)")
-    if unknown := set(spec) - {"probability", "options", "preamble"}:
+        raise ValueError(
+            "expected a mapping with options (and optionally probability, "
+            "preamble, prefix)"
+        )
+    if unknown := set(spec) - {"probability", "options", "preamble", "prefix"}:
         raise ValueError(f"unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    for key in ("preamble", "prefix"):
+        value = spec.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{key} must be a non-empty string")
     preamble = spec.get("preamble")
-    if preamble is not None and (not isinstance(preamble, str) or not preamble.strip()):
-        raise ValueError("preamble must be a non-empty string")
+    prefix = (spec.get("prefix") or "").strip()
     probability = float(spec.get("probability", 1))
     if not 0 <= probability <= 1:
         raise ValueError("probability must be between 0 and 1")
@@ -112,7 +119,9 @@ def _parse_group(spec):
         weight = float(option.get("weight", 1))
         if not isinstance(text, str) or not text.strip() or weight <= 0:
             raise ValueError("each option needs non-empty text and a positive weight")
-        texts.append(text.strip())
+        # The prefix is written once in the file but stored expanded, so a
+        # sample records the complete instruction the model was given.
+        texts.append(f"{prefix} {text.strip()}" if prefix else text.strip())
         weights.append(weight)
     return InstructionGroup(
         probability, texts, weights, preamble.strip() if preamble else None
@@ -121,9 +130,10 @@ def _parse_group(spec):
 
 def _load_instruction_groups(path):
     """Read additional_instructions.yaml: a mapping of group name to
-    {options: [...], probability: p, preamble: text}, where an option is a
-    string or a mapping with text and weight, and probability and preamble
-    are optional. Groups keep the file's order."""
+    {options: [...], probability: p, preamble: text, prefix: text}, where an
+    option is a string or a mapping with text and weight; probability,
+    preamble, and prefix are optional, and a prefix is prepended (with a
+    space) to every option's text. Groups keep the file's order."""
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found (snapshots of batches before 029 predate it; "
