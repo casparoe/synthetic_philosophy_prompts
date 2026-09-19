@@ -54,6 +54,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 043 | HY4 preview (OpenRouter, Tencent) | 1,000 | 3.0% | 17.3% | 2.5% / 2.1% | procedure example 0, 10 |
 | 044 | Inkling (OpenRouter, BaseTen) | 20,000 | 1.6% | 9.8% | 10.6% / 3.1% | classroom-activity example 0, 43; exam-question example 0, 28 |
 | 045 | HY4 preview (OpenRouter, Tencent) | 20,000 | 3.8% | 18.3% | 6.4% / 3.3% | procedure example 0, 161; classroom-activity example 0, 152 |
+| 047 | Kimi K3 (OpenRouter, BaseTen) | 1,000 | 1.8% | 14.1% | 8.6% / 1.5% | classroom-activity example 0, 7 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -395,6 +396,22 @@ answer, as with the other runs.
   across processes with a lock file (`prompts/.numbering.lock`, ignored by git) and
   creates the file while holding it. Batches on different machines still need
   `--first-id`.
+- Test batch 047 (Moonshot Kimi K3, 2.8T/104B MoE, Kimi K3 License), 1,000 prompts on
+  2026-09-19 at reasoning effort high with the web tools, 8-bit endpoints only: BaseTen
+  is the only such host (the model is trained in MXFP4, so its fp8 endpoint serves the
+  released precision), and it enforces top-p 0.95 for this model, rejecting a first
+  attempt at the card's agentic value of 1.0 with "Cannot override enforced sampling
+  params". $46 per 1,000 prompts (mean 6,200 input and 2,200 output tokens); about 740
+  rate-limit replies at concurrency 24, five to six prompts a minute, 14 prompts
+  abandoned after ten failures and regenerated afterwards with `--continue-batch`. K3
+  hardly touches the tools unless an instruction requires it: 0.1 tool calls per prompt
+  without the new quote-inclusion instruction, 7.6 with it. That made the quote
+  instruction under-represented while the batch ran (4.7% of finished prompts against
+  a 10% draw rate), since its prompts need many more request rounds and so finished
+  later and were likelier to be abandoned; it ended at 8.5% once the slow and
+  regenerated prompts came in. Median 413 words; heavy echo 1.8%; two pairs share a
+  long quotation (Nietzsche's preface to the Genealogy), the pattern of batches 041
+  and 045.
 
 ## Preference pairs
 
