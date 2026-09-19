@@ -251,16 +251,18 @@ Pair sets and runs so far:
 
 | Pair set | Pairs | Responses compared | Runs |
 |---|---|---|---|
-| `r1_imported` | 1,530 | the two DeepSeek R1 0528 samples of run_005_imported, for a seed-0 sample of prompts of batches 000–021 whose responses are complete in both imported runs | run_000: Claude Fable 5.1, effort max, via Message Batches; 1,516 judgments |
-| `qwen397b_imported` | 1,530 | the two Qwen3.5-397B-A17B samples of run_004_imported, for the same 1,530 prompts | run_001: Claude Fable 5.1, effort max, via Message Batches; 1,515 judgments |
+| `r1_imported` | 4,100 | the two DeepSeek R1 0528 samples of run_005_imported, for a seed-0 sample of prompts of batches 000–021 whose responses are complete in both imported runs | run_000: Claude Fable 5.1, effort max, via Message Batches; 4,065 judgments |
+| `qwen397b_imported` | 4,100 | the two Qwen3.5-397B-A17B samples of run_004_imported, for the same 4,100 prompts | run_001: Claude Fable 5.1, effort max, via Message Batches; 4,068 judgments |
 
-Both sets were drawn as 500 prompts and grown to 1,530 in two steps by re-running the
+Both sets were drawn as 500 prompts and grown to 4,100 in three steps by re-running the
 tool with a larger sample, which continues the same seeded walk and leaves the earlier
 pairs unchanged. The API blocked the judge's output ("Output blocked by content
-filtering policy") on every attempt for 14 and 15 pairs, nine of them the same prompts
-in both runs; these are listed under `given_up` in each `run.yaml`. The judge shows a
-clear position bias in both runs, preferring the response shown second in about 61% of
-the decided pairs although the order is a coin flip; see `QUALITY_NOTES.md`.
+filtering policy") on every attempt for 34 and 30 pairs, 19 of them the same prompts in
+both runs; these are listed under `given_up` in each `run.yaml`. The judge shows a clear
+position bias in both runs, preferring the response shown second in about 60% of the
+decided pairs although the order is a coin flip; and for most judgments of the third
+extension the API returned no thinking summary (`thinking: null`), although the
+judgment text and verdict are complete; see `QUALITY_NOTES.md`.
 
 ## Quality control and known limitations
 
@@ -350,7 +352,7 @@ python tools/check_run.py responses/run_000
 
 # preference pairs: fix the pairs, judge them with a Claude model, check the run
 python tools/make_pair_set.py preferences/pairs/r1_imported.yaml --runs responses/run_005_imported \
-    --complete-in responses/run_004_imported --sample 1530 --seed 0
+    --complete-in responses/run_004_imported --sample 4100 --seed 0
 python generators/judge_pairs.py --pairs preferences/pairs/r1_imported.yaml --api batches --prices 5,25
 python tools/check_preferences.py preferences/run_000
 ```
