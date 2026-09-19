@@ -55,6 +55,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 044 | Inkling (OpenRouter, BaseTen) | 20,000 | 1.6% | 9.8% | 10.6% / 3.1% | classroom-activity example 0, 43; exam-question example 0, 28 |
 | 045 | HY4 preview (OpenRouter, Tencent) | 20,000 | 3.8% | 18.3% | 6.4% / 3.3% | procedure example 0, 161; classroom-activity example 0, 152 |
 | 047 | Kimi K3 (OpenRouter, BaseTen) | 1,000 | 1.8% | 14.1% | 8.6% / 1.5% | classroom-activity example 0, 7 |
+| 049 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 1,000 | 5.1% | 19.9% | 16.0% / 7.0% | classroom-activity example 0, 12; procedure example 0, 9 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -412,6 +413,16 @@ answer, as with the other runs.
   regenerated prompts came in. Median 413 words; heavy echo 1.8%; two pairs share a
   long quotation (Nietzsche's preface to the Genealogy), the pattern of batches 041
   and 045.
+- Test batch 049 (DeepSeek V4 Pro 0813, MIT), 1,000 prompts on 2026-09-19 at reasoning
+  effort high with the web tools, fp8 endpoints only with Baidu first (Io Net and
+  GMICloud excluded, as for V4.1 Flash): $17 per 1,000 prompts (mean 9,600 input and
+  7,400 output tokens; 0.7 searches and 0.4 fetches per prompt, far more tool use than
+  K3), about 500 prompts an hour at concurrency 48 with four transient connection
+  errors and no rate limiting or abandonments. Median 332 words. The echo profile is
+  that of the earlier DeepSeek batches rather than of Inkling or K3: heavy echo 5.1%,
+  output-format instruction copied in 16% of the prompts that drew one, epistemic
+  request in 7%; four pairs share 20 or more eight-word phrases, three of them real
+  quotations (Darwin, Douglass, Hume) fetched by both prompts.
 
 ## Preference pairs
 
