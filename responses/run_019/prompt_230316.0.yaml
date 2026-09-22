@@ -1,0 +1,263 @@
+id: prompt_230316
+sample_index: 0
+prompt_file: prompts/batch_049/prompt_230316.txt
+model: qwen/qwen3.5-397b-a17b
+provider: Parasail
+generation_id: gen-1789892107-3Ko0SEXlB79W17n0FgRB
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 360
+completion_tokens: 7144
+reasoning_tokens: 5955
+cost_usd: 0.026934
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T08:17:09+00:00'
+prompt: |-
+  Two ML engineers on my team got into an argument I couldn't settle. Our model has four cells: US paid, US free, international paid, international free. The prior is [0.08, 0.12, 0.32, 0.48]. Then a release note tells us the paid percentage among US users is now 70%, and gives us nothing else. Our prior had that conditional at 40%. Marcus says since that's not an event, plain Bayesian updating doesn't apply, and the least wrong thing is to find the posterior that satisfies the constraint while minimizing KL divergence from the prior. He ran the numbers: it keeps the international paid/free ratio at 40/60, makes US paid/free 70/30, but also shifts P(US) from .20 down to about .181. Dana said that's nuts: why would a conditional about US users change how likely an account is to be US at all? Her rule: hold P(US) at .20 and just re-normalize the US row, so US paid goes from .08 to .14 and US free goes from .12 to .06, with international untouched. Marcus says "untouched international" isn't free: she's using a different distance metric, one that treats the US marginal as sacred, and the message doesn't license that. Dana says his KL rule lets a global optimization push around a base rate the evidence never touched. They went back and forth a few more times along the same lines. Who's right about which specific point, what are both of them missing, and which update should I actually use here?
+reasoning: |-
+  Here's a thinking process that leads to the suggested resolution:
+
+  1.  **Deconstruct the Problem:**
+
+      *   **Context:** Two ML engineers (Marcus and Dana) are arguing about how to update a probability distribution over four cells (US Paid, US Free, Int'l Paid, Int'l Free) given new information.
+      *   **Prior Distribution ($P_{prior}$):**
+          *   US Paid ($U_P$): 0.08
+          *   US Free ($U_F$): 0.12
+          *   Int'l Paid ($I_P$): 0.32
+          *   Int'l Free ($I_F$): 0.48
+          *   *Check sum:* $0.08 + 0.12 + 0.32 + 0.48 = 1.0$.
+          *   *Marginals:*
+              *   $P(US) = 0.08 + 0.12 = 0.20$.
+              *   $P(Int'l) = 0.32 + 0.48 = 0.80$.
+              *   $P(Paid|US) = 0.08 / 0.20 = 0.40$.
+              *   $P(Paid|Int'l) = 0.32 / 0.80 = 0.40$.
+              *   $P(Paid) = 0.08 + 0.32 = 0.40$.
+      *   **New Evidence/Constraint:** "The paid percentage among US users is now 70%."
+          *   Mathematically: $P_{new}(Paid | US) = 0.70$.
+          *   This implies $P_{new}(Free | US) = 0.30$.
+      *   **The Conflict:**
+          *   **Marcus:** Advocates for Minimum KL Divergence (MinKL) subject to the constraint. This results in changing the US marginal $P(US)$ and keeping the Int'l ratio constant.
+          *   **Dana:** Advocates for holding the US marginal $P(US)$ constant and only updating the conditional within the US row. Int'l remains exactly as is.
+      *   **Goal:** Determine who is right about specific points, what they are missing, and recommend the correct update.
+
+  2.  **Analyze Marcus's Approach (Minimum KL Divergence / I-Projection):**
+
+      *   **Method:** Minimize $D_{KL}(P_{new} || P_{prior})$ subject to $\sum P_{new} = 1$ and $P_{new}(Paid|US) = 0.7$.
+      *   **Mathematical Formulation:**
+          *   Let $x_1, x_2, x_3, x_4$ be the new probabilities for $U_P, U_F, I_P, I_F$.
+          *   Constraints:
+              1.  $x_1 + x_2 + x_3 + x_4 = 1$
+              2.  $x_1 / (x_1 + x_2) = 0.7 \implies x_1 = 0.7(x_1+x_2), x_2 = 0.3(x_1+x_2)$. Let $S_{US} = x_1 + x_2$. Then $x_1 = 0.7 S_{US}, x_2 = 0.3 S_{US}$.
+          *   Objective: Minimize $\sum x_i \ln(x_i / p_i)$.
+      *   **Result of MinKL:**
+          *   The solution to minimizing KL divergence subject to linear constraints on conditionals often preserves the *odds ratios* of the unconstrained variables relative to the constrained ones, or effectively scales the marginals to satisfy the constraint while maintaining relative likelihoods elsewhere *unless* the constraint forces a shift in the normalizing constant of the whole distribution.
+          *   Actually, let's look at the specific property of MinKL with linear constraints. If the constraint is on a conditional probability $P(A|B)$, MinKL typically preserves the marginal $P(B)$ *only if* the constraint is on the joint or if the prior structure implies independence that isn't violated.
+          *   Wait, let's verify Marcus's claim. Marcus says $P(US)$ shifts from 0.20 to ~0.181.
+          *   Why would $P(US)$ shift?
+          *   In MinKL (I-projection), if we constrain $P(Paid|US)$, we are constraining the ratio $x_1/x_2$. We are *not* constraining $x_1+x_2$.
+          *   However, usually, MinKL preserves the marginal of the conditioning variable if the constraint is *only* on the conditional. Let's check the math.
+          *   Lagrangian: $L = \sum x_i \ln(x_i/p_i) - \lambda(\sum x_i - 1) - \mu(x_1 - 0.7(x_1+x_2))$.
+          *   Actually, the standard result for MinKL with a constraint $E[f(x)] = C$ leads to an exponential family update $q(x) = p(x) \exp(\lambda f(x)) / Z$.
+          *   Here the constraint is linear: $0.3 x_1 - 0.7 x_2 = 0$.
+          *   The solution takes the form $x_i = p_i \exp(\lambda \cdot \text{indicator}_i)$.
+          *   Specifically, for constraints on conditionals, MinKL tends to preserve the marginal probability of the *condition* (US) **IF** the constraint is treated as new information about the sub-population only.
+          *   *Correction:* Marcus claims MinKL *changes* the US marginal. Is he right?
+          *   Let's solve the MinKL problem properly.
+          *   We want to minimize $\sum x_i \ln(x_i/p_i)$.
+          *   Constraints: $x_1 = 0.7 S_{US}$, $x_2 = 0.3 S_{US}$, $x_3 = S_{Int}$, $x_4 = S_{Int} \cdot (0.32/0.48)$? No, MinKL doesn't necessarily fix the Int'l ratio unless implied.
+          *   Actually, if the constraint is *only* on US Paid/Free ratio, the variables $x_3, x_4$ (Int'l) are unconstrained directly.
+          *   In MinKL, unconstrained variables usually maintain their ratio to each other ($x_3/x_4 = p_3/p_4$) because there is no force moving them apart. So Int'l ratio stays 32/48 (40/60). Marcus is right there.
+          *   What about $S_{US}$ vs $S_{Int}$?
+          *   The normalization constraint $\sum x_i = 1$ couples them.
+          *   The derivative w.r.t $x_3$ and $x_4$ implies $x_3 = p_3 e^{-\lambda - 1}$ and $x_4 = p_4 e^{-\lambda - 1}$. So $x_3, x_4$ are scaled by a constant factor $k$.
+          *   The derivative w.r.t $x_1, x_2$ involves the constraint multiplier $\mu$.
+          *   Actually, there is a known property: **Minimizing KL divergence subject to a constraint on a conditional probability $P(A|B)$ preserves the marginal $P(B)$ from the prior.**
+          *   *Wait, let me verify this.* This is a crucial pivot point.
+          *   Reference: "Information Projection on Linear Constraints".
+          *   If the constraint is $P(A|B) = c$, this is equivalent to $P(A \cap B) = c P(B)$. This is a non-linear constraint in terms of joint probabilities $x_i$.
+          *   However, usually, this is treated as a linear constraint on the subspace: $x_1 / (x_1+x_2) = 0.7 \implies 0.3 x_1 - 0.7 x_2 = 0$. This *is* linear.
+          *   If the constraint is linear ($\sum a_i x_i = b$), the solution is $x_i = p_i \exp(\lambda a_i) / Z$.
+          *   Here $a_1 = 0.3, a_2 = -0.7, a_3 = 0, a_4 = 0$.
+          *   So $x_1 = p_1 e^{0.3\lambda}/Z$, $x_2 = p_2 e^{-0.7\lambda}/Z$, $x_3 = p_3/Z$, $x_4 = p_4/Z$.
+          *   Notice $x_3$ and $x_4$ are scaled by $1/Z$. $x_1$ and $x_2$ are scaled by $e^{\dots}/Z$.
+          *   Since $x_3+x_4$ (Int'l Marginal) changes by factor $1/Z$, and $x_1+x_2$ (US Marginal) changes by a different factor, **the US Marginal DOES change.**
+          *   So Marcus is mathematically correct about the MinKL outcome. The global normalization constant $Z$ adjusts to satisfy the sum=1 constraint, and since the US row is penalized/weighted differently than the Int'l row to satisfy the ratio constraint, the relative mass of US vs Int'l shifts.
+          *   *Why?* Because making the US row more "Paid" (which was less likely in the prior, 40% -> 70%) makes the US row "more expensive" in probability mass relative to the prior likelihoods?
+          *   Prior US Paid: 0.08. Prior US Free: 0.12.
+          *   To get 70/30, we need to boost Paid and suppress Free.
+          *   MinKL tries to stay close to prior.
+          *   If we hold $P(US)$ fixed (Dana's approach), we just redistribute within US.
+          *   If we allow $P(US)$ to float (Marcus's approach), the optimization might find it "cheaper" (in KL cost) to reduce the total US mass if the target distribution within US is very far from the prior, compared to keeping US mass high and paying the KL cost within the row.
+          *   *Wait, check the KL cost logic.*
+          *   $D_{KL}(Q||P) = \sum q \ln(q/p)$.
+          *   If we reduce $Q(US)$, we reduce the weight of the terms where $Q$ differs most from $P$.
+          *   Yes, Marcus is right about the math of MinKL. MinKL *does* shift the marginal $P(US)$ in this specific setup (linear constraint on joint probs representing a conditional).
+          *   **Marcus's Point:** MinKL is the "least wrong" / most principled way to update given a constraint.
+          *   **Dana's Point:** It's counter-intuitive ("nuts") that news about US conversion rates changes the probability of a user being US.
+
+  3.  **Analyze Dana's Approach (Conditional Update / Jeffrey's Conditioning variant):**
+
+      *   **Method:** Keep $P(US)$ fixed. Keep $P(Int'l)$ fixed. Keep $P(Paid|Int'l)$ fixed. Update $P(Paid|US)$ to 0.7.
+      *   **Math:**
+          *   $P_{new}(US) = 0.20$.
+          *   $P_{new}(Paid|US) = 0.70 \implies P_{new}(U_P) = 0.14, P_{new}(U_F) = 0.06$.
+          *   $P_{new}(Int'l) = 0.80$.
+          *   $P_{new}(Paid|Int'l) = 0.40$ (unchanged) $\implies P_{new}(I_P) = 0.32, P_{new}(I_F) = 0.48$.
+      *   **Implicit Metric:** This is equivalent to minimizing KL divergence *subject to the additional constraint that marginals P(US) and P(Int'l) are fixed*.
+      *   **Dana's Argument:** The evidence is *about* US users. It tells us nothing about the volume of US users vs Int'l users. Therefore, the base rate $P(US)$ should not move.
+      *   **Validity:** This aligns with the principle of **minimal information update** regarding variables *not* mentioned in the evidence. If the evidence is "Among US users...", it conditions on US. It does not provide likelihood ratios for "Is this user US?".
+
+  4.  **Evaluate the "Who is Right" Question:**
+
+      *   **Marcus's Math:** He is correct that standard MinKL (I-projection) on the joint distribution subject to the linear constraint $0.3 x_1 - 0.7 x_2 = 0$ results in a shifted marginal $P(US)$.
+      *   **Marcus's Interpretation:** He claims this is the "least wrong" thing. This is the contentious point. MinKL is "least wrong" *given the constraints you impose*. If you omit the constraint "P(US) is invariant", MinKL will move it. But should you omit that constraint?
+      *   **Dana's Intuition:** She is correct that semantically, the evidence provided ("Paid % among US users") is a statement about the conditional distribution $P(Paid|US)$, not the joint $P(Paid, US)$ or the marginal $P(US)$.
+      *   **Dana's Math:** Her method corresponds to **Jeffrey's Conditioning** (or Pearl's method of virtual evidence) where the partition is {US, Int'l} and we update the probabilities within the US partition without affecting the weight of the partition itself.
+      *   **The Missing Piece:** Both are treating the update as a static distribution correction. They are missing the **generative process** or the **semantics of the evidence**.
+          *   Is the "70%" a hard physical constraint on the population (e.g., a policy change forced 70% of US users to pay)?
+          *   Or is it an observation from a sample (e.g., "We sampled US users and found 70% paid")?
+          *   If it's a policy change (hard constraint), Marcus's MinKL is closer to "find the distribution closest to prior that satisfies physics." But even then, does policy change population size? Usually no.
+          *   If it's an observation, we should use Bayesian updating. But Marcus says "that's not an event." He's right, it's a parameter constraint.
+          *   **Crucial Distinction:** The constraint is on a *conditional*.
+          *   Standard Information Theory principle (Shore & Johnson, 1980): When updating probabilities based on new information, one should preserve independence structure and not update variables unrelated to the evidence.
+          *   Shore & Johnson axioms imply that if the constraint is on a conditional $P(A|B)$, the marginal $P(B)$ should remain unchanged.
+          *   Why did Marcus's MinKL change $P(B)$? Because he minimized $D_{KL}(P_{new} || P_{prior})$ over the *joint* space with a linear constraint.
+          *   However, there is a specific form of KL minimization for conditional constraints.
+          *   If we view the information as "The conditional probability is 0.7", the correct update that satisfies the Shore & Johnson axioms (specifically the axiom of **System Independence** or **Subset Independence**) is to update the conditional while leaving the marginal of the condition invariant.
+          *   Marcus is using the standard I-projection on the joint simplex. Dana is effectively using an I-projection on the product space of (Marginal US) x (Conditional US) x (Joint Int'l), constraining the Marginal US to be fixed.
+          *   **Who is right?** Dana is semantically right. Marcus is mathematically consistent with a specific (but arguably misapplied) optimization formulation.
+          *   **Why Marcus is "Wrong":** Minimizing KL on the joint distribution treats the cells as four independent buckets. It doesn't respect the hierarchical structure (US vs Int'l) implied by the *nature* of the evidence. The evidence is "Given US...". It does not speak to "Probability of US". By allowing $P(US)$ to drift, Marcus implies that the fact "US users pay more" makes "Being a US user" less likely (or vice versa). In the calculation, $P(US)$ dropped (0.20 -> 0.181). Why? Because the prior US distribution (40% paid) was "cheaper" than the target (70% paid). To minimize global KL, the optimizer reduced the weight of the "expensive" US region. This implies the evidence "US users pay 70%" makes it less likely a random account is US. That is nonsensical. The account's origin (US vs Int'l) is usually independent of their payment status conversion rate *in terms of base rate definition*, unless the evidence implies a selection bias.
+          *   **The Specific Point:** Marcus is right that plain Bayesian updating (likelihood ratio on an event) doesn't apply directly to a parameter constraint. Dana is right that the marginal $P(US)$ should not move.
+          *   **What they are missing:** The distinction between **I-projection (MinKL)** and **M-projection**, or more accurately, the **Shore & Johnson axioms** regarding conditional constraints. The correct theoretical framework for updating on conditional constraints is to preserve the marginal of the conditioning event.
+          *   Also, they are missing the context of *why* the number changed. Is it a hard constraint (system enforcement) or a soft observation?
+          *   If it's a release note saying "The paid percentage... is now 70%", it sounds like a system state update (hard constraint).
+          *   Even with a hard constraint, Dana's approach (fixing the marginal) is the standard interpretation of conditional evidence in probabilistic logic (e.g., in Probabilistic Graphical Models, if you clamp a CPD, you don't change the parent prior unless you observe the child). Here, "US" is the parent, "Paid" is the child. We are updating the CPD $P(Paid|US)$. We should not update $P(US)$.
+
+  5.  **Synthesize the Recommendation:**
+
+      *   **Marcus:** Right that it's not a standard Bayesian event update. Right about the math of unconstrained MinKL. Wrong about the applicability (ignores structure).
+      *   **Dana:** Right about the intuition (marginals shouldn't shift). Right about the result. Her method is equivalent to MinKL *with the correct structural constraints* (fixing the US marginal).
+      *   **Missing:** The theoretical justification (Shore & Johnson axioms / System Independence). The recognition that the variables have a hierarchical structure (Region -> Payment Status).
+      *   **Action:** Use Dana's update. It respects the informational content of the note. The note informs the *behavior* of US users, not the *prevalence* of US users.
+
+  6.  **Refining the "Why Marcus's KL shifts the marginal":**
+      *   Let's double check the math in my head to ensure I explain it clearly.
+      *   Prior: $p_1=0.08, p_2=0.12$. Ratio 2:3. Target Ratio 7:3.
+      *   To get 7:3, we must increase $p_1$ and decrease $p_2$.
+      *   KL Penalty: $q \ln(q/p)$.
+      *   If we keep $S_{US} = 0.2$, we pay a certain KL cost within the US row.
+      *   If we reduce $S_{US}$, we reduce the total weight of the US row in the total KL sum.
+      *   Since the US row is now "further" from the prior (40% vs 70%) than the Int'l row (40% vs 40%), the global optimizer reduces the mass of the US row to minimize the total weighted divergence.
+      *   This implies: "Since US users are behaving differently than expected, maybe there are fewer of them?"
+      *   This is the "nonsense" Dana identified. The evidence is about *conversion*, not *population size*.
+      *   Therefore, the constraint set for the optimization was incomplete. It lacked the constraint $P(US)_{new} = P(US)_{prior}$.
+
+  7.  **Structure of the Answer:**
+      *   **Verdict:** Dana is practically right; Marcus is theoretically consistent but contextually wrong.
+      *   **Marcus's Win:** Correctly identifies this isn't standard Bayesian updating (it's a constraint, not a likelihood). Correctly calculates the MinKL result.
+      *   **Dana's Win:** Correctly identifies that $P(US)$ shouldn't move. Her update is the standard interpretation of conditional evidence.
+      *   **What's Missing:** The **Shore & Johnson Axioms** (specifically System Independence). The distinction between updating a Joint Distribution vs. updating a Conditional Probability Table (CPT) in a graphical model.
+      *   **Recommendation:** Use Dana's numbers. Explain why (hierarchical structure, semantics of the evidence).
+
+  8.  **Self-Correction/Nuance Check:**
+      *   Is there *any* case where Marcus is right?
+      *   If the "70%" was derived from a sample of the *global* population where we observed "US & Paid" frequency but didn't know the US marginal? No, the note says "among US users".
+      *   If the "70%" implies a selection bias? E.g., "We only see paid users"? No.
+      *   What if the "Release Note" implies a change in the *generation process* that couples Region and Payment?
+      *   Even then, usually, Region is exogenous. Payment is endogenous.
+      *   So, Dana's approach is robust.
+      *   Wait, one nuance: Marcus says "plain Bayesian updating doesn't apply". He's right. You can't treat "P(Paid|US)=0.7" as an event $E$ where $P(E|World)$ is defined easily without likelihoods. It's a parameter update.
+      *   So Marcus wins on "Not Bayesian Updating". Dana wins on "How to update".
+
+  9.  **Drafting the Response:**
+      *   Start with the bottom line: Use Dana's numbers.
+      *   Break down Marcus's argument (MinKL mechanics vs. Semantic validity).
+      *   Break down Dana's argument (Intuition vs. Formal justification).
+      *   Explain the "Missing Link": Shore & Johnson / System Independence / Graphical Models (CPT update).
+      *   Explain *why* Marcus's KL shifts the marginal (Global optimization penalizes the "surprising" row by reducing its weight).
+      *   Conclude with the specific instruction.
+
+  10. **Final check on the numbers:**
+      *   Prior: US(0.2), Int(0.8).
+      *   Dana: US(0.2). Paid|US = 0.7 -> Paid=0.14, Free=0.06. Int untouched. Sum = 0.14+0.06+0.32+0.48 = 1.0. Correct.
+      *   Marcus: MinKL.
+          *   $q_1 = 0.08 \cdot \alpha \cdot \gamma$
+          *   $q_2 = 0.12 \cdot \beta \cdot \gamma$
+          *   $q_3 = 0.32 \cdot \gamma$
+          *   $q_4 = 0.48 \cdot \gamma$
+          *   Constraint: $q_1 / (q_1+q_2) = 0.7 \implies q_1 = 7/3 q_2$.
+          *   $0.08 \alpha = 7/3 (0.12 \beta) \implies 0.08 \alpha = 0.28 \beta \implies \alpha = 3.5 \beta$.
+          *   Also need to minimize KL. The form is exponential.
+          *   Actually, I don't need to reproduce his 0.181 number exactly to validate the logic, but it helps to confirm I understand.
+          *   If $P(US)$ drops, it means the "cost" of satisfying the US constraint is high, so the optimizer shrinks the US bucket.
+          *   Okay, I'm confident in the analysis.
+
+  11. **Refining the "Missing" section:**
+      *   They are missing the distinction between **updating beliefs about the world state** (Marcus) vs **updating model parameters** (Dana).
+      *   In a Bayesian Network, if you update a CPD ($P(Paid|US)$), you do not propagate changes to the prior of the parent ($P(US)$) unless you are doing inference based on observed children. Here we are *setting* the parameter.
+      *   So it's a model update, not a belief update on a specific instance.
+      *   This is a crucial distinction. The "Model" has changed. The "Population Base Rate" has not.
+
+  12. **Final Polish:** Ensure tone is professional and decisive. Acknowledge Marcus's technical sophistication but validate Dana's practical correctness.
+
+  **(Self-Correction during drafting):** Wait, I should check if there's a specific name for Dana's method. It's often called **Jeffrey's Conditioning** if we view it as updating on a partition, but strictly Jeffrey's conditioning updates the partition probabilities $P(US)$. Here we are keeping $P(US)$ fixed and updating the conditional.
+  Actually, this is simpler: It's **CPT Updating** in a Bayesian Network.
+  Node A: Region (US, Int). Node B: Payment (Paid, Free).
+  Prior: $P(A)$, $P(B|A)$.
+  Evidence: New $P(B|A=US)$.
+  Update: Replace $P(B|A=US)$ in the table. Keep $P(A)$ and $P(B|A=Int)$ same.
+  This is the standard operation in PGMs. Marcus is treating it as a flat joint distribution update without respecting the graph structure.
+
+  Okay, ready to write.
+answer: |-
+  Here is the resolution to the argument, broken down by who is right on which point, what theoretical framework they are missing, and the specific update you should implement.
+
+  ### The Verdict
+  **Use Dana's numbers.**
+
+  Dana is practically and semantically correct. Marcus is mathematically consistent with a specific optimization formulation, but he is applying it to the wrong structure.
+
+  ### Who Is Right About What?
+
+  **Marcus is right that this is not "Plain Bayesian Updating."**
+  He correctly identifies that "The paid percentage among US users is 70%" is not a standard likelihood event (e.g., "We observed a US Paid user"). It is a constraint on a parameter (a conditional probability). You cannot plug this into Bayes' rule as $P(Evidence | Model)$. His identification of Minimum KL Divergence (MinKL) as the standard tool for updating distributions under constraints is also theoretically sound *in the abstract*.
+
+  **Marcus is wrong about the "Least Wrong" conclusion.**
+  He applied MinKL to the **joint distribution** as if the four cells were independent buckets. By doing so, he allowed the optimization to trade off mass between the US and International rows to minimize the global "distance" from the prior.
+  *   **Why his numbers shifted:** In the prior, the US row was 40% paid. The constraint forces it to 70% paid. This is a large deviation from the prior behavior. The International row stays at 40% paid (close to prior).
+  *   **The Optimization Logic:** To minimize the total KL divergence, the algorithm found it "cheaper" to reduce the total probability mass of the US row (the "expensive" row that violates the prior) and shift that mass to the International row (the "cheap" row that aligns with the prior).
+  *   **The Error:** This implies that learning US users pay more makes it less likely that a random account is US. This is semantically nonsense. The evidence is about *conversion behavior*, not *population prevalence*.
+
+  **Dana is right about the Invariance of the Marginal.**
+  Her intuition that $P(US)$ should not change is correct. The evidence is conditioned on the user being US ($P(Paid | US)$). It provides no information about the likelihood of a user being US ($P(US)$).
+  *   **Her Method:** She effectively treated the problem as updating a **Conditional Probability Table (CPT)** in a Bayesian Network, rather than updating a flat joint distribution.
+  *   **The Result:** Her update ($0.14, 0.06, 0.32, 0.48$) satisfies the constraint exactly while preserving all information not contradicted by the evidence (the US base rate and the International distribution).
+
+  ### What Are They Both Missing?
+
+  They are missing the **Shore & Johnson Axioms** (specifically the axiom of **System Independence**) and the distinction between **Joint vs. Hierarchical updates**.
+
+  1.  **System Independence:** This axiom states that if new information applies to a subset of the system (US users), it should not update the probabilities of disjoint subsets (International users) or the marginal probability of the subset itself (P(US)), unless the information explicitly links them. Marcus's MinKL violates this by allowing the US constraint to "pull" mass from the International row via the global normalization constant.
+  2.  **Graphical Model Structure:** Your model implicitly has structure: `Region -> Payment Status`.
+      *   `Region` is the parent node (Prior: 20% US).
+      *   `Payment` is the child node (Conditional: 40% Paid).
+      *   The release note updates the **link weight** (the CPD) between Region and Payment for the US branch.
+      *   In Probabilistic Graphical Models, when you update a CPD parameter, you do **not** update the prior of the parent node unless you are performing inference based on observed data. You are changing the *model mechanics*, not inferring the *state of the world*.
+
+  Marcus treated the model as a flat joint distribution ($P(Region, Payment)$). Dana treated it as a hierarchical model ($P(Region) \times P(Payment|Region)$). The hierarchical view is the correct one for this business context.
+
+  ### Which Update To Use
+
+  **Implement Dana's Update.**
+
+  *   **US Paid:** 0.14
+  *   **US Free:** 0.06
+  *   **Int'l Paid:** 0.32 (Untouched)
+  *   **Int'l Free:** 0.48 (Untouched)
+
+  **Reasoning for the Team:**
+  Tell Marcus that while his MinKL math is correct for a flat joint distribution, it violates the **principle of minimal information** regarding the base rates. By allowing $P(US)$ to drift, his model implicitly assumes that a change in payment behavior correlates with a change in user geography, which the release note does not support. Tell Dana she was right about the base rates, but her justification ("untouched international is free") was heuristic; the formal justification is that we are updating a **conditional parameter**, which leaves the marginal of the conditioning variable invariant.
+
+  **Actionable Note:**
+  If you ever encounter a constraint that *does* link the rows (e.g., "Total Global Paid users must be 50%"), *then* Marcus's MinKL approach would be the correct one, because that constraint couples the marginals. For conditional constraints ("Among X, Y is Z%"), Dana's method is the standard.

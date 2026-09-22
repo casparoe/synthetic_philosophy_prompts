@@ -181,6 +181,8 @@ Runs so far:
 | run_014 | DeepSeek R1 0528 (MIT) | `r1_gap` | 14,298 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
 | run_015 | Qwen3.5-397B-A17B (Apache 2.0) | `qwen397b_gap` | 98,298 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 57 truncated |
 | run_017 | DeepSeek R1 0528 (MIT) | `batch_045` | 40,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
+| run_018 | DeepSeek R1 0528 (MIT) | `batches_042-044_047_049` | 48,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
+| run_019 | Qwen3.5-397B-A17B (Apache 2.0) | `batches_047_049` | 4,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, Parasail, GMICloud; two independent samples per prompt; 7 truncated |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -200,12 +202,20 @@ R1, so that, as for batches 000–021, two independent R1 samples exist for them
 prompt of batches 000–041 now has at least one R1 response.
 Set `batch_045` lists the 20,000 prompts of batch 045; run 017 answered them twice with
 R1, so batch 045 too has two R1 samples per prompt.
+Set `batches_042-044_047_049` lists the 24,000 prompts of the Inkling and HY4 batches
+042–044 and of the test batches 047 and 049; run 018 answered them twice with R1, so
+every prompt of batches 000–045, 047, and 049 has an R1 response, and all but the
+prompts of batches 033, 035, 038, and 041 and the `open_1k` prompts (which keep their
+single run 003 response) have two.
 Set `qwen397b_gap` lists the 49,149 prompts of batches 022–045 that had no
 Qwen3.5-397B-A17B response after runs 007–012 (42,000 of them in the Inkling and HY4
 batches 042–045); run 015 answered them twice with Qwen. Every prompt of batches
 000–045 now has at least one Qwen3.5-397B-A17B response, and all but the prompts of
 batches 033, 035, 038, and 041 and the `open_1k` prompts (which keep their single
 run 000 response) have two.
+Set `batches_047_049` lists the 2,000 prompts of the test batches 047 and 049; run 019
+answered them twice with Qwen3.5-397B-A17B, so the same holds for batches 000–045, 047,
+and 049.
 
 **Imported runs.** The two runs whose directory names end in `_imported` were not
 produced by `generate_responses.py`. They are the teacher-data collections of the

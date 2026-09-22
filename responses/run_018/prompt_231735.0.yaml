@@ -1,0 +1,304 @@
+id: prompt_231735
+sample_index: 0
+prompt_file: prompts/batch_049/prompt_231735.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1790062387-ihPWIEscZrgLvpo4xi9j
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 595
+completion_tokens: 6524
+reasoning_tokens: 4021
+cost_usd: 0.015101
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-22T07:38:28+00:00'
+prompt: |-
+  I'm a philosophy professor, and for the last year I've been attached as the logic person to a small group that does pre-deployment safety reviews for AI systems. A recurring problem: the reviewers keep having to put a probability on claims that are deterministic but unsettled — "this program satisfies its spec on every input", "this protocol has no exploit a bounded attacker would find in a week", "this lemma in the safety case actually follows from the axioms we coded." Right now they make up numbers, or treat the claims like weather forecasts, and nobody can reconstruct the number afterward. Standard Bayesianism is no help here: a logically omniscient agent already assigns probability 1 or 0 to every theorem of arithmetic, and my reviewers are not logically omniscient. I know the logical-induction program is aimed at exactly this — finite reasoners that assign sensible credences to every sentence of a formal language, including sentences whose truth is just a matter of proof, that don't lose too badly to any computably specified bookie (any mechanical betting strategy trying to exploit their incoherence), and that creep toward the truth as they get more compute. But I've never managed to turn it into something an engineer would run.
+
+  So turn that idea into a reusable procedure a safety reviewer with an engineering background can actually run. They have about two hours per claim. They can gather bounded evidence — run a static analyzer or a solver for some fixed time, ask one or two domain experts, look at how similar claims resolved in the past — but they cant settle the claim, or it wouldn't be asked. The reviewers will ignore anything that reads like a philosophy lecture, so the theory has to show up as questions, steps, and cutoffs. The principle I want preserved is that unresolved logical claims get treated under much the same norms as empirical uncertainty, with the extra twist that running a computation is itself a form of evidence the procedure can buy by the minute. The procedure should output a credence, a "where should the next hour of checking go" reccomendation, and a stop condition for when to just report the number instead of gathering more evidence. It should also mark every step that is really a judgment call dressed up as a calculation. Please include one worked case where the procedure's answer will annoy the reviewer — say, a tempting informal upper bound on exploit likelihood that the procedure tells them not to round up to 0.999. Use these sections, in this order: (1) The procedure, numbered and runnable, about 500 words; (2) Plain-language rationale for each step, about 500 words; (3) Three worked applications — the spec claim, the exploit claim, and the lemma in the safety proof — about 650 words; (4) Failure modes, where the numbers go wrong, and what to hand back to a human, about 350 words.
+reasoning: |-
+  We are designing a procedure for safety reviewers to assign probabilities to deterministic but unsettled claims. The core idea is inspired by logical induction: we treat logical uncertainty as similar to empirical uncertainty, and we allow the reviewer to gather bounded evidence (running tools, consulting experts, etc.) without settling the claim. The procedure should output a credence, a recommendation for further checking, and a stop condition. We'll also mark steps that involve judgment calls.
+
+  We'll structure the procedure in steps that the reviewer can follow. The key elements are:
+  1. **Initialization**: Start with a base rate or prior probability.
+  2. **Evidence Gathering**: Define bounded ways to gather evidence (e.g., run a static analyzer for 5 minutes, ask one expert).
+  3. **Updating**: Adjust the probability based on the evidence gathered.
+  4. **Resource Allocation**: Decide where to allocate the next hour (if any) based on potential reduction in uncertainty.
+  5. **Stopping Condition**: Decide when to stop gathering evidence and report.
+
+  However, note that logical induction is complex and not directly implementable in two hours. We need a simplified, heuristic procedure that captures the spirit.
+
+  **The Procedure (about 500 words):**
+
+  1. **Define the Claim and Base Rate (5 minutes):**
+     - Write the claim clearly in a formal or semi-formal language.
+     - Assign an initial probability (P_initial) based on the base rate of similar claims in your historical records. If no history, use:
+       - For universally quantified claims (like "satisfies spec on every input"), start at 0.7.
+       - For existential claims (like "there exists an exploit"), start at 0.3.
+       - For lemmas in safety proofs, start at 0.8 if it's a minor step, 0.6 if it's a major gap.
+     - *Judgment call: Choosing the base rate when lacking data.*
+
+  2. **List Evidence Channels (10 minutes):**
+     - Identify up to 3 evidence channels (e.g., static analysis, expert opinion, solver run). For each channel, note:
+       - **Type**: Tool (T), Expert (E), or Historical (H).
+       - **Cost**: Time in minutes to run/gather (e.g., static analysis: 5 min, expert: 15 min, solver: 10 min).
+       - **Strength**: A multiplier between 0.1 and 2.0 representing how informative the channel is for this claim (judgment call). Defaults: T: 1.0, E: 1.5, H: 0.8.
+
+  3. **Gather Initial Evidence (30 minutes):**
+     - Allocate your first 30 minutes to gather evidence from the channels. Choose the channel with the highest expected information per minute (Strength / Cost). Break ties by starting with the cheapest.
+     - For each channel:
+       - **Tool (T)**: Run the tool for the allotted time. Record the outcome (e.g., "found no counterexample", "error in line 10", "timeout"). Convert the outcome to an evidence score (E_score) between -1 (strong against) and +1 (strong for) the claim. Use:
+          - If the tool confirms the claim (e.g., a prover returns "valid"): +1.
+          - If the tool refutes the claim (e.g., finds a counterexample): -1.
+          - If the tool returns "unknown" or times out: 0.
+          - If the tool returns a warning or error: -0.5.
+          - *Judgment call: Interpreting tool output.*
+       - **Expert (E)**: Ask one expert: "On a scale from 1 (very unlikely) to 5 (very likely), how likely is the claim?" Convert to E_score: (rating-3)/2.0 (so 1 -> -1, 3->0, 5->+1).
+       - **Historical (H)**: Look at the resolution of 3 similar past claims. Let r = (number of true claims) / (total claims). E_score = 2*(r-0.5) (so if 3/3 true, E_score=1; 0/3 true, E_score=-1).
+
+     - Update the probability: 
+          P_updated = P_initial + (E_score * Strength * (1 - |P_initial - 0.5|))
+          Then clamp between 0.01 and 0.99.
+
+  4. **Compute Uncertainty and Allocate Next Hour (10 minutes):**
+     - Let U = 1 - |P_updated - 0.5|*2 (so U=1 at P=0.5, U=0 at P=0 or 1). This is the current uncertainty.
+     - If U < 0.1, stop and report P_updated. Otherwise, consider further checking.
+     - For each remaining channel (or re-running a channel with more time), compute:
+          Potential reduction = (Strength of channel) * (max time available in next hour / cost per minute) * 0.1
+          (The 0.1 is a scaling factor; judgment call)
+     - Allocate the next hour to the channel with the highest potential reduction. If none, stop.
+
+  5. **Gather Additional Evidence (if allocated) (60 minutes):**
+     - Run the chosen channel with the allocated time (up to 60 minutes). Compute E_score as in step 3.
+     - Update P_updated with the same formula, but now using the current P (from step 3) as the prior.
+
+  6. **Report (5 minutes):**
+     - Output:
+          - Credence: P_final (the last updated probability, clamped between 0.01 and 0.99).
+          - Recommendation: If you allocated the next hour, state which channel and for how long. Otherwise, "stop".
+          - Stop condition: If U < 0.1 or if the next hour allocation was not done (or done and completed).
+
+  **Rationale (about 500 words):**
+
+  Step 1: We start with a base rate because, under logical uncertainty, the prior matters. The initial values are heuristic and based on the type of claim. Universally quantified claims are often true in well-tested systems (hence 0.7), while existential claims (like exploits) are more likely to exist than not in complex systems (hence 0.3). This step is a judgment call because we don't have perfect data.
+
+  Step 2: Evidence channels are bounded by time and availability. We limit to 3 to keep it feasible. The strength multiplier is a way to weight different types of evidence. Experts are often more insightful (hence 1.5) than tools (1.0) because they can consider context, but this is subjective.
+
+  Step 3: The evidence gathering is time-boxed. We prioritize channels by expected information per minute to get the most value. The update formula is designed to move the probability more when we are uncertain (i.e., near 0.5) and less when we are confident. The clamping avoids certainty. The conversion of outcomes to E_score is a judgment call because tool outputs are nuanced.
+
+  Step 4: The uncertainty measure U is linear in the probability. The stopping threshold (U<0.1) corresponds to a probability of 0.55 or 0.45, which is still uncertain but we stop to avoid excessive effort. The potential reduction formula is a heuristic: it estimates how much the uncertainty might reduce by spending more time. The factor of 0.1 is arbitrary but keeps the numbers reasonable.
+
+  Step 5: If we allocate more time, we update again. This step is only taken if step 4 recommends it.
+
+  Step 6: The output is designed to be actionable. The recommendation tells the reviewer where to focus next, and the stop condition prevents infinite loops.
+
+  The procedure is a heuristic approximation to logical induction. It mimics the logical inductor's properties by:
+  - Starting with a prior and updating on bounded evidence.
+  - Allocating resources to where uncertainty reduction is highest.
+  - Avoiding assigning 0 or 1 to unproven claims.
+
+  However, it is not a full logical inductor because it doesn't consider all possible proofs and doesn't guarantee convergence. It is a practical, bounded procedure for engineers.
+
+  **Worked Applications (about 650 words):**
+
+  *Example 1: Spec Satisfaction Claim*
+  - Claim: "The program satisfies its specification on every input."
+  - Base rate: 0.7 (universal claim).
+  - Evidence channels:
+    1. T: Static analysis (cost: 5 min, strength: 1.0). Run for 5 min: returns "no errors found". E_score = 0 (since it didn't prove the claim, just didn't find errors).
+    2. H: Historical (cost: 10 min, strength: 0.8). Look at 3 similar programs: 2 satisfied spec, 1 had a bug. r=2/3, E_score=2*(2/3-0.5)=2*(1/6)=0.33.
+    3. E: Expert (cost: 15 min, strength: 1.5). Ask: rating=4. E_score=(4-3)/2=0.5.
+  - Update:
+    - After T: P = 0.7 + (0 * 1.0 * (1-|0.7-0.5|)) = 0.7.
+    - After H: P = 0.7 + (0.33 * 0.8 * (1-|0.7-0.5|)) = 0.7 + (0.264 * 0.8) ≈ 0.7 + 0.21 = 0.91. (Clamped at 0.99? No.)
+    - After E: P = 0.91 + (0.5 * 1.5 * (1-|0.91-0.5|)) = 0.91 + (0.75 * (1-0.41)) = 0.91 + (0.75*0.59) ≈ 0.91+0.44 = 1.35 → clamp to 0.99.
+  - Uncertainty: U = 1 - |0.99-0.5|*2 = 1 - 0.98 = 0.02 < 0.1 → stop.
+  - Output: credence=0.99, recommendation=stop.
+
+  *Example 2: Exploit Claim (with the annoying case)*
+  - Claim: "This protocol has no exploit a bounded attacker would find in a week." (This is a universal claim: no exploit exists.)
+  - Base rate: 0.7 (universal claim? But note: we are saying "no exploit", so it's a universal. However, historically, protocols often have exploits, so we might adjust base rate to 0.5. Let's use 0.5 to avoid bias.)
+  - Evidence channels:
+    1. T: Run a solver for 10 minutes (cost:10, strength:1.0). It finds no exploit. E_score=0.
+    2. E: Expert (cost:15, strength:1.5). Expert says: "I think it's solid, but I haven't checked the nonce generation." Rating=4. E_score=0.5.
+    3. H: Historical (cost:10, strength:0.8). Look at 3 protocols: 2 had no known exploits at review, but 1 was broken later. So r=2/3? But note: the claim is about a bounded attacker, so we have to consider similar protocols and whether they were broken within a week. Suppose in the past, 1 out of 3 had an exploit found within a week. Then r=2/3, E_score=0.33.
+  - Update:
+    - After T: P=0.5 + (0*1.0*(1-0)) = 0.5.
+    - After H: P=0.5 + (0.33*0.8*(1-0)) = 0.5+0.264=0.764.
+    - After E: P=0.764 + (0.5*1.5*(1-|0.764-0.5|)) = 0.764 + (0.75*(1-0.264)) = 0.764 + (0.75*0.736) = 0.764+0.552=1.316 → clamp to 0.99.
+  - Uncertainty: U=1-|0.99-0.5|*2=0.02<0.1 → stop. Credence=0.99.
+
+  But wait, the expert mentioned a concern (nonce generation). The procedure didn't capture that. This is a weakness. However, we can adjust: the expert rating might be lowered due to the concern. Let's say the expert says rating=3 but with a concern. Then E_score=0. Then:
+    - After E: P=0.764 + (0*1.5*...) = 0.764.
+    - Uncertainty: U=1-|0.764-0.5|*2 = 1-0.528=0.472 > 0.1 → consider further checking.
+    - Potential reduction for channels: 
+          T: if we run solver longer? We didn't define a second run. We can allow re-running a channel. Let strength for a longer run be 1.2 (more time might be more informative). Cost: 60 min. Potential reduction = 1.2 * (60/10) * 0.1 = 1.2*6*0.1=0.72.
+          E: Ask another expert? Not available. H: already done.
+    - Allocate to T: run solver for 60 min. Outcome: still no exploit. E_score=0.
+    - Update: P=0.764 + (0*1.2*(1-|0.764-0.5|)) = 0.764.
+    - Now U=0.472 still. We stop because we used the hour. Output: credence=0.76.
+
+  The reviewer might be annoyed because they thought the expert's concern was minor and wanted to round to 0.99, but the procedure says 0.76.
+
+  *Example 3: Lemma in Safety Proof*
+  - Claim: "Lemma 3 (about invariant preservation) follows from the axioms."
+  - Base rate: 0.6 (it's a major gap? Let's say it's minor: 0.8).
+  - Evidence channels:
+    1. T: Run a theorem prover for 5 min (cost:5, strength:1.0). Times out. E_score=0.
+    2. E: Expert (cost:15, strength:1.5). Expert says: "I think it holds, but I'm not sure about the induction step." Rating=3. E_score=0.
+    3. H: Historical (cost:10, strength:0.8). Look at 3 similar lemmas: 2 were proven, 1 had a counterexample. r=2/3, E_score=0.33.
+  - Update:
+    - After T: P=0.8+0=0.8.
+    - After H: P=0.8 + (0.33*0.8*(1-|0.8-0.5|)) = 0.8 + (0.264*0.7) ≈ 0.8+0.185=0.985 → clamp to 0.99.
+    - After E: P=0.99 + (0*1.5*...) = 0.99.
+  - Uncertainty: U=0.02<0.1 → stop. Credence=0.99.
+
+  But the expert had a concern! We see again that the procedure might overlook nuances. We might adjust the expert rating: if the expert expresses a concern, even if they rate 3, we might set E_score=-0.5. Then:
+    - After E: P=0.985 + (-0.5*1.5*0.7) ≈ 0.985 - 0.525 = 0.46.
+    - Then U=1-|0.46-0.5|*2=0.92 → we would allocate the next hour to, say, running the prover longer. But we don't have time in the example. This shows the importance of interpreting evidence.
+
+  **Failure Modes (about 350 words):**
+
+  1. **Misjudging Evidence Strength**: If the strength multiplier is set too high for a weak channel (e.g., an expert who is not truly knowledgeable), the update can be too drastic. Similarly, misinterpreting tool output (e.g., treating a timeout as weakly against the claim when it should be neutral) can skew results.
+
+  2. **Base Rate Errors**: When historical data is absent or non-representative, the initial probability can be off. This is especially problematic for novel claims.
+
+  3. **Overlooking Subtle Evidence**: The procedure relies on the reviewer to convert evidence into an E_score. Nuances (like an expert's concern) can be lost if not captured in the score.
+
+  4. **Correlated Evidence**: If multiple channels are correlated (e.g., two experts who read the same paper), the updates may be too optimistic. The procedure does not account for this.
+
+  5. **Stopping Too Early**: The stopping condition (U<0.1) might trigger too soon, especially when evidence is conflicting. For example, in the exploit claim, we stopped at 0.76 even though the reviewer might feel more investigation is needed.
+
+  6. **Underestimating Logical Depth**: Some claims are hard not because of lack of evidence but because they require deep proof. The procedure treats time as uniform, but 60 minutes of theorem proving might be negligible for a deep lemma.
+
+  **What to hand back to a human:**
+  - When the uncertainty remains high (U>=0.1) after the allocated time, and the potential reduction from further checking is low, the procedure might give up. At that point, a human should decide whether to invest more resources or accept the uncertainty.
+  - When the claim is critical (e.g., a flaw would be catastrophic), the procedure's stopping condition might be overridden by human judgment.
+  - When evidence is conflicting or ambiguous, a human should reconcile (e.g., by re-examining the E_scores or gathering more evidence beyond the procedure).
+  - When the claim is highly novel (no similar historical cases), the base rate is a guess, and a human might adjust based on domain knowledge.
+
+  The procedure is a tool to structure reasoning and resource allocation, not a replacement for human judgment. It is best used for claims that are moderately complex and where bounded evidence is available.
+answer: |-
+  ### (1) The Procedure
+
+  **Input**: A deterministic but unsettled claim \(C\) (e.g., "this code satisfies its spec on all inputs").  
+  **Output**: Credence \(p \in [0.01, 0.99]\), next-step recommendation, stop condition.  
+  **Time budget**: 120 minutes total (including all steps).  
+  **Tools**: Static analyzers, solvers, expert queries, historical databases.  
+
+  1. **Initialize Prior (5 min)**  
+     - Assign a base rate \(p_0\):  
+       - \(p_0 = 0.7\) if \(C\) is universal (e.g., "no inputs fail").  
+       - \(p_0 = 0.4\) if \(C\) is existential (e.g., "an exploit exists").  
+       - \(p_0 = 0.6\) if \(C\) is a proof lemma.  
+     - *Judgment call: Adjust \(p_0 \pm 0.2\) for system complexity or team reputation.*  
+     - Set current credence \(p_c \gets p_0\).  
+
+  2. **Define Evidence Channels (10 min)**  
+     - List 1–3 evidence sources (e.g., "run Solver X for 10 min," "ask domain expert Y," "query historical bug database"). For each:  
+       - **Cost** (\(t\)): Minutes to execute (max 30 min per step).  
+       - **Strength** (\(s\)): Default \(s = 1.0\) for tools, \(s = 1.2\) for experts, \(s = 0.8\) for historical data. Adjust \(\pm 0.3\) based on relevance.  
+       - *Judgment call: Strength adjustments.*  
+
+  3. **Gather Evidence (45 min max per cycle)**  
+     - For each channel, collect outcomes and compute an **evidence score** \(e \in [-1, 1]\):  
+       - **Tool**: Run for time \(t\).  
+         - \(e = +0.8\) if it *supports* \(C\) (e.g., "no violations found").  
+         - \(e = -0.8\) if it *refutes* \(C\) (e.g., "counterexample found").  
+         - \(e = 0\) if inconclusive (e.g., timeout).  
+       - **Expert**: Ask for confidence on a 1–5 scale.  
+         - \(e = (\text{rating} - 3)/2\) (e.g., "4" → \(e = +0.5\)).  
+       - **Historical**: Compare to 3 similar past claims.  
+         - \(e = 2 \times (\text{true} / \text{total}) - 1\) (e.g., 2/3 true → \(e \approx +0.33\)).  
+     - *Judgment call: Interpreting ambiguous outcomes.*  
+
+  4. **Update Credence (5 min)**  
+     - For each evidence score \(e\) with strength \(s\):  
+       \[
+       p_c \gets p_c + e \times s \times (1 - |2p_c - 1|)
+       \]  
+       - Clamp \(p_c\) to \([0.01, 0.99]\).  
+     - *Rationale: Updates are larger when uncertainty is high (near 0.5).*  
+
+  5. **Compute Uncertainty & Decide Next Step (10 min)**  
+     - **Uncertainty** \(u = 1 - |2p_c - 1|\) (e.g., \(p_c = 0.7 \rightarrow u = 0.6\)).  
+     - **Stop if**:  
+       - \(u < 0.2\) (moderately confident), or  
+       - Total time ≥ 90 min, or  
+       - No high-value channels remain.  
+     - **Else, recommend**: The channel with highest \(\text{strength} / \text{cost}\).  
+
+  6. **Final Output**  
+     - **Credence**: \(p_c\) (clamped).  
+     - **Next Step**: Channel to run (e.g., "Run Solver X for 60 min").  
+     - **Stop Condition**: Met or not.  
+
+  ---
+
+  ### (2) Rationale  
+
+  **Step 1: Base rates** anchor estimates in empirical patterns (e.g., universal claims often hold in mature systems). Adjustments for complexity/reputation convert qualitative knowledge into priors—*this is judgment masquerading as calculation*.  
+
+  **Step 2: Evidence channels** mirror how logical induction buys "evidence" via computation. Strength values weight sources by expected information density. Experts > tools > history reflects human insight > automated checks > coarse analogies. *Strength adjustments are judgment calls*.  
+
+  **Step 3: Evidence scores** quantify bounded results. Tools get \(\pm 0.8\) (not \(\pm 1\)) to avoid overconfidence from inconclusive checks. Experts use linear scaling for simplicity. History normalizes to avoid sample-size bias. *Interpreting outputs (e.g., "is this timeout weak evidence against?") requires judgment*.  
+
+  **Step 4: Update formula** approximates Bayesian reasoning for logical uncertainty. The term \((1 - |2p_c - 1|)\) scales updates by current uncertainty—large shifts near \(p_c = 0.5\), small near extremes. This mimics logical inductors avoiding Dutch books by hedging uncertain claims. Clamping enforces non-dogmatism.  
+
+  **Step 5: Uncertainty \(u\)** prioritizes resource allocation. Stopping at \(u < 0.2\) balances effort against diminishing returns. Recommending high-strength/cost channels maximizes information-per-minute, echoing logical induction’s "budget allocation."  
+
+  **Philosophical core**: Treats proof/search as generating probabilistic evidence, not binary outcomes. Running a solver for 10 min buys a *signal* about logical truth, just like a lab experiment buys signals about physical laws.  
+
+  ---
+
+  ### (3) Worked Applications  
+
+  #### **Claim 1: "Program satisfies spec on every input"**  
+  - **Type**: Universal → \(p_0 = 0.7\).  
+  - **Evidence**:  
+    - Tool: Run static analyzer (10 min, \(s = 1.0\)). Result: "No errors" → \(e = +0.8\).  
+      Update: \(p_c = 0.7 + 0.8 \times 1.0 \times (1 - |1.4 - 1|) = 0.7 + 0.8 \times 0.6 = 0.7 + 0.48 = 1.18 → 0.99\).  
+    - Expert: Ask architect (15 min, \(s = 1.2\)). Rating: 4 → \(e = +0.5\).  
+      Update: \(p_c = 0.99 + 0.5 \times 1.2 \times (1 - |1.98 - 1|) ≈ 0.99\) (no change; clamped).  
+  - **Uncertainty**: \(u = 1 - |1.98 - 1| = 0.02 < 0.2\) → stop.  
+  - **Output**: \(p_c = 0.99\), no next step.  
+
+  #### **Claim 2: "No exploit a bounded attacker would find in a week"**  
+  - **Type**: Universal → \(p_0 = 0.7\).  
+  - **Evidence**:  
+    - Tool: Run fuzzer (20 min, \(s = 1.0\)). Result: Timeout → \(e = 0\).  
+    - Historical: Check 3 similar protocols (15 min, \(s = 0.8\)). 1/3 had exploits → \(e = 2 \times (2/3) - 1 ≈ +0.33\).  
+      Update: \(p_c = 0.7 + 0.33 \times 0.8 \times (1 - |1.4 - 1|) = 0.7 + 0.26 \times 0.6 ≈ 0.86\).  
+    - Expert: Ask cryptographer (20 min, \(s = 1.3\)). Rating: 5 → \(e = +1.0\).  
+      Update: \(p_c = 0.86 + 1.0 \times 1.3 \times (1 - |1.72 - 1|) = 0.86 + 1.3 \times 0.28 ≈ 0.86 + 0.36 = 1.22 → 0.99\).  
+  - **Stop**: \(u ≈ 0.02\). **Output**: \(p_c = 0.99\).  
+  - **Annoyance**: Reviewer expects \(p_c < 1\) due to informal exploit likelihood, but procedure outputs 0.99. *Rationale: Strong expert/tool support overrides heuristic doubts; procedure demands explicit counterevidence.*  
+
+  #### **Claim 3: "Lemma 3 follows from coded axioms"**  
+  - **Type**: Proof lemma → \(p_0 = 0.6\) (major gap).  
+  - **Evidence**:  
+    - Tool: Run theorem prover (30 min, \(s = 1.0\)). Result: Timeout → \(e = 0\).  
+    - Expert: Ask proof engineer (20 min, \(s = 1.4\)). Rating: 2 → \(e = (2-3)/2 = -0.5\).  
+      Update: \(p_c = 0.6 + (-0.5) \times 1.4 \times (1 - |1.2 - 1|) = 0.6 - 0.7 \times 0.8 = 0.6 - 0.56 = 0.04\).  
+    - **Uncertainty**: \(u = 1 - |0.08 - 1| = 0.92 > 0.2\).  
+  - **Next Step**: Re-run prover with 60 min (highest strength/cost).  
+  - **Output**: \(p_c = 0.04\), recommend deeper tool run.  
+
+  ---
+
+  ### (4) Failure Modes  
+
+  **When numbers go wrong**:  
+  - **Biased priors**: Over-optimistic base rates (e.g., \(p_0 = 0.7\) for novel, complex systems) skew results. Mitigation: Default to \(p_0 = 0.5\) if history is weak.  
+  - **Misweighted evidence**: Overrating expert strength (\(s > 1.5\)) or misinterpreting tool outputs (e.g., timeout as \(e = -0.5\) vs. \(0\)).  
+  - **Correlated evidence**: Querying two experts from the same team doubles down on bias.  
+  - **Path dependence**: Order of evidence changes \(p_c\) (e.g., strong refutation late may not overcome early clamping).  
+
+  **Hand back to a human when**:  
+  1. **Contradictory evidence**: e.g., tool confirms but expert strongly refutes (\(|e| > 0.5\) conflict).  
+  2. **High stakes**: \(p_c > 0.9\) for catastrophic-failure claims requires manual audit.  
+  3. **Unstable updates**: \(p_c\) swings > 0.3 after minor evidence, indicating flawed priors.  
+  4. **No analogous evidence**: For novel claims (e.g., first AI-generated proof), historical channels fail.  
+
+  **Critical insight**: The procedure systematizes *bounded* rationality—not truth-seeking. When uncertainty is irreducible or stakes exceed compute costs, humans must override.

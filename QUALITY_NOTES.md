@@ -309,6 +309,8 @@ parameters and 8-bit-or-better endpoints only.
 | run_014 | DeepSeek R1 0528 | 7,149 x 2 (`r1_gap`) | 0 | 0 | 0 | 2,687 / 3,938 | 38% | $87.33 |
 | run_015 | Qwen3.5-397B-A17B | 49,149 x 2 (`qwen397b_gap`) | 57 | 0 | 54 (truncated ones) | 4,789 / 7,126 | 67% | $1,678.67 |
 | run_017 | DeepSeek R1 0528 | 20,000 x 2 (`batch_045`) | 0 | 0 | 0 | 3,147 / 5,730 | 44% | $302.27 |
+| run_018 | DeepSeek R1 0528 | 24,000 x 2 (`batches_042-044_047_049`) | 0 | 0 | 0 | 2,267 / 3,149 | 37% | $256.35 |
+| run_019 | Qwen3.5-397B-A17B | 2,000 x 2 (`batches_047_049`) | 7 | 0 | 7 (the truncated ones) | 4,751 / 7,207 | 66% | $67.21 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -354,6 +356,28 @@ responses that finished normally. SiliconFlow served all 40,000 at about 1,100
 responses an hour with 48 concurrent requests, sharing the endpoint with run 018 on
 its second day. 48 requests exhausted their attempts in the first pass (rate limits at
 SiliconFlow); the queue's second pass answered them, so coverage is complete.
+
+Run 018 (2026-09-19 to 2026-09-22, $256; two R1 samples for the 24,000 prompts of
+batches 042–044, 047, and 049) is the cheapest R1 run per response so far ($5.34 per
+1,000) because these prompts draw shorter responses: mean 2,267 completion tokens
+against 3,147 for batch 045. No truncations; refusal-phrase flags (0.1%) are quoted
+refusals in answers about AI refusal and in role-play scripts, and "I won't" in
+answers scoping what they will not cover; the one answer under 40 words is the
+four-field JSON object the prompt asked for; repeated-phrase flags (0.3%) are the
+branch labels of decision trees, quizzes, and JSON schemas in responses that finished
+normally. SiliconFlow served all 48,000. The run started at 24 concurrent requests
+while run 017 held 48 on the same endpoint; the combined load drew rate-limit replies
+overnight and 24 prompts were abandoned, all before run 017 finished, after which the
+queue resumed at 48 and ran at 1,300 to 1,800 responses an hour without further
+abandonments. The second pass answered the 24.
+
+Run 019 (2026-09-20, $67; two Qwen samples for the 2,000 prompts of the test batches
+047 and 049) matches: 7 truncations (0.2%, all without an answer), refusal-phrase
+flags (0.5%) that are the analytic "As an AI, I don't have beliefs" opening on
+prompts asking for the model's own credence, and repeated-phrase flags (0.4%) that
+are refrains and table rows in responses that finished normally. DeepInfra served
+36% of the responses, AtlasCloud 29%, Parasail 20%, and GMICloud 15%, at about 1,100
+responses an hour with 24 concurrent requests.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers

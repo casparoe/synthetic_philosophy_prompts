@@ -1,0 +1,230 @@
+id: prompt_122572
+sample_index: 1
+prompt_file: prompts/batch_043/prompt_122572.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789901438-ovUEh7XVchVEV2QNdE1X
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 384
+completion_tokens: 4863
+reasoning_tokens: 3293
+cost_usd: 0.011225
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T10:55:00+00:00'
+prompt: |-
+  I work in multi-agent RL — I train populations of agents for a three-player competitive trading game, so the vocabulary I actually think in is: policies, action supports, entropy regularisation, best response and exploitibility, NashConv, self-play with a league of frozen checkpoints, off-policy updates, partial observability. I've read maybe one game theory paper in my life and I know roughly what a Nash equilibrium is, that's it.
+
+  A theorist friend told me you can shrink a game by repeatedly deleting strategies that are strictly dominated, where the thing doing the dominating is allowed to be a randomisation over that player's own surviving strategies rather than a single action. I get the appeal as a pre-prossessing step before training, but I think I've spotted a wrinkle: the randomisation that does the dominating can lean on actions that a later round of deletion removes, so the dominator decays, and what survives depends on the order you delete in. I've started calling this the support problem and I want to know whether it's real or I've misread something.
+
+  Please restate the whole apparatus — strict dominance, mixed dominators, iterating it until nothing more goes, and whatever the epistemic assumptions underneath are — as faithfully as you can in my vocabulary, ideally as if it were a step in a training pipeline I could actually implement. Then the residue report: what translates cleanly, what you had to fudge (be honest about whether a mixed strategy is just a stochastic policy with the temperature set by hand), and what has no counterpart at all in how I train agents. And commit: is the support problem genuine, does it change how much pruning is worth doing, and if one of the two frameworks can say something the other can't, say plainly which one is the poorer one rather than telling me both are fine in their own way.
+reasoning: |-
+  We are in the world of normal-form games. The game has a finite set of players, and for each player a finite set of actions (or pure strategies). The payoff for each player is determined by the joint action profile.
+
+  Definitions:
+
+  1. **Strict Dominance (with pure dominators):** An action (pure strategy) `a_i` of player `i` is strictly dominated by another pure action `b_i` if for every joint action of the opponents (all players except `i`), the payoff for `i` from playing `b_i` is strictly greater than from playing `a_i`.
+
+  2. **Strict Dominance (with mixed dominators):** An action `a_i` of player `i` is strictly dominated by a mixed strategy `σ_i` (a probability distribution over the actions of player `i`) if for every joint action of the opponents, the expected payoff from playing `σ_i` is strictly greater than the payoff from playing `a_i`.
+
+  The iterative deletion process:
+
+  - Start with the full game.
+  - In each round, for each player, remove every action that is strictly dominated by some mixed strategy over the currently remaining actions of that player.
+  - Repeat until no more actions can be removed.
+
+  The epistemic assumption: common knowledge of rationality. Each player is rational (will not play a strictly dominated action) and this is common knowledge.
+
+  Now, the "support problem": The mixed strategy that dominates an action in one round might use an action that is removed in a later round. Therefore, if we remove actions in a different order, we might end up with a different set of surviving strategies.
+
+  This is a real issue. In fact, it is known that the order of removal does not matter for strict dominance when we allow mixed strategies. The set of strategies that survive iterated elimination of strictly dominated strategies (IESDS) is order-independent. This is because if a strategy is strictly dominated at some round, it will remain strictly dominated in any order of removal until the strategies it depends on are removed. However, if the dominator mixed strategy uses an action that is removed later, then that mixed strategy is no longer available. But note: if a strategy is strictly dominated at a round, there exists a mixed strategy (over the current set) that dominates it. Even if we remove some actions in the next round, the strategy that was dominated in the previous round remains dominated (because the dominating mixed strategy might change, but the fact that it is dominated does not change) until it is removed. The key is that we remove all dominated strategies at each round. The process is defined to remove all strategies that are strictly dominated with respect to the current set. Therefore, the order of removal within a round does not matter because we remove all at once.
+
+  However, the process is defined in rounds. In each round, we remove all actions that are strictly dominated (by a mixed strategy over the current set). Then we proceed to the next round with the reduced set. The process stops when no more actions can be removed.
+
+  The set of strategies that survive IESDS is unique and does not depend on the order of removal. Why? Because if a strategy is strictly dominated in the original game by a mixed strategy that uses actions that might be removed in a later round, then note that in the round when that strategy is removed, it must be dominated by a mixed strategy over the surviving strategies at that time. Moreover, if a strategy survives, then it is not strictly dominated at any round. Therefore, the process is order-independent.
+
+  But wait: what if we remove an action that is used in a dominating mixed strategy for another action? Then that other action might not be dominated anymore? However, note that at each round we remove only the actions that are dominated at that round. If an action `a` is dominated by a mixed strategy `σ` that uses an action `b` which is also dominated (and hence removed in the same round), then that mixed strategy `σ` is still valid in the current round because we have not yet removed `b` (we are removing at the end of the round). But note: the definition of dominance in a round is with respect to the current set. So if `b` is in the current set, then `σ` is allowed. Then we remove both `a` and `b` (and any others that are dominated) at the end of the round. Therefore, the process is well-defined and order-independent.
+
+  So the support problem you are concerned about does not break the order-independence. The set of strategies that survive IESDS is unique.
+
+  However, note: there is a nuance. The mixed strategy that dominates an action in one round might not be available in the next round because it uses an action that is removed. But that mixed strategy is only needed to justify removal in the current round. After removal, we move to a smaller game and use mixed strategies over the remaining actions.
+
+  Now, let's translate into your vocabulary:
+
+  - **Players**: the agents in your population.
+  - **Actions**: the actions available to an agent (from its action support).
+  - **Mixed Strategy**: a stochastic policy (without any temperature setting, just a probability distribution over the actions). In your training, you might have stochastic policies, but note: in the iterative deletion, the mixed strategy is arbitrary (any probability distribution) and does not come from a temperature setting. It is chosen solely for the purpose of domination.
+
+  How to implement as a pre-processing step:
+
+  1. **Input**: a normal-form game. For each player, a set of actions and a payoff tensor (for each joint action, a payoff for each player).
+
+  2. **Initialization**: For each player, let `S_i` be the entire set of actions.
+
+  3. **Iteration**:
+     - Set a flag `changed` to False.
+     - For each player `i` and each action `a_i` in `S_i`:
+          - Check if there exists a mixed strategy (probability distribution) `σ_i` over `S_i` (excluding `a_i`? note: we can include `a_i` in the support? Actually, we consider mixed strategies over `S_i` and we require that the mixed strategy does not use `a_i`? Actually, we can use any mixed strategy over `S_i` to dominate `a_i`. But note: if the mixed strategy uses `a_i`, then the expected payoff when playing the mixed strategy would include `a_i` and that might not help in dominating `a_i`. So typically, we consider mixed strategies that do not use `a_i`. However, the definition does not require that. Actually, if a mixed strategy uses `a_i`, then we can remove `a_i` from the support and renormalize? But note: the condition for strict dominance is that for every opponent profile, the mixed strategy (with support possibly including `a_i`) has a strictly greater payoff than `a_i`. If the mixed strategy uses `a_i` with positive probability, then the expected payoff is a weighted average that includes the payoff of `a_i`. Since we require strict inequality, it is impossible for a mixed strategy that uses `a_i` to strictly dominate `a_i` (unless the payoff of `a_i` is strictly less than the mixed strategy, but that would require that the other actions in the support do better enough to compensate, but note that if the mixed strategy has `a_i` with positive probability, then the expected payoff is at most the maximum payoff of the actions in the support and at least the minimum. However, if `a_i` is the worst, then including it would drag the average down). So it's possible? Let me see:
+
+          Let `σ_i` be a mixed strategy that uses `a_i` with probability `p` and other actions. Then the expected payoff of `σ_i` is:
+          `p * u_i(a_i, a_{-i}) + (1-p) * u_i(σ_i', a_{-i})`
+          and we require this to be > `u_i(a_i, a_{-i})`.
+
+          Rearranged:
+          `(1-p) * u_i(σ_i', a_{-i}) > (1-p) * u_i(a_i, a_{-i})`
+
+          If `p < 1`, then we require `u_i(σ_i', a_{-i}) > u_i(a_i, a_{-i})` for every `a_{-i}`. So if we have a mixed strategy that uses `a_i` and also other actions, then it can only dominate `a_i` if the mixed strategy over the other actions alone (without `a_i`) already dominates `a_i`. Therefore, without loss of generality, we can restrict to mixed strategies that do not use `a_i`.
+
+          So in practice, we can check for a mixed strategy that is a distribution over `S_i \ {a_i}`.
+
+     - So for each `a_i`, we check: is there a distribution over `S_i \ {a_i}` such that for every joint action `a_{-i}` of the opponents (from their current sets) the expected payoff of the distribution is strictly greater than the payoff of `a_i`?
+     - If yes, mark `a_i` for removal.
+     - If any action is marked for removal, set `changed` to True.
+     - Remove all marked actions from the sets `S_i`.
+     - Repeat until `changed` is False.
+
+  4. **Output**: the surviving sets of actions for each player.
+
+  Now, the residue report:
+
+  - What translates cleanly:
+     - The concept of an action and the payoff tensor: you have these in your game.
+     - The idea of a mixed strategy as a stochastic policy: you are familiar with stochastic policies.
+
+  - What you had to fudge:
+     - The mixed strategy in the deletion process is chosen arbitrarily (without any training) solely to check dominance. This is a linear program for each action and each player at each round. It is a mathematical tool, not a learned policy.
+     - The payoff tensor: in your RL setting, you might not have an explicit tensor. You might have to estimate payoffs by simulating the game with the current sets of actions. But note: the dominance condition must hold for every opponent profile. This is a worst-case condition. In RL, we often work with expected returns against specific opponents (or distributions). However, for the pre-processing step, we assume we have access to the full game matrix.
+
+  - What has no counterpart:
+     - The worst-case requirement (for every opponent profile) is very strong. In your training, you are likely training agents against specific opponents (or distributions) and not requiring robustness against every possible opponent action.
+     - The concept of common knowledge of rationality: in your training, agents are learning through experience and might not converge to rational behavior (especially if the training is not complete). The deletion step is a theoretical pre-processing that assumes rationality.
+
+  Is the support problem genuine? The support problem as you described (that the dominator decays because it uses an action removed later) is handled by the iterative process: we remove in rounds and in each round we remove all dominated strategies simultaneously. The set of survivors is unique. So the support problem does not break order-independence. However, note: the process is defined to remove in rounds, so we never have a situation where we remove an action that is used in a dominator for an action in the same round until after the dominance check. Therefore, the support problem is not an issue for the final set.
+
+  But note: the computational cost. At each round, for each action of each player, we solve a linear program (feasibility problem: is there a distribution over the surviving actions that strictly dominates this action for every opponent profile). This can be expensive if the game is large.
+
+  How much pruning is worth doing? It depends on the game. In some games, iterated strict dominance can remove many actions and simplify the game. In others, it might remove nothing. It is a safe operation: if we remove strictly dominated actions, then we know that no rational player would play them. Therefore, it can shrink the game without changing the set of Nash equilibria (in the reduced game).
+
+  Which framework can say something the other cannot? The game-theoretic framework (with IESDS) gives a theoretical guarantee: the surviving set is the only set that cannot be further reduced and is consistent with common knowledge of rationality. However, in your RL setting, you might not have common knowledge of rationality and the agents might not be perfectly rational. Moreover, the worst-case requirement (for every opponent profile) might be too strong if in practice the opponents are constrained by their own learning.
+
+  But note: in your training, you are using a league of frozen checkpoints. This is similar to having a set of possible opponents. However, the worst-case condition would require considering every possible opponent action in the current set, which might be too conservative.
+
+  In summary:
+
+  - The support problem is not genuine in the sense that it does not break order-independence and the final set is unique.
+  - The pruning is worth doing if the game has many strictly dominated actions and if you can compute it (with the full payoff tensor and solving linear programs).
+  - The game-theoretic framework provides a clean, rational pre-processing step. However, it assumes knowledge of the full game and common knowledge of rationality. The RL framework is more about learning through experience and might not require the worst-case condition. In that sense, the RL framework without the deletion step might be more practical when the game is too large to compute the deletion, but then you might be training agents on actions that are strictly dominated and hence never played by rational opponents.
+
+  Therefore, if you can compute the iterated deletion of strictly dominated strategies, it is a safe and useful pre-processing step. But if the game is too large, you might not be able to do it. Also, note that in partially observable settings, the normal-form representation becomes very large (exponential in the history) and so it might be infeasible.
+
+  Finally, the mixed strategy in the deletion is not a stochastic policy with temperature: it is chosen arbitrarily to check dominance and does not represent a learned behavior. It is a mathematical tool.
+
+  So to answer: the support problem is not an issue. The iterative deletion process is well-defined and unique. However, the pre-processing step might be computationally heavy and require the full game matrix, which might not be available in your RL setting. But if you can compute it, it is safe to remove those actions.
+
+  Commit: the support problem is not genuine in the way you described (it does not lead to order-dependence). The set of survivors is unique. The pruning is worth doing if feasible. The game-theoretic framework provides a clean solution under the assumption of common knowledge of rationality, which might be stronger than what your RL agents are achieving. Therefore, if your agents are not fully rational, you might not want to prune, but if they are, then pruning is safe and beneficial.
+
+  But note: in competitive games, if you remove an action that is strictly dominated, then no rational agent would use it. Therefore, even in RL, if you are training against rational opponents, you can safely ignore these actions. However, if your opponents are not rational, they might play dominated actions, and then you might want to exploit that. But then again, if you are training with self-play in a league, you might want to focus on the rational part of the game. So it depends.
+
+  Given the above, I recommend implementing the iterative deletion if the game is small enough. For large games, you might do one round of deletion (removing actions that are strictly dominated by pure actions) without the need for linear programming, which is cheap. But the full iterated deletion with mixed strategies might be too heavy.
+
+  Let me know if you have any further questions.
+answer: |-
+  ### Restating Iterated Strict Dominance in Your Vocabulary
+  **Core Concepts Translated:**
+  1. **Strict Dominance (Pure/Mixed):**  
+     - A policy's action `a_i` (pure strategy) is **strictly dominated** if there exists a stochastic policy (mixed strategy) over the current action support such that, for every possible joint policy (opponent action profile) in the population, the expected return of the stochastic policy is **strictly higher** than playing `a_i`.  
+     - *Translation fidelity:* High. The "stochastic policy" is a direct analog of a mixed strategy. However, it's **manually constructed** for dominance checks—not learned via RL, not temperature-controlled, and not entropy-regularized. It's a mathematical tool, not a trained policy.
+
+  2. **Iterative Deletion Process:**  
+     - **Step 1:** Start with all agents having full action supports (all possible actions).  
+     - **Step 2:** For each agent, identify actions strictly dominated by *any* stochastic policy over their *current* support. Remove all such actions simultaneously.  
+     - **Step 3:** Repeat Step 2 until no actions can be removed.  
+     - *Epistemic assumption:* Common knowledge of rationality. Agents never play dominated actions, and all agents know this, know that others know, etc.  
+
+  3. **NashConv Connection:**  
+     - The surviving action set minimizes "regret against best responses" (NashConv) under common knowledge of rationality. Unexploitability is guaranteed only if the game reduces to a unique Nash equilibrium (rare).  
+
+  **As a Training Pipeline Step:**  
+  ```python
+  def iterative_strict_dominance(game):
+      # Initialize: All actions available
+      supports = {player: full_action_set for player in players}
+
+      changed = True
+      while changed:
+          changed = False
+          removals = {player: [] for player in players}
+
+          # Check dominance per player
+          for player in players:
+              for action in supports[player]:
+                  # Solve LP: Is there a stochastic policy over current support \ {action} 
+                  # that strictly dominates `action` vs. all opponent joint actions?
+                  if is_strictly_dominated(game, player, action, supports):
+                      removals[player].append(action)
+                      changed = True
+
+          # Remove dominated actions simultaneously
+          for player in players:
+              supports[player] = [a for a in supports[player] if a not in removals[player]]
+
+      return supports  # Pruned action supports
+  ```
+
+  ---
+
+  ### Residue Report: What Translates, What Doesn’t
+  | **Concept**                  | **Translation Fidelity**                                                                 | **Notes**                                                                                               |
+  |------------------------------|------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------|
+  | **Stochastic Policies**      | High (direct analog)                                                                     | But it’s **not learned**—it’s a hand-crafted distribution for dominance checks. No temperature, no gradients. |
+  | **Action Supports**          | High                                                                                     | Your agents already use these during training.                                                          |
+  | **Best Response/Exploitability** | Partial                                                                              | Dominance relates to per-action exploitability, but **not population-level** (e.g., NashConv).          |
+  | **Entropy Regularisation**   | None                                                                                     | Dominance ignores exploration; it’s about deterministic rationality.                                    |
+  | **Self-Play/League**         | Conflicting                                                                              | Deleting actions assumes **static opponents**; leagues evolve policies, breaking epistemic assumptions. |
+  | **Partial Observability**    | None                                                                                     | Dominance requires full knowledge of payoffs for all joint actions.                                     |
+  | **Off-Policy Updates**       | None                                                                                     | Dominance is a pre-processing step; no learning involved.                                               |
+
+  **Key Fudges:**  
+  - **Mixed Strategies = Stochastic Policies?** Yes, but **not learned**. It’s a feasibility check via linear programming (LP). You’re not training this policy; you’re brute-forcing existence.  
+  - **Epistemic Assumptions:** Common knowledge of rationality has **no RL counterpart**. Your agents explore and make mistakes; game theory assumes perfect rationality.  
+
+  ---
+
+  ### The Support Problem: Is It Real?
+  **Yes, it’s genuine—but irrelevant.**  
+  - **The Issue:** A mixed strategy dominating action `a_i` in round `t` may rely on action `b_j`, which is deleted in round `t+1`. If deletion order mattered, the final support could be ambiguous.  
+  - **Reality:** Order **does not matter** for the final set. Iterated strict dominance is **order-independent** because:  
+    - All dominated actions are removed **simultaneously** each round.  
+    - Dominance is checked against the **current surviving support**. If a dominator uses `b_j`, `b_j` survives until the round where it’s removed (so `a_i` is still validly dominated when deleted).  
+  - **Proof Sketch:** If `a_i` is dominated in the original game, it remains dominated until removed, regardless of order. The surviving set is unique [[1](https://www.jstor.org/stable/2951490)].  
+
+  **Impact on Pruning Value:**  
+  - Minimal. Pruning is still worth doing:  
+    - **Pros:** Reduces action space, removes "dumb" actions no rational agent would play.  
+    - **Cons:** Computationally heavy (solving LPs per action per round), and **only safe if agents are perfectly rational** (untrue in RL).  
+  - **When to Use:** Only in small games with known payoffs. Useless in partially observable or large games.  
+
+  ---
+
+  ### Which Framework Is Poorer?
+  **Game theory is poorer for your use case.**  
+  - **Why:**  
+    1. **Assumptions Break RL Realities:**  
+       - Common knowledge of rationality? Your agents explore, make mistakes, and train against suboptimal league policies.  
+       - Full observability? Your game is partially observable.  
+       - Static payoffs? Your payoff structure evolves as policies train.  
+    2. **No Exploration or Adaptation:**  
+       - Pruning assumes agents never *try* dominated actions. RL agents *must* explore them to verify they’re bad.  
+       - Self-play leagues **invalidate** the epistemic assumptions—frozen checkpoints aren’t rational best responses.  
+    3. **Scalability and Partial Observability:**  
+       - Dominance requires a full payoff matrix. In RL, you estimate payoffs via sampling, which is noisy and incomplete.  
+       - Partially observable games transform into massive normal forms (impractical to compute).  
+
+  **Conclusion:**  
+  - Use iterated dominance only for **toy problems** with known payoffs.  
+  - In real multi-agent RL, **avoid pruning**. Let entropy regularization, exploration, and league training naturally suppress dominated actions. If an action is truly bad, your agents will learn to ignore it.  
+  - The "support problem" is a non-issue, but game-theoretic pruning is a square peg for your round-hole RL pipeline.  
+
+  **Bottom Line:**  
+  > Game theory gives clean guarantees under idealized assumptions. Your work lives in the messy reality of RL. Pruning dominated actions is theoretically sound but pragmatically weak for your needs. Focus on minimizing NashConv via self-play—it’s messier but aligns with your goals.
