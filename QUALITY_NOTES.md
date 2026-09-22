@@ -54,6 +54,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 043 | HY4 preview (OpenRouter, Tencent) | 1,000 | 3.0% | 17.3% | 2.5% / 2.1% | procedure example 0, 10 |
 | 044 | Inkling (OpenRouter, BaseTen) | 20,000 | 1.6% | 9.8% | 10.6% / 3.1% | classroom-activity example 0, 43; exam-question example 0, 28 |
 | 045 | HY4 preview (OpenRouter, Tencent) | 20,000 | 3.8% | 18.3% | 6.4% / 3.3% | procedure example 0, 161; classroom-activity example 0, 152 |
+| 046 | Inkling (OpenRouter, BaseTen) | 100,000 | 1.8% | 9.8% | 10.6% / 2.9% | adjudication example 2, 223; classroom-activity example 0, 189 |
 | 047 | Kimi K3 (OpenRouter, BaseTen) | 1,000 | 1.8% | 14.1% | 8.6% / 1.5% | classroom-activity example 0, 7 |
 | 049 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 1,000 | 5.1% | 19.9% | 16.0% / 7.0% | classroom-activity example 0, 12; procedure example 0, 9 |
 
@@ -458,6 +459,23 @@ answer, as with the other runs.
   output-format instruction copied in 16% of the prompts that drew one, epistemic
   request in 7%; four pairs share 20 or more eight-word phrases, three of them real
   quotations (Darwin, Douglass, Hume) fetched by both prompts.
+- Batch 046 (Thinking Machines Inkling, Apache 2.0), 100,000 prompts from
+  2026-09-16 to 2026-09-22 at concurrency 48 on BaseTen, the model's only fp8 host:
+  $1,720 in total ($17 per 1,000; mean 3,400 input and 3,500 output tokens), 13
+  prompts a minute over five days, 54,500 rate-limit replies, and 590 prompts
+  abandoned after ten failures, regenerated at the end with `--continue-batch` in 40
+  minutes. It is the first whole batch under the example subsetting (a random subset
+  of each type's examples, recorded in `task_type_examples`), and its echo profile is
+  that of batch 044, which ran half with and half without it: heavy echo 1.8% against
+  1.6%, any echo 9.8% in both, median 265 words against 267. The most repeated
+  eight-word phrases are the output-format instructions themselves ("do not provide
+  bibliographies, reading lists, or citations" in 1,165 prompts), copied into 10.6%
+  of the prompts that drew one. 13 pairs share 100 or more eight-word phrases, all
+  quotations fetched by both prompts (Carroll's tortoise and Achilles; Augustine's
+  *On Lying*, in three prompts). Inkling searched the web for 11% of its prompts and
+  fetched a page for 1%; the batch predates the quote-inclusion instruction. Run 016
+  (two Qwen3.5-397B-A17B samples per prompt) has been answering the batch since
+  2026-09-19, while it was still being generated.
 
 ## Preference pairs
 
