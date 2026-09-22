@@ -1,11 +1,11 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 260,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 280,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of forty-nine genres
+retired physicist, a novelist, a committee member, ...) in one of sixty-six genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 rankings, ...).
@@ -109,6 +109,7 @@ fetching available for fact-checking and verbatim quotation.
 | 046 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded); 100,000 prompts over five days at concurrency 48; 590 prompts abandoned under rate limiting and regenerated with `--continue-batch`; the first whole batch run with the example subsetting described below; client-executed web tools (DuckDuckGo search + page fetch) |
 | 047 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host; the model is trained in MXFP4); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 14 prompts abandoned under rate limiting and regenerated with `--continue-batch`; client-executed web tools (DuckDuckGo search + page fetch) |
 | 049 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 1,000-prompt test batch; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; client-executed web tools (DuckDuckGo search + page fetch) |
+| 050 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host); 20,000 prompts; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 778 prompts abandoned under rate limiting and regenerated with `--continue-batch` in three passes; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -337,8 +338,8 @@ proprietary Meta model accessed through the standard tier of the
 [Meta Model API](https://developer.meta.com/ai/products/meta-model-api/) via
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
-032–033 with DeepSeek V4 Pro and batches 039 and 041 with DeepSeek V4.1 Flash,
-open-weights models released under the MIT license, batches 042, 044, and 046 with Thinking
+032–033 with DeepSeek V4 Pro, batch 049 with DeepSeek V4 Pro 0813, and batches 039 and
+041 with DeepSeek V4.1 Flash, open-weights models released under the MIT license, batches 042, 044, and 046 with Thinking
 Machines' Inkling and batches 043 and 045 with Tencent's HY4 preview, both open-weights
 models released under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
@@ -347,7 +348,10 @@ outputs). Batches 036 and 038 were generated with Qwen3.8 2.4T-A95B, an open-wei
 released under the Qwen3.8-Max License (MIT terms plus an attribution requirement
 for products above 100 million monthly users or $20 million in monthly revenue, and
 a separate-license requirement for model-as-a-service businesses above $50 million
-in annual revenue; no restrictions on the use of outputs). Responses under `responses/` come only from open-weights models whose
+in annual revenue; no restrictions on the use of outputs). Batches 047 and 050 were generated
+with Kimi K3, an open-weights model released under Moonshot's Kimi K3 License (MIT terms
+plus an attribution requirement for products above 100 million monthly active users or
+$20 million in monthly revenue; no restrictions on the use of outputs). Responses under `responses/` come only from open-weights models whose
 licenses (Apache 2.0, MIT) place no restrictions on the use of outputs; the model
 behind every record is named in its `model` field and in the run's `run.yaml`. A
 record also contains the prompt it answers, so records answering prompts from the

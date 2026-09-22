@@ -57,6 +57,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 046 | Inkling (OpenRouter, BaseTen) | 100,000 | 1.8% | 9.8% | 10.6% / 2.9% | adjudication example 2, 223; classroom-activity example 0, 189 |
 | 047 | Kimi K3 (OpenRouter, BaseTen) | 1,000 | 1.8% | 14.1% | 8.6% / 1.5% | classroom-activity example 0, 7 |
 | 049 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 1,000 | 5.1% | 19.9% | 16.0% / 7.0% | classroom-activity example 0, 12; procedure example 0, 9 |
+| 050 | Kimi K3 (OpenRouter, BaseTen) | 20,000 | 2.7% | 13.3% | 10.2% / 1.0% | classroom-activity example 0, 205; procedure example 0, 49 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -476,6 +477,25 @@ answer, as with the other runs.
   fetched a page for 1%; the batch predates the quote-inclusion instruction. Run 016
   (two Qwen3.5-397B-A17B samples per prompt) has been answering the batch since
   2026-09-19, while it was still being generated.
+- Batch 050 (Moonshot Kimi K3, Kimi K3 License), 20,000 prompts from 2026-09-19 to
+  2026-09-21 at concurrency 48 on BaseTen with the settings of test batch 047: $901
+  in total ($45 per 1,000; mean 5,400 input and 2,200 output tokens), six prompts a
+  minute, 27,300 rate-limit replies, and 778 prompts abandoned after ten failures.
+  The supervisor killed the generator three times after 45 minutes without a new
+  prompt (at 4,297 prompts during a BaseTen outage, and twice at the tail of a pass
+  when only rate-limited stragglers were in flight) and continued the batch with
+  `--continue-batch`, so the abandoned prompts were regenerated in passes of 15,703,
+  622, and 11. Median 414 words. Heavy echo 2.7% (classroom-activity example 0 in 205
+  prompts); the procedure type's "what will predictably go wrong the first time I run
+  it" appears in 380 prompts. The quote-inclusion instruction ended at 7.3% of the
+  prompts against its 10% draw rate: its prompts make 6.8 tool calls on average
+  against 0.09 for the rest, so they were the likeliest to be abandoned, and their
+  replacements drew afresh. Those quotations also produce more shared-passage pairs
+  than any earlier batch: 33 pairs (48 prompts) share 100 or more eight-word phrases,
+  every one a passage fetched by both prompts (Darwin's *Descent of Man* in five
+  prompts; Smith's *Theory of Moral Sentiments*, Marx's 1859 preface, and Hume's "Of
+  Miracles" in three each; Mill, Beccaria, Moore, Maxwell's demon, the White Horse
+  dialogue).
 
 ## Preference pairs
 
