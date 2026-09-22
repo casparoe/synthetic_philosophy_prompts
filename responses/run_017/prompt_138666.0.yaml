@@ -1,0 +1,149 @@
+id: prompt_138666
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_138666.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789890073-tAoQGabq6sBlSmMFLhiL
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 393
+completion_tokens: 3072
+reasoning_tokens: 1966
+cost_usd: 0.007169
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T07:43:49+00:00'
+prompt: |-
+  Hey — one sanity check before I send this to our vendor.
+
+  We're a county agency buying a pretrial risk score (predicts new arrest or failure to appear within 18 months), and our legal team wants the contract to require, separately for each racial group: (1) the score is calibrated within each group, and (2) false positive and false negative rates are equal across groups at whatever threshold we end up using. Our data folks pushed back and said theres a well-known impossibility result here — you can't have calibration plus balance on both the positive and negative class at once, except in degenerate cases: perfect prediction, or when the two groups' base rates happen to be equal.
+
+  So here's my workaround. That exception is just a fact about whatever joint distribution of (score, outcome, group) you evaluate the conditions on, right? So I want to define an official audit pool: we resample our own historical cases so the two groups have identical base rates (and identical score distributions too, if that helps), and we require the vendor to hit calibration and equal FPR/FNR measured on that pool. The score is one fixed function, so if it satisfies all three conditions on the pool it satisfies them in the field too, and we've sidestepped the trade-off. If anyone says we're cherry-picking the sample, I figure we say the pool is the neutral benchmark — and arguably equalizing base rates corrects for the fact that they differ mostly because of differential arrest practices, which is label bias we shouldn't bake in anyway.
+
+  Is there a hole in this? The DS team keeps muttering about the deployment distribution but nobody can give me a crisp reason the workaround fails, and I need something I can put in an email. And if it does fail, what are we actually supposed to do — just pick which of the two criteria to drop, and on what basis?
+reasoning: |-
+  We are discussing a proposal to sidestep the well-known impossibility result (Kleinberg, Chouldechova, etc.) that states that, except in degenerate cases, we cannot simultaneously satisfy:
+   (1) Calibration within groups (also known as "sufficiency"): P(outcome | score, group) = P(outcome | score) [i.e., the same for both groups? Actually, it means that within each group, the score is calibrated: for a given score value, the proportion of positive outcomes should be equal to the score, and this holds separately for each group].
+   (2) Equal false positive rates (FPR) across groups (also known as "equal specificity" or "balance for the negative class"): P(score >= threshold | outcome=0, group=A) = P(score >= threshold | outcome=0, group=B)
+   (3) Equal false negative rates (FNR) across groups (also known as "equal sensitivity" or "balance for the positive class"): P(score < threshold | outcome=1, group=A) = P(score < threshold | outcome=1, group=B)
+
+  The impossibility result says that these three conditions can only hold simultaneously if either:
+   (a) The model is perfect (i.e., the score is 0 for all negatives and 1 for all positives), or
+   (b) The base rates (i.e., P(outcome=1 | group)) are equal for both groups.
+
+  The proposed workaround is:
+   - Create an "official audit pool" by resampling historical data so that the two groups have identical base rates (and optionally, identical score distributions).
+   - Require the vendor to meet all three conditions on this pool.
+
+  The rationale is that since the base rates are equal in the pool, the impossibility result no longer applies and it becomes possible to satisfy all three conditions.
+
+  However, note that the impossibility result is a mathematical fact about the joint distribution of (score, outcome, group) in the data on which we are evaluating. If we change the data (by resampling) to have equal base rates, then indeed the conditions (1), (2), and (3) become compatible. But the key point is: what happens when we deploy the model in the real world?
+
+  The problem is that in the real world, the base rates are not equal. Therefore, even if the model satisfies all three conditions on the audit pool (with equal base rates), it will not necessarily satisfy them on the deployment data (with unequal base rates). In fact, we can expect that when base rates are unequal, at least one of the conditions must fail.
+
+  Moreover, note that the conditions (2) and (3) (equal FPR and FNR) are threshold-dependent. The contract might require that the conditions hold at "whatever threshold we end up using". But if the threshold is chosen on the deployment data, then the audit pool (which has a different distribution) might not be representative.
+
+  Let me break down the concerns:
+
+  1. **The audit pool does not reflect the deployment distribution**: 
+     - The model is trained and validated on historical data, but the audit pool is resampled to have equal base rates. This changes the joint distribution. The conditions are satisfied on a distribution that is not the one we care about.
+
+  2. **What is the purpose of the audit?**
+     - The goal is to ensure fairness in the actual use of the model. If the model is applied in a setting with unequal base rates, then the conditions we care about (calibration by group, equal FPR, equal FNR) will not hold simultaneously in the field. Therefore, the audit on the resampled pool does not guarantee fairness in deployment.
+
+  3. **The argument about label bias**:
+     - The proposal argues that the unequal base rates are due to differential arrest practices (label bias) and thus should be corrected. This is a substantive claim. However, even if we accept that, note that the model is being used to predict the outcome (arrest or failure to appear) as it is. The risk assessment is for that outcome. If we change the base rates, we are effectively changing the definition of the prediction task to one with equal base rates. But the real-world task does not have equal base rates.
+
+  4. **What happens if we use the same threshold?**
+     - Suppose we set a threshold on the audit pool (with equal base rates) to achieve a desired trade-off. Then, when we deploy on a population with a different base rate, the same threshold will yield different FPR and FNR by group? Not necessarily, but the conditions (2) and (3) are defined for a threshold. The contract requires that at the threshold chosen (for deployment) the FPR and FNR are equal. But if the threshold is chosen on the deployment data, then the audit pool (with different base rates) might not reflect the same FPR and FNR.
+
+  5. **The model is fixed, but the distribution changes**:
+     - The model is a fixed function, but the conditions (calibration, FPR, FNR) are properties of the joint distribution of (group, features, outcome) and the model. If we change the distribution (by resampling), we change the joint distribution. Therefore, satisfying the conditions on the audit pool does not imply they are satisfied on the deployment data.
+
+  Therefore, the hole in the workaround is that the audit pool is not representative of the deployment environment. The conditions are satisfied on a synthetic distribution, but they will not hold in the real world.
+
+  What to do instead?
+
+  The impossibility theorem tells us that we must choose which two of the three conditions to prioritize. The choice should be based on the context and the values of the agency.
+
+  - **Calibration within groups**: This is important for the interpretation of the score. If the score is calibrated, then a score of 0.7 means a 70% chance of the event, regardless of group. This is important for decision-makers who use the score to set bail or conditions.
+
+  - **Equal FPR**: This ensures that individuals who do not reoffend (or do not fail to appear) are treated similarly across groups. A false positive might lead to unnecessary detention.
+
+  - **Equal FNR**: This ensures that individuals who do reoffend (or fail to appear) are treated similarly across groups. A false negative might lead to releasing someone who then commits a crime or fails to appear.
+
+  In the context of pretrial risk assessment, there is a strong argument for calibration because the scores are used to set conditions and bail. Without calibration, the same score might mean different things for different groups, which could lead to unfairness.
+
+  Regarding the other two, one might choose between:
+  - Equal FPR: to avoid unnecessary detention (which might be seen as a harm to individuals who are not going to reoffend) being applied disproportionately to one group.
+  - Equal FNR: to avoid the harm of releasing someone who then commits a crime (or fails to appear) being disproportionately high in one group.
+
+  Alternatively, one might consider other fairness criteria, such as predictive parity (equal PPV) or equal error rates (overall accuracy). But note that the impossibility result also extends to other combinations.
+
+  In practice, many jurisdictions have chosen to require calibration (or a related condition) and then choose between FPR and FNR. For example, some have argued that in the criminal justice context, avoiding unnecessary detention (thus controlling FPR) is more important because of the harm of detaining someone who is innocent (or not going to reoffend). Others might argue that public safety (thus controlling FNR) is paramount.
+
+  Recommendation:
+
+  1. Acknowledge the impossibility result and the need to prioritize two of the three.
+  2. Base the choice on the values and goals of the agency, considering the potential harms of false positives and false negatives.
+  3. Consider whether other fairness criteria (e.g., equal opportunity, which is equal FNR, or equal odds, which is both equal FPR and equal FNR, but which we know is incompatible with calibration when base rates differ) are more appropriate.
+
+  In summary, the workaround does not achieve the intended goal of having the model satisfy the three conditions in the field. The audit pool is a different distribution, and the conditions will not hold in deployment.
+
+  Therefore, I recommend dropping one of the conditions. The choice should be made by the agency in consultation with stakeholders, considering the relative harms of false positives and false negatives and the importance of having a calibrated score.
+
+  If the agency insists on the workaround, they should be aware that:
+  - The model might perform differently in the real world, and the fairness conditions will not hold.
+  - The threshold chosen on the audit pool might not be the same as the one they would choose on the deployment data.
+
+  However, note that if the model is calibrated on the deployment data (which is not guaranteed by the audit pool, because the resampling changes the distribution) then the base rate difference would cause the FPR and FNR to be different. Specifically, in a calibrated model, the FPR and FNR are linked by the base rates. For example, the FPR in a group is determined by the threshold and the calibration, and the FNR similarly. When base rates differ, the FPR and FNR cannot be equal across groups (unless the model is perfect or the base rates are equal).
+
+  So the workaround does not sidestep the trade-off in the field; it only hides it by evaluating on a different distribution.
+answer: |-
+  Your workaround is clever and addresses the mathematical impossibility by creating a synthetic audit pool with equal base rates. However, it introduces significant practical and ethical concerns that undermine its validity in real-world deployment. Here's a crisp breakdown of the core issues:
+
+  ### **Key Flaws in the Workaround**
+  1. **Artificial Distribution, Real-World Failure**:
+     - The audit pool's resampled data (equal base rates) does **not reflect the deployment environment** where base rates are unequal. A model satisfying all three conditions (calibration, equal FPR/FNR) on the audit pool will almost certainly **fail these conditions in production** when applied to the actual unequal base-rate population. The impossibility theorem still governs real-world deployment.
+
+  2. **Threshold Dependency Mismatch**:
+     - The threshold for decisions (e.g., "high risk") is typically chosen based on **real-world base rates, costs of errors, and policy goals**. A threshold optimized for the audit pool (equal base rates) will behave differently in deployment. Equal FPR/FNR on the pool does not guarantee equality at the same threshold in the field.
+
+  3. **Masking Group-Specific Harms**:
+     - Resampling to equalize base rates effectively erases information about **historical disparities**. If outcomes (e.g., arrests) are influenced by systemic bias (e.g., over-policing), equalizing base rates in the audit pool may obscure disproportionate harms faced by marginalized groups when the model is deployed.
+
+  4. **Vendor Incentives & Gaming**:
+     - Vendors can tune models to pass the audit pool tests without ensuring real-world fairness. They might overfit to the resampled data, compromising performance in deployment. Legal teams might face challenges enforcing "fairness" when the audit doesn't reflect reality.
+
+  ---
+
+  ### **Why the "Deployment Distribution" Matters (DS Team's Point)**
+  - Fairness metrics (calibration, FPR, FNR) are **properties of the joint distribution** of scores, outcomes, and groups. Resampling changes this distribution, so success on the audit pool is **not transportable** to deployment.
+  - Example:  
+    Suppose Group A has a 10% base rate (arrests), and Group B has 30%. After resampling, both have 20%. A model calibrated on the 20% pool will likely **miscalibrate** in deployment (e.g., a score of 0.7 may predict 70% risk on the pool but only 50% for Group A in reality). Equal FPR/FNR on the pool may invert in deployment, worsening disparities.
+
+  ---
+
+  ### **Practical Path Forward: Drop One Criterion**
+  Since all three criteria cannot coexist under unequal base rates, prioritize two based on **your agency's values and legal obligations**:
+
+  | **Option** | **Prioritized Criteria** | **When to Choose** |
+  |------------|---------------------------|---------------------|
+  | **1**      | **Calibration + Equal FPR** | If avoiding unnecessary detention (false positives) is paramount. Reduces disparities in harm to low-risk individuals. |
+  | **2**      | **Calibration + Equal FNR** | If public safety (minimizing failures-to-appear/new arrests) is the goal. Reduces disparities in harm from high-risk releases. |
+  | **3**      | **Equal FPR + Equal FNR** | If procedural equality in errors is legally required (e.g., anti-discrimination statutes). *But note: this sacrifices calibration*, risking scores that misrepresent true risk (e.g., 0.7 may mean 50% risk for Group A and 90% for Group B). |
+
+  #### **Recommendation**
+  1. **Choose calibration as non-negotiable**  
+     Uncalibrated scores mislead decision-makers (e.g., judges). A score must mean the same risk across groups to ensure just decisions.
+  2. **Between FPR and FNR, align with policy goals**  
+     - **Equal FPR** if your agency prioritizes reducing disparities in unnecessary detention (e.g., mitigating over-incarceration of marginalized groups).  
+     - **Equal FNR** if prioritizing equitable public safety outcomes (e.g., ensuring no group bears disproportionate harm from pretrial failures).  
+     *Justification*: Base-rate differences often reflect systemic biases (e.g., policing disparities). Equal FPR/FNR acknowledges these differences while limiting model-exacerbated harms.
+
+  ---
+
+  ### **Email-Ready Summary**
+  > *"While the resampled audit pool mathematically resolves the impossibility theorem, it does so by evaluating fairness on a synthetic distribution that won't match real-world deployment. Consequently, the model may still exhibit disparities when used in practice. Given this, we recommend prioritizing **calibration plus either equal FPR or equal FNR** (but not both). We suggest calibration as essential for score interpretability, and propose **[equal FPR/equal FNR — pick one]** based on our agency's commitment to **[minimizing detention disparities/ensuring equitable public safety]**. This approach balances legal, ethical, and operational needs without relying on an unrepresentative test."*
+
+  This is defensible, avoids mathematical pitfalls, and anchors your choice in institutional values. If legal insists on all three, emphasize that the workaround creates a false sense of fairness—risking litigation when disparities manifest in deployment.

@@ -308,6 +308,7 @@ parameters and 8-bit-or-better endpoints only.
 | run_013 | DeepSeek R1 0528 | 39,944 (batch 041) | 1 | 0 | 0 | 2,845 / 4,409 | 40% | $259.13 |
 | run_014 | DeepSeek R1 0528 | 7,149 x 2 (`r1_gap`) | 0 | 0 | 0 | 2,687 / 3,938 | 38% | $87.33 |
 | run_015 | Qwen3.5-397B-A17B | 49,149 x 2 (`qwen397b_gap`) | 57 | 0 | 54 (truncated ones) | 4,789 / 7,126 | 67% | $1,678.67 |
+| run_017 | DeepSeek R1 0528 | 20,000 x 2 (`batch_045`) | 0 | 0 | 0 | 3,147 / 5,730 | 44% | $302.27 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -343,6 +344,16 @@ The run paused twice with the laptop (a lid-close sleep and a change of network,
 about half an hour each) and resumed on its own; one request that GMICloud ended
 without a finish reason exhausted its attempts and was answered in the queue's second
 pass.
+
+Run 017 (2026-09-19 to 2026-09-21, $302; two R1 samples for the 20,000 prompts of
+batch 045) is as clean as the earlier R1 runs: no truncations, refusal-phrase flags
+(0.1%) that are quoted speech ("you know I can't help it"), three answers under 40
+words that are the one-line joke or the role-played prediction the prompt asked for,
+and repeated-phrase flags (0.7%) that are repeated utility formulas and table rows in
+responses that finished normally. SiliconFlow served all 40,000 at about 1,100
+responses an hour with 48 concurrent requests, sharing the endpoint with run 018 on
+its second day. 48 requests exhausted their attempts in the first pass (rate limits at
+SiliconFlow); the queue's second pass answered them, so coverage is complete.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers

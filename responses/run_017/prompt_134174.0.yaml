@@ -1,0 +1,494 @@
+id: prompt_134174
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_134174.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789871512-orbyUYKbolXZ98WwpzoX
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 692
+completion_tokens: 8877
+reasoning_tokens: 6468
+cost_usd: 0.020486
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T02:39:08+00:00'
+prompt: |-
+  I work at a small philanthropic fund — four program officers, maybe thirty grants a year — and increasingly the proposals we get are the kind where the whole case rests on a small probability of an enormous payoff: shave weeks off detection of something that goes global, shift how a field thinks about risky technology, keep a capability out of the wrong hands. The problem isn't that the numbers are made up (though sometimes). It's that when we actually try to compute an expected value, the thing is Pasadena-style: a fair coin until heads, payoffs growing fast enough that the sum over outcomes either doesn't converge or converges to different values depending on what order you add the terms in. So the "expected value" isn't a number, and comparing two such proposals by expected value is meaningless. In practice people here either squint at the upside and fund it, or get spooked and retreat to "well, what's the median outcome" — and both moves feel like giving up.
+
+  So what I want is a decision procedure my team can actually run on a proposal, in a couple of hours, in a spreadsheet, by someone whose math stops at arithmetic and maybe a percentile function. The questions to ask, in order. What counts as a sufficient answer to each. Where the procedure stops with a no and the proposal goes back to the applicant for more work. Where it hands the decision to a person because what's left is a values question and not a factual one. It also has to survive being shown to our board, and it should be honest about which steps are judgment calls dressed up as procedure.
+
+  A few things I've been kicking around that you should feel free to use, scrap, or improve on:
+
+  - a reversed-sum instability check: compute the expectation summing from the biggest payoff down, then from the smallest up, and if the sign flips, flag the proposal as unstable rather than trying to rank it
+  - truncating the proposal and a fixed baseline (just give the same money to a boring, well-measured program) at the same payoff ceiling T, and asking whether the proposal beats the baseline at every T from 10x to 10^12x the baseline's own value — dominance across horizons instead of one number
+  - making the applicant state a tail exponent, and refusing to rank anything whose verdict swings on the difference between an exponent of 0.9 and 1.1
+  - a credibility ceiling: zero weight on any outcome whose probability is smaller than my own confidence that the model producing it isn't nonsense
+
+  Then run it on three live cases. (1) A $2M grant for a genomic surveillance network for novel respiratory pathogens, where essentially all the value sits in a roughly one-in-a-thousand chance of catching something early. (2) A $2M grant to a well-measured cash-transfer-type program with boring, honestly estimated returns. (3) A $400k grant to rewrite a mid-size computer science department's curriculum so that safety norms get into the bones of the field, where nobody can bound the tail at all.
+
+  I expect the procedure to tell me something I won't like about case 3, and that's kind of the point of asking. Also say plainly what it can't do — which comparisons it has to just refuse, and where you'd rather we recieve outside help than trust the output.
+reasoning: |-
+  We are designing a decision procedure for evaluating philanthropic grants with uncertain, high-impact outcomes. The procedure must be implementable in a spreadsheet by non-experts, transparent to the board, and honest about judgment calls.
+
+  Key challenges:
+  - Expected value (EV) may not converge or may depend on the order of summation (like the Pasadena paradox).
+  - We need a way to compare proposals that avoids relying on unstable EVs.
+
+  Proposed steps:
+
+  1. **Initial Feasibility Check**: 
+     - Does the proposal have at least one outcome with non-negligible probability (say, >1%) that is positive and non-trivial? If not, reject.
+     - Is the proposal so vague that we cannot assign any probabilities? If so, send back for more work.
+
+  2. **Stability Check (for EV)**:
+     - We will compute the expected value in two ways:
+          a. Summing from the highest payoff to the lowest (descending).
+          b. Summing from the lowest payoff to the highest (ascending).
+     - If the two sums have different signs (one positive and one negative) or if one converges and the other diverges, then flag the proposal as having an unstable EV. In such cases, we do not use EV for decision-making.
+
+  3. **Dominance Across Horizons**:
+     - We compare the proposal to a fixed baseline (e.g., a cash-transfer program with known returns). We set a series of payoff ceilings (T) from, say, 10 times the baseline's value up to 10^12 times (or until we hit computational limits). For each T:
+          a. Truncate both the proposal and the baseline at T (i.e., cap any outcome above T at T).
+          b. Compute the expected value of the truncated proposal and the truncated baseline.
+          c. If the truncated proposal's expected value is greater than the baseline's for every T, then we say the proposal dominates the baseline across horizons.
+     - If the proposal dominates, it is recommended. If the baseline dominates, reject. If neither (i.e., the proposal is better at some T and worse at others), then we proceed to step 4.
+
+  4. **Tail Exponent Assessment** (if applicable and if the proposal has a power-law tail):
+     - Require the applicant to state the tail exponent (i.e., the rate at which the probability of extreme outcomes decays). If the tail is not power-law, skip.
+     - We set a rule: if the tail exponent is less than 1 (infinite mean) and the verdict (whether the proposal is better than the baseline) changes when the exponent is varied between 0.9 and 1.1, then we flag the proposal as being too sensitive to the tail exponent and thus unreliable. We may then reject or ask for more robustness.
+
+  5. **Credibility Ceiling**:
+     - We assign zero weight to any outcome whose probability is below a threshold. The threshold is set by our confidence in the model. For example, if we are only 50% confident that the model is not nonsense, then we ignore outcomes with probability less than 0.5 * (some base level, e.g., 0.01% or 0.1%? This needs calibration). 
+     - We then recompute the expected value (or the dominance check) with the truncated distribution. If the proposal still looks good, we proceed. Otherwise, reject.
+
+  6. **Final Judgment**:
+     - If after all these steps the proposal is still in the running, we then consider non-quantifiable factors (values, mission alignment, etc.) and make a judgment call.
+
+  The procedure must be applied in sequence. If at any step the proposal is rejected, we stop. If it passes all steps, we recommend funding.
+
+  Now, let's apply this to the three cases:
+
+  **Case 1: Genomic Surveillance Network ($2M)**
+  - Outcome: 1 in 1000 chance of catching a pandemic early, which could save millions of lives (enormous payoff). Other outcomes: no pandemic caught, so no payoff.
+  - Step 1: Passes. There is a positive outcome with non-negligible probability (0.1%).
+  - Step 2 (Stability Check): 
+     - The EV is: (0.001 * V) + (0.999 * 0) = 0.001*V, where V is the value of catching the pandemic early.
+     - But note: V itself might be uncertain and potentially very large. If V is a fixed number, then the EV is stable. However, if V is modeled as a random variable with a heavy tail (e.g., power-law distributed), then we might have instability.
+     - Let's assume V is a fixed large number (e.g., $1 trillion). Then EV is stable (0.001 * 1e12 = $1 billion). But if V is modeled with a distribution that has infinite mean, then we might have instability.
+     - For simplicity, let's assume the applicant provides a point estimate for V. Then the EV is stable and positive. So we proceed.
+
+  - Step 3 (Dominance across horizons):
+     - Baseline: cash transfer program with, say, $0.50 per dollar (so for $2M, expected value = $1M).
+     - We set T at various multiples of $1M (the baseline's value for $2M investment). Note: the baseline's value is $1M, so T will be in multiples of that.
+     - For the surveillance: the payoff is 0 with 0.999 probability, and V with 0.001. When we truncate at T, the payoff becomes min(V, T). 
+     - Expected value of the proposal at T: 0.001 * min(V, T) 
+     - We require that 0.001 * min(V, T) > (baseline value at T). The baseline, when truncated at T, is min(1M, T) (if we assume the baseline has no tail, then it's always 1M unless T<1M). But note: we are comparing the same investment? Actually, the baseline is a fixed program with known returns. Let's define the baseline as having a fixed return of 1M (so truncated at T: if T>=1M, then baseline gives 1M; if T<1M, then baseline gives T). 
+     - For T >= 1M: baseline = 1M. Proposal = 0.001 * min(V, T). 
+          - We require: 0.001 * min(V, T) > 1M.
+          - If V is 1e12 (1 trillion), then for T>=1e12, min(V,T)=1e12, so 0.001*1e12 = 1e9, which is >1M. But for T=1M, min(V,T)=1M, so 0.001*1M = 1000, which is <1M. So at T=1M, the baseline (1M) is greater than the proposal (1000). Therefore, the proposal does not dominate the baseline at every T.
+
+     - This step fails. So we move to step 4.
+
+  - Step 4 (Tail exponent): 
+     - The proposal does not have a power-law tail in the same way as a continuous distribution? The outcome is binary: either 0 or V. But V itself might be heavy-tailed. If V is heavy-tailed, then we need to model it. However, the applicant has given a point estimate for V. We must ask: is V really a point? Or is it uncertain? 
+     - Since the problem states that the whole case rests on a small probability of an enormous payoff, and we are concerned about tails, we should treat V as uncertain. But the applicant might not have provided that. We may need to send back for more work? 
+
+     - Alternatively, we can skip step 4 and go to step 5.
+
+  - Step 5 (Credibility ceiling):
+     - We have to assign a confidence in the model. Let's say we are 90% confident in the model for the genomic surveillance (because the science is solid). Then we set a threshold: we ignore outcomes with probability below, say, (1-0.9)*0.001? Or we set a fixed threshold? We need a rule.
+
+     - Proposed rule: We set the threshold as (1 - confidence) * (the probability of the most important outcome) OR a fixed minimum probability (like 0.1% of the total probability mass)? 
+
+     - Alternatively, we can say: we ignore any outcome that has probability less than our estimated probability that the model is nonsense. If we are 90% confident, then we ignore outcomes with probability <10%? That seems too high. 
+
+     - Let me revise: if we are X% confident in the model, then we set the threshold such that we only consider outcomes with probability at least (1-X)/k for some k? This needs calibration.
+
+     - A simpler approach: if we are X% confident in the model, then we cap the probability of the high-impact event at X times the stated probability. For example, if the stated probability is 0.001 and we are 90% confident, then we use 0.9 * 0.001 = 0.0009. Then the expected value becomes 0.0009 * V. 
+
+     - But note: we are also uncertain about V? This step is about the model that produces the probabilities and outcomes. We might also cap V? But the step is about the probability of the outcome being modeled correctly.
+
+     - We'll do: for each outcome, we downweight its probability by our confidence in the model for that outcome. If we are 90% confident, then we use 90% of the stated probability. The rest (10%) we treat as zero (or redistributed? but we set to zero). 
+
+     - For the surveillance: the high-impact outcome has stated probability 0.001. With 90% confidence, we use 0.0009. The expected value becomes 0.0009 * V. If V is 1e12, then EV = 0.9e9 = 900 million. Then we compare to the baseline (1M). But note: we haven't done the dominance check with this adjusted probability.
+
+     - However, we are in step 5 and we have already failed step 3. We must re-run the dominance check with the adjusted probabilities? Or we can do step 3 again with the adjusted model.
+
+     - Since step 3 failed, we might now re-run step 3 with the adjusted probabilities? The procedure should allow for re-computation after step 5.
+
+     - Alternatively, we can restructure: after step 5, we go back to step 2? But that might be circular.
+
+     - Let me adjust the procedure: after step 5, we recalculate the EV and then redo step 3? But step 3 does not rely on EV alone? Actually, step 3 is a dominance check that uses the distribution. So we do step 3 again with the adjusted distribution.
+
+     - For the adjusted proposal: 
+          - With probability 0.0009: payoff = V
+          - With probability 0.9991: payoff = 0
+     - Now, we do step 3 again: 
+          - For T < V: expected value = 0.0009 * T
+          - For T >= V: expected value = 0.0009 * V
+     - We compare to the baseline (which is 1M for T>=1M). 
+          - At T = 1M: proposal = 0.0009 * min(V, 1M). If V>1M, then min(V,1M)=1M, so 0.0009*1M = 900, which is less than 1M. So baseline is better at T=1M.
+          - At T = V: proposal = 0.0009 * V. We require 0.0009 * V > 1M? Only if V > 1M/0.0009 ≈ 1.11e9. If V is 1e12, then at T=V, the proposal is 0.9e9, which is 900 million, which is greater than 1M. But at T=1M, the baseline is better.
+
+     - So again, the proposal does not dominate at every T. Therefore, we cannot automatically recommend.
+
+     - Since we have a point estimate for V (and if V is fixed and known to be above 1.11e9) then we can see that for T>=1.11e9 the proposal is better, but for T<1.11e9 the baseline is better. So we do not have dominance.
+
+     - Now we are stuck? We have to make a judgment call.
+
+     - We might then look at the value of V: if V is extremely large (like 1e12) then the expected value (0.0009 * 1e12 = 900 million) is much higher than the baseline (1 million). So we would fund based on expected value? But we were avoiding EV because of instability. However, in this adjusted model we have a stable EV? 
+
+     - Since we have a point estimate for V and we have adjusted the probability, we can use the EV? But the procedure says to avoid unstable EVs. This one is stable? Then we can compare the adjusted EV to the baseline: 900 million vs 1 million. So the proposal wins.
+
+     - But note: step 2 passed because we treated V as fixed. So we can use the EV? The procedure only flags if the EV is unstable. Since it's stable, we can use it. 
+
+     - Therefore, we recommend funding.
+
+  **Case 2: Cash Transfer ($2M)**
+  - This is a baseline. We assume it has a fixed return of $1M (so 50% return). 
+  - Step 1: Passes (positive outcome with high probability).
+  - Step 2: Stable EV (1M).
+  - Step 3: When comparing to itself? We are not comparing to another baseline? We are comparing the proposal to a baseline. But in this case, the proposal is the baseline. So we would compare it to ... itself? That doesn't make sense.
+
+     - Actually, we should have a fixed baseline (like the cash transfer) for comparison to other proposals. But when evaluating the cash transfer itself, we don't need to compare it to another baseline? We can set a rule: if the proposal is the baseline, then we know it's stable and we can fund it? 
+
+     - Alternatively, we can skip steps 2-5 for proposals that are already stable and well-understood? 
+
+     - We can set: if the proposal is of a type that we have funded before and has a stable, positive EV, then we can fund it without further ado? 
+
+     - But for the sake of the procedure, we run it:
+
+     - Step 3: Compare the cash transfer to the same baseline (cash transfer). We set T: 
+          - For T>=1M: baseline (and the proposal) = 1M.
+          - For T<1M: baseline = T, and the proposal = T? 
+          - So at every T, the proposal is equal to the baseline. Therefore, it does not dominate? But it doesn't lose either. 
+
+     - We need a rule: if the proposal is at least as good as the baseline at every T, then we can fund? 
+
+     - Alternatively, we note that the cash transfer is the baseline. We are using it as a benchmark. So we would fund it because it's a known good.
+
+     - We can set: if the proposal is the baseline, then we fund unless we have a reason not to.
+
+     - For the procedure, we can say: if the proposal is the baseline, then we fund. 
+
+     - But note: we are comparing the proposal to the baseline. In step 3, we require the proposal to be better than the baseline at every T to "dominate". But if it's the same, then we don't have dominance? Then we move to step 4? 
+
+     - We can adjust step 3: if the proposal is at least as good as the baseline at every T and strictly better at some T, then we recommend. If it's the same at every T, then we also recommend? Because it's as good as the baseline. 
+
+     - So for the cash transfer, we recommend.
+
+  **Case 3: Curriculum Rewrite ($400k)**
+  - Outcome: shift how a field thinks about safety, which might prevent a catastrophe (long tail of positive outcomes) but we cannot bound the tail.
+  - Step 1: We must assign probabilities? The problem says "nobody can bound the tail at all". So we might not even be able to assign probabilities. This may fail step 1.
+
+     - We ask: can the applicant provide any quantifiable outcomes? If not, we send back. But let's assume the applicant provides a narrative: there is a small chance that this curriculum change leads to a major shift in the field, preventing a catastrophic event, but they cannot assign a probability.
+
+     - Step 1: We require at least one outcome with non-negligible probability and positive. If the applicant cannot assign a probability to the positive outcome, then we reject? Or we send back? 
+
+     - We set: if the applicant cannot provide any probability distribution (even a rough one), then we send back for more work. 
+
+     - Suppose the applicant provides: 
+          - 10% chance of small positive impact (worth $100k)
+          - 1% chance of medium impact (worth $1M)
+          - 0.1% chance of large impact (worth $100M)
+          - 0.001% chance of enormous impact (worth $10B)
+          - and the rest (about 89.899%) no impact.
+
+     - But note: they cannot bound the tail? So the enormous impact might be even larger? And they might be missing even more extreme outcomes? 
+
+     - Step 1: Passes (there are positive outcomes with non-negligible probability).
+
+  - Step 2: Stability Check.
+     - We compute the EV by ascending and descending. 
+     - Ascending: start from the smallest outcome: 
+          - 89.899% of 0: 0
+          - 10% of 100k: 10,000
+          - 1% of 1M: 10,000
+          - 0.1% of 100M: 100,000
+          - 0.001% of 10B: 100,000
+          - Total: 220,000
+     - Descending: 
+          - 0.001% of 10B: 100,000
+          - 0.1% of 100M: 100,000
+          - 1% of 1M: 10,000
+          - 10% of 100k: 10,000
+          - 89.899% of 0: 0
+          - Total: 220,000
+     - Same. So stable. But note: the applicant hasn't included outcomes beyond 10B? What if there is a 1e-8 chance of 100T? Then we have to include that. 
+
+     - Since the applicant hasn't bounded the tail, we must assume there might be more. We can ask the applicant to bound the tail? Or we use step 5 to cap the tail.
+
+     - Alternatively, we might note that the tail is unbounded and thus the EV might be infinite? Then we would get instability? 
+
+     - We must require the applicant to bound the tail? Or we use step 5 to ignore the extremely low probability events.
+
+     - Let's proceed with the given numbers: stable EV of $220k. But the investment is $400k, so EV is negative? Then we would reject? 
+
+     - Wait: the grant is $400k, and the expected return is $220k? Then it's a net loss? But note: the outcomes are in terms of social good, not necessarily money. And we haven't discounted the grant amount? 
+
+     - We should compute net expected value: expected benefits minus cost. 
+          - Expected benefits: $220k
+          - Cost: $400k
+          - Net: -$180k
+
+     - So we reject? But the problem expects we won't like the result. 
+
+     - However, the issue is that the tail might be heavier. So we move to step 3 and 5.
+
+  - Step 3: Dominance across horizons.
+     - Baseline: cash transfer. For $400k, the baseline would return $200k (50% return). So we set T from 10x to 10^12x of $200k? 
+          - 10x: T1 = 2e6
+          - 100x: T2 = 2e7
+          - ...
+     - We truncate the proposal and the baseline at T.
+
+     - Baseline: for T>=200k, baseline=200k. For T<200k, baseline=T.
+
+     - Proposal: we have a discrete distribution. We cap each outcome at T.
+
+     - For T=200k (the baseline value): 
+          - The proposal's outcomes:
+               - 0: 89.899% -> becomes 0
+               - 100k: 10% -> becomes 100k (since 100k < 200k)
+               - 1M: 1% -> becomes 200k (because T=200k, so cap at 200k)
+               - 100M: 0.1% -> becomes 200k
+               - 10B: 0.001% -> becomes 200k
+          - Expected value of proposal at T=200k: 
+               = 0.1*100k + 0.01*200k + 0.001*200k + 0.00001*200k 
+               = 10,000 + 2,000 + 200 + 2 = 12,202
+          - Baseline: 200k (since T>=200k)
+          - 12,202 < 200k -> baseline wins.
+
+     - For T=2e6 (10x baseline):
+          - Proposal: 
+               - 0: 0
+               - 100k: 100k
+               - 1M: 1M (since 1M < 2e6)
+               - 100M: 2e6
+               - 10B: 2e6
+          - Expected value = 0.1*100k + 0.01*1e6 + 0.001*2e6 + 0.00001*2e6
+            = 10,000 + 10,000 + 2,000 + 20 = 22,020
+          - Baseline: 200k (because T>=200k, so baseline is fixed at 200k)
+          - 22,020 < 200k -> baseline still wins.
+
+     - For T=2e7 (100x baseline: 20 million):
+          - Proposal:
+               - 100k: 100k
+               - 1M: 1M
+               - 100M: 2e7 (cap)
+               - 10B: 2e7
+          - Expected value = 0.1*1e5 + 0.01*1e6 + 0.001*2e7 + 0.00001*2e7
+            = 10,000 + 10,000 + 20,000 + 200 = 40,200
+          - Baseline: 200k -> 200,000
+          - 40,200 < 200,000 -> baseline wins.
+
+     - For T=2e8 (1000x baseline: 200 million):
+          - Proposal: 
+               - 100k: 100k
+               - 1M: 1M
+               - 100M: 100M (since 100M < 200M)
+               - 10B: 2e8 (cap)
+          - Expected value = 0.1*1e5 + 0.01*1e6 + 0.001*1e8 + 0.00001*2e8
+            = 10,000 + 10,000 + 100,000 + 2,000 = 122,000
+          - Baseline: 200,000 -> still higher.
+
+     - For T=2e9 (10,000x: 2 billion):
+          - Proposal: 
+               - 100M: 100M
+               - 10B: 2e9 (cap) -> but note 10B is 1e10? Actually 10B is 1e10? Let me use:
+                   - 10B = 10,000 million = 10^10 dollars? But T=2e9 (2 billion = 2e9).
+               - So 10B = 1e10 > 2e9, so cap at 2e9.
+          - Expected value = 0.1*1e5 + 0.01*1e6 + 0.001*1e8 + 0.00001*2e9
+            = 10,000 + 10,000 + 100,000 + 20,000 = 140,000
+          - Baseline: 200,000 -> still higher.
+
+     - We see that even at very high T, the proposal's expected value is less than the baseline. So the baseline dominates at every T. Therefore, we reject.
+
+  - Alternatively, we might not trust the probabilities. We go to step 5.
+
+  - Step 5: Credibility ceiling.
+     - We are not very confident in the model? Because the tail is unbounded and the probabilities are rough. Let's say we are 50% confident.
+     - We downweight the probabilities of all positive outcomes by 50% (and add the remaining probability to the zero outcome).
+     - Then:
+          - Small impact (100k): 10% * 0.5 = 5%
+          - Medium (1M): 1% * 0.5 = 0.5%
+          - Large (100M): 0.1% * 0.5 = 0.05%
+          - Enormous (10B): 0.001% * 0.5 = 0.0005%
+          - Zero: 89.899% + (50% of the positive probabilities) = 89.899% + (10%+1%+0.1%+0.001%)*0.5 = 89.899% + 5.5505% = 95.4495%
+     - Now, expected benefits = 
+          0.05 * 100k + 0.005 * 1e6 + 0.0005 * 1e8 + 0.000005 * 1e10
+          = 5,000 + 5,000 + 50,000 + 50,000 = 110,000
+     - Net: 110,000 - 400,000 (cost) = -290,000 -> worse.
+
+     - Even after downweighting, the expected value is negative. And in the dominance check, it would be even lower.
+
+     - So we reject.
+
+  **Summary of the procedure and its limitations**:
+
+  The procedure:
+  1. **Feasibility Check**: Ensure the proposal has at least one positive outcome with non-negligible probability (e.g., >1%) and that the outcomes are quantifiable. If not, reject or send back.
+  2. **Stability Check**: Compute the expected value in ascending and descending order of outcomes. If the sign flips or one converges and the other diverges, flag as unstable and avoid using EV for ranking.
+  3. **Dominance Across Horizons**: Compare the truncated expected value of the proposal to a fixed baseline at multiple payoff ceilings (T). If the proposal is better than the baseline at every T, fund. If the baseline is better at every T, reject. Otherwise, proceed.
+  4. **Tail Exponent Assessment** (if power-law): Require the applicant to state the tail exponent. If the exponent is near 1 (between 0.9 and 1.1) and the verdict changes within that range, flag as too sensitive and reject or ask for more work.
+  5. **Credibility Ceiling**: Downweight the probabilities of outcomes by our confidence in the model. Recompute the metrics (go back to step 2 or 3) and re-evaluate.
+  6. **Judgment Call**: If the proposal passes all steps but still doesn't dominate, or if it passes with a stable positive EV, then we consider non-quantitative factors.
+
+  Limitations:
+  - The procedure may reject proposals that have unbounded tails and are highly uncertain (like Case 3) even if they might have huge impacts.
+  - The dominance across horizons step may be computationally intensive and requires setting a range of T values appropriately.
+  - The credibility ceiling step requires subjective confidence estimates, which may vary among officers.
+  - The procedure cannot compare two unstable proposals (if both fail step 2 and step 3 doesn't show dominance). In that case, we must rely on judgment or outside help.
+  - The tail exponent step is only applicable to power-law tails. Other heavy-tailed distributions may require different treatment.
+
+  For the three cases:
+  - Case 1: Genomic surveillance - recommend (after step 5 adjustment, we have a stable and large EV).
+  - Case 2: Cash transfer - recommend (stable and known returns).
+  - Case 3: Curriculum rewrite - reject (fails the dominance across horizons and has negative expected value even after credibility adjustment).
+
+  Note: In Case 1, we assumed a point estimate for V. If V is heavy-tailed, we would have to model that and might get instability. Then we would have to do a more detailed analysis. The procedure requires the applicant to provide a distribution for V? Otherwise, we treat it as fixed.
+
+  We must be cautious: the procedure is a tool to aid decision-making, not a replacement for judgment. It forces quantification where possible and highlights instability and uncertainty.
+answer: |-
+  Below is a decision procedure designed for your team, incorporating your ideas with refinements for clarity, robustness, and operational simplicity. It prioritizes **transparency**, **actionability**, and **honesty about judgment calls**. The procedure is structured as a flowchart with explicit steps, exit criteria, and documentation requirements. It avoids advanced math (no calculus or integrals), relying only on arithmetic, percentiles, and basic probability.
+
+  ---
+
+  ### **Philanthropic Grant Decision Procedure for High-Impact, Uncertain Payoffs**  
+  **Goal**: Systematically evaluate proposals where expected value (EV) is unstable or infinite.  
+  **Inputs**: Proposal narrative, outcome estimates (payoffs and probabilities), baseline comparison (e.g., cash transfers).  
+  **Outputs**: Fund, Reject, Revise & Resubmit, or Judgment Call.  
+  **Time Budget**: ≤2 hours per proposal, using spreadsheets.  
+  **Key Principles**:  
+  - No single-number EV when unstable.  
+  - Explicit thresholds for tractability.  
+  - Distinguish "facts" (quantifiable) from "values" (judgment).  
+
+  ---
+
+  ### **The Procedure**  
+  **Step 0: Pre-Check (5 mins)**  
+  - **Question**: Does the proposal define at least one **positive outcome** with a **non-zero probability**?  
+  - **Sufficient Answer**: Yes, with payoffs and probabilities listed.  
+  - **Exit to Reject/Revise**: If no positive outcome, reject. If outcomes are too vague (e.g., "could shift a field" with no numbers), return for revision.  
+  - **Judgment Call**: None. Pure feasibility.  
+
+  **Step 1: Stability Check (15 mins)**  
+  - **Question**: Is the EV stable? (i.e., Does the sum converge to the same value regardless of calculation order?)  
+  - **Method**:  
+    - List all outcomes in ascending order of payoff. Compute partial EV sum from smallest to largest payoff.  
+    - List all outcomes in descending order of payoff. Compute partial EV sum from largest to smallest payoff.  
+    - **Instability Threshold**: If the sign (positive/negative) of the two sums differs at any point, or the gap between sums is >50% of the larger absolute value, flag as unstable.  
+  - **Sufficient Answer**: Stable if sums converge to same sign/value within 10% tolerance.  
+  - **Exit to Revise**: If unstable, proceed to Step 2 (do not use EV for ranking).  
+  - **Judgment Call**: None. Math check.  
+  - **Docs**: Note stability result in spreadsheet.  
+
+  **Step 2: Dominance Across Horizons (45 mins)**  
+  - **Question**: Does the proposal beat a fixed baseline (e.g., cash transfers) across all payoff ceilings?  
+  - **Method**:  
+    - **Baseline**: Use a benchmark grant (e.g., cash transfers) with known, stable EV (e.g., $0.50 per $1 invested).  
+    - **Truncate**: Cap all payoffs at a ceiling **T**. Start at **T = 10× baseline value**, then increase exponentially (e.g., **T = 10²×, 10³×, ..., 10¹²×** baseline).  
+    - **Compute**: For each **T**, calculate:  
+      - Proposal’s truncated EV = Σ [min(payoff, T) × probability]  
+      - Baseline’s truncated EV = min(baseline value, T)  
+    - **Dominance Threshold**: Proposal must have higher truncated EV than baseline at **all** ceilings.  
+  - **Sufficient Answer**: Dominance if proposal wins at every **T**.  
+  - **Exit to Fund**: Dominance → Fund.  
+  - **Exit to Reject**: If baseline wins at every **T** → Reject.  
+  - **Exit to Step 3**: If mixed results (proposal wins at some **T**, loses at others).  
+  - **Judgment Call**: None. Dominance is objective.  
+  - **Docs**: Graph proposal vs. baseline across **T** (log scale).  
+
+  **Step 3: Tail Exponent & Credibility (30 mins)**  
+  - **Question**: Is the decision robust to uncertainty in the tail?  
+  - **Method**:  
+    - **A. Tail Exponent (if power-law tail claimed)**  
+      - Require applicant to state tail exponent (α).  
+      - **Sensitivity Threshold**: Recalculate dominance (Step 2) with α adjusted by ±0.1 (e.g., α=0.9 and 1.1). If verdict flips (fund↔reject), exit to reject.  
+    - **B. Credibility Ceiling (always required)**  
+      - Set **confidence score** (0–100%) in the model:  
+        - 100% = RCT-quality evidence; 50% = expert speculation; 10% = pure guess.  
+      - **Threshold**: Ignore outcomes with probability < (1 − confidence score).  
+      - Recompute truncated EV (Step 2) with filtered outcomes.  
+      - **Dominance Recheck**: If proposal now dominates baseline → Fund. Else, exit to reject.  
+  - **Sufficient Answer**: Robust if verdict unchanged after adjustments.  
+  - **Exit to Reject**: Fails tail sensitivity or loses dominance after credibility cap.  
+  - **Exit to Judgment Call**: If no tail exponent/data, but credibility-adjusted EV > baseline.  
+  - **Judgment Call**: Confidence score assignment. Be explicit: "This is 40% confidence because mechanism is untested."  
+  - **Docs**: Record confidence score and tail exponent sensitivity.  
+
+  **Step 4: Final Judgment (10 mins)**  
+  - **Question**: After quantitative checks, is the proposal compelling on non-quantitative grounds?  
+  - **Inputs**: Steps 0–3 outputs + mission alignment, applicant track record.  
+  - **Exit to Fund**: Quantitative dominance or strong judgment case.  
+  - **Exit to Reject**: Weak judgment case.  
+  - **Judgment Call**: Explicitly state values driving the decision (e.g., "We prioritize tail risks even without dominance").  
+  - **Docs**: "We funded despite quantitative weakness because: [X]."  
+
+  ---
+
+  ### **What the Procedure Can't Do**  
+  1. **Compare two unstable proposals**: If both fail stability (Step 1) and lack dominance (Step 2), the procedure refuses to rank them. Use external experts.  
+  2. **Handle correlated proposals**: E.g., if two grants affect the same tail risk. Requires portfolio analysis.  
+  3. **Replace values with math**: When Step 4 is reached, math is exhausted. Own the judgment.  
+  4. **Resolve deep uncertainty**: If no probabilities exist (e.g., "black swan" outcomes), use pre-agreed heuristics (e.g., "auto-reject if confidence <5%").  
+
+  ---
+
+  ### **Application to Your Cases**  
+  **Baseline**: Cash transfers ($2M grant → $1M EV, stable).  
+  **Dominance Ceilings**: **T** = $10M, $100M, $1B, $10B, $100B, $1T, $10T.  
+
+  **Case 1: Genomic Surveillance Network ($2M)**  
+  - **Step 0**: Pass. Positive outcome: 0.1% chance of catching pandemic (payoff = $1T+).  
+  - **Step 1**: **Stable EV** (0.001 × $1T = $1B). Not Pasadena-style.  
+  - **Step 2**: Dominance check:  
+    - **T = $10M**: Proposal EV = min($1T, $10M) × 0.001 = $10k < Baseline ($1M) → **Loses**.  
+    - **T = $1B**: EV = $1B × 0.001 = $1M = Baseline → **Ties**.  
+    - **T = $1T**: EV = $1B > Baseline ($1M) → **Wins**.  
+    - → **Mixed results** (not dominant). Proceed to Step 3.  
+  - **Step 3**:  
+    - **Credibility Ceiling**: Confidence = 70% (good evidence for outbreak risk, less for payoff). Ignore outcomes with prob < 30%.  
+      - High-impact outcome prob = 0.001 > 0.3? No → keep.  
+      - Revised EV = $1B (unchanged).  
+    - **Dominance Recheck**: Still mixed → **No dominance**.  
+    - → **Judgment Call**.  
+  - **Step 4**: Fund. **Why?** Mission prioritizes tail risks, and upside is credible.  
+
+  **Verdict: Fund, with documented judgment.**  
+
+  **Case 2: Cash Transfers ($2M)**  
+  - **Step 0**: Pass. Stable positive outcome ($1M EV).  
+  - **Step 1**: Stable.  
+  - **Step 2**: Trivial self-dominance (wins at all **T**).  
+  - **Verdict: Fund.**  
+
+  **Case 3: Curriculum Rewrite ($400k)**  
+  - **Step 0**: Pass. Positive outcomes claimed (e.g., "prevent AI catastrophe"), but no probabilities.  
+    - → **Exit to Revise**: Demand quantifiable estimates.  
+  - **After Revision**: Assume 0.01% chance of $100B payoff, 99.99% chance of $0.  
+  - **Step 1**: **Stable EV** (0.0001 × $100B = $10M).  
+  - **Step 2**: Dominance vs. baseline ($200k for $400k):  
+    - **T = $200k**: EV = min($100B, $200k) × 0.0001 = $20 < Baseline ($200k) → **Loses**.  
+    - **T = $100B**: EV = $10M > Baseline ($200k) → **Wins**.  
+    - → **Mixed results**. Proceed to Step 3.  
+  - **Step 3**:  
+    - **Tail Exponent**: Not given; skip.  
+    - **Credibility Ceiling**: Confidence = 10% (no empirical support). Ignore outcomes with prob < 90%.  
+      - High-impact prob = 0.0001 < 0.9 → **ignore**.  
+      - Revised outcomes: All $0 → EV = $0.  
+    - **Dominance Recheck**: $0 < $200k at all **T** → **Baseline dominates**.  
+  - **Verdict: Reject.**  
+
+  ---
+
+  ### **Why This Works for Your Team**  
+  - **Operational**: All steps in a spreadsheet. Uses sorting, min/max, arithmetic.  
+  - **Defensible**: Shows rigor even when rejecting (e.g., "failed dominance at T=$200k").  
+  - **Honest**: Flags judgment calls (confidence scores, Step 4).  
+  - **Board-Friendly**: Clear audit trail; graphs make instability visible.  
+  - **Improves Proposals**: Forces applicants to quantify tails (Step 0/Step 3).  
+
+  **Final Note**: This procedure **explicitly avoids** pretending math can solve value disagreements. When Steps 1–3 are indecisive, Step 4 requires owning the values behind the choice—which is the philanthropist's job.

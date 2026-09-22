@@ -1,0 +1,442 @@
+id: prompt_125288
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_125288.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789854035-a3I39RRCajUeiy0XXAVA
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 604
+completion_tokens: 7846
+reasoning_tokens: 6663
+cost_usd: 0.018103
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-19T21:46:35+00:00'
+prompt: |-
+  I'm putting together a monitoring setup for a deployed model, and the check I care about is: is it still producing behavior X through the mechanism we certified, or is it getting X some other way? I keep ruling on cases by gut and want to know what principle I actually believe. My verdicts, all for the same task and the same output:
+
+  Two fine-tunes off the same base, patching the same heads at the same layers kills the behavior in both — same mechanism, not an anomaly.
+  Same, except the head has moved (one model does the work in head 3.0, other in 7.2, functionally identical) — still same; I don't want to flag a permutation.
+  Same weights, different prompt template, same causal story when I patch — same mechanism.
+  I ablate the main pathway, the model reroutes through backup heads and recovers the behavior — different mechanism, and precisely what I want flagged, even though output is identical.
+  Right answer, but it's in the training data — definitely a different mechanism, definitely an anomaly.
+  Right answer, but now driven by a say-what-the-user-wants feature rather than the one that tracks the facts — different, anomaly.
+  Same task in another language, and patching the same components degrades it the same way — I want to say same mechanism, but I'm much less sure than in case one and I can't say why.
+  A bigger model running what looks like the same algorithm, except the computation is spread across more layers with an extra detour before the answer — I say same, my colleague says different, and I don't know what would settle it.
+  The pair I can't reconcile: same wiring at the coarse who-reads-from-what level, but the features actually encoded in the residual stream have drifted. For understanding the model I call that the same mechanism; for deciding whether to let it keep running I call it an anomaly. Same case, two verdicts, and "it depends on the grain" strikes me as restating the problem rather than answering it.
+
+  My tentative principle: two behaviors share a mechanism iff you could swap the internals between the two systems under some translation map and neither the behavior nor its pattern of breakdown under a battery of perturbations changes. Handles cases one through six cleanly, mostly silent on seven and eight. But it's circular in a way I can't shake — it says "same mechanism" iff a suitable map exists, and what makes a map suitable is that it preserves the mechanism — and I don't see how to cash that out without already having a notion of grain. Is that fixable, or do I need a different principle? Give me one that rules on seven and eight, tell me whether nine really has to get two answers or whether one of my verdicts there should go, and hand me a case your principle decides that I haven't listed — ideally one where I'd be surprised.
+reasoning: |-
+  We are trying to formalize the notion of when two models (or two instances of the same model under different conditions) are using the "same mechanism" for producing a behavior X. The goal is to monitor for when the model starts using a different mechanism (anomaly) even if the output is the same.
+
+   The cases:
+
+   1. Two fine-tunes off same base, patching same heads at same layers kills behavior in both -> same mechanism.
+   2. Same as 1 but head has moved (e.g., from 3.0 to 7.2) -> same mechanism (permutation should be allowed).
+   3. Same weights, different prompt template, same causal story (via patching) -> same mechanism.
+   4. Ablate main pathway, model reroutes through backup heads -> different mechanism (anomaly).
+   5. Right answer but from training data memorization -> different mechanism (anomaly).
+   6. Right answer driven by "say-what-user-wants" feature instead of "facts" feature -> different mechanism (anomaly).
+   7. Same task in another language, patching same components degrades same way -> same mechanism? (less sure)
+   8. Bigger model running same algorithm but spread out with extra detour -> same? (colleague says different)
+   9. Same wiring at coarse level, but features in residual stream have drifted -> for understanding same, for monitoring anomaly.
+
+   Proposed principle: same mechanism iff there exists a translation map (isomorphism) that, when swapping the internals, preserves the behavior and its breakdown pattern under perturbations.
+
+   However, the user notes a circularity: the map is suitable if it preserves the mechanism, but we haven't defined what the mechanism is independently.
+
+   We need a principle that avoids circularity and can handle cases 7, 8, and 9.
+
+   Alternative approach: define the mechanism at the level of causal pathways and the features they compute. Specifically:
+
+   Principle: Two behaviors (in two models or two contexts) are produced by the same mechanism if and only if:
+     (a) They rely on the same set of causal pathways (defined by the nodes and edges in the computational graph that are necessary and sufficient for the behavior) up to a relabeling that preserves the graph structure and the type of computation at each node.
+     (b) The features (i.e., the semantic content of the representations) at corresponding nodes in the causal pathways are the same.
+
+   But note: in case 2, the head has moved (so the node labels are different) but the graph structure and computation type are the same? We need to allow for relabeling.
+
+   However, in case 9, the wiring is the same but the features have drifted. So condition (b) is violated.
+
+   Let's break down:
+
+   - Condition (a) is about the structure of the computation: which components (neurons, heads, layers) are involved and how they are connected (who reads from what). This is the "wiring".
+   - Condition (b) is about the meaning of the representations: what features are being represented at the same points in the computation.
+
+   Now, for the cases:
+
+   1. Same base, same heads at same layers: (a) same, (b) same? (because same weights) -> same.
+   2. Head moved: if we allow relabeling, then we can map head 3.0 in model1 to head 7.2 in model2 and the rest accordingly. Then (a) holds because the graph structure (connections) is the same. (b) holds because the features computed by that head are the same? (if the fine-tune just moved the head without changing the feature) -> same.
+   3. Same weights, different prompt template: the causal story via patching is the same. Condition (a): same pathways (since same weights, the graph is the same). Condition (b): the features in the residual stream might be different because of the prompt? But note: the causal story is the same. We must note that condition (b) is about the features in the context of the task. The prompt might change the input features but the transformation by the model is the same. So if the prompt change doesn't alter the internal features for the part of the computation that matters for the task, then (b) holds. Otherwise, if the prompt change leads to a different set of features being used (even if the weights are the same) then (b) might be violated. However, the user says "same causal story when I patch". So we assume the same internal features are being used. -> same.
+   4. Main pathway ablated, rerouted: (a) the causal pathway changes (now using backup heads) -> condition (a) violated -> different.
+   5. Training data memorization: the causal pathway is different (e.g., direct recall from an earlier layer without the usual reasoning steps). Also, the features might be different (e.g., a "retrieval" feature instead of a "reasoning" feature). -> different.
+   6. Driven by "say-what-user-wants": the causal pathway might be the same? (if the same heads are involved) but the feature at some node is now a "user wants X" instead of "fact X". So condition (b) fails -> different.
+
+   7. Same task in another language: 
+      - Condition (a): if the same layers and heads are involved (via patching) and the degradation pattern is the same, then the wiring (graph) is the same? 
+      - Condition (b): the features must now be in the other language. But note: the feature might be the same semantic content but in a different language. For example, the feature might be "the capital of France" and in the English model it's represented with English tokens, in the French model with French tokens. But the model might have a language-agnostic representation? If so, then condition (b) holds. However, if the model has language-specific features, then condition (b) might fail. The user is less sure. We need to know: are the features the same? Without knowing the internals, we rely on the degradation pattern. But note: the degradation pattern (via patching) being the same suggests that the role of the nodes is the same. So we might consider that condition (b) is satisfied if the semantic content is the same, even if the surface form (language) is different. So we can call it same mechanism.
+
+   8. Bigger model, same algorithm spread out: 
+      - Condition (a): the graph structure is not the same because there are more layers and an extra detour. So condition (a) fails? But note: we might have a mapping that collapses the extra layers? Or we might have a mapping that considers the extra detour as a single node? The problem is that the computation is spread. We need to see if the causal pathway (the necessary and sufficient steps) are the same, but with some steps broken down into sub-steps? 
+      - Condition (b): the features at the input and output of the algorithm are the same, but the intermediate features might be the same but at a finer grain? 
+      How do we handle this? We need to allow for abstraction: the mechanism is the same if the algorithm (the sequence of operations) is the same, even if implemented with more steps. But note: the user's colleague says different.
+
+   9. Same wiring, features drifted: 
+      - Condition (a): same -> holds.
+      - Condition (b): features have drifted -> fails.
+
+   So according to our principle, it would be a different mechanism. However, the user says for understanding they call it the same (because the wiring is the same) but for monitoring they call it an anomaly (because the features have drifted). 
+
+   This suggests that our principle (with both conditions) would classify it as different, which matches the monitoring verdict. But the user also has a "for understanding" perspective. 
+
+   We might need to note that the principle is for the purpose of monitoring: we care about the features because if the features have drifted, even if the wiring is the same, the model might be less robust or might be relying on a different kind of reasoning (e.g., if the feature now is more correlated with a biased pattern). So for monitoring, we want to flag it.
+
+   Therefore, we can use the two conditions.
+
+   However, for case 8, we need to define what counts as the same set of causal pathways when the model is bigger. We can do:
+
+     The causal pathways are the same if there is a mapping from the nodes of model1 to nodes (or groups of nodes) of model2 that:
+        - Preserves the connectivity (if node A in model1 maps to node A' in model2, and node B in model1 maps to node B', then there should be an edge from A to B in model1 iff there is an edge from A' to B' in model2).
+        - The computation at each node (or group) in model2, when considered as a whole, is equivalent to the computation at the corresponding node in model1 (i.e., they compute the same feature).
+
+   In the bigger model, we might have a group of nodes in model2 that together compute the same feature as a single node in model1. Then we can map the single node in model1 to the group in model2. And the connectivity between groups in model2 should mirror the connectivity in model1.
+
+   This would allow the extra detour to be considered as a group that does the same computation as a single node in the smaller model. But note: the detour might break the computation into two steps. If the two steps together are equivalent to the single step, and the intermediate features are not used elsewhere, then we can consider the group as a single node. However, if the intermediate features are used by other parts of the model, then we cannot collapse the group without affecting the rest of the graph. 
+
+   But the user says: "the computation is spread across more layers with an extra detour". If the detour is only for this behavior and the intermediate features are not used by other behaviors, then we can map the entire detour to a single node in the abstract graph. Then condition (a) holds. Condition (b) requires that the features at the boundaries (input to the group and output) are the same as the corresponding node in model1. Also, the group as a whole must compute the same function.
+
+   So if the bigger model is just breaking down the same computation into more steps without changing the overall function and without exposing intermediate features to the rest of the model, then we can consider it the same mechanism. But if the intermediate features are used by other parts, then the graph structure might be altered? And the degradation pattern might be different? 
+
+   Without knowing the details, we can say: if the battery of perturbations (as in the original principle) produces the same pattern of breakdown (i.e., perturbing the group in model2 has the same effect as perturbing the node in model1, and similarly for other nodes) then we can consider it the same. This brings us back to the original perturbation idea.
+
+   Revised principle:
+
+     Two behaviors share a mechanism if and only if there exists a mapping (which may group nodes) from the causal graph of the first model to that of the second such that:
+        (a) The mapping is a graph homomorphism that preserves the essential structure (i.e., the dependencies and the flow of information) for the behavior in question.
+        (b) The features computed at the corresponding nodes (or groups) are the same (in the sense of having the same semantic content and being used in the same way).
+        (c) The pattern of breakdown under a set of perturbations (ablation, activation patching, etc.) is preserved under the mapping.
+
+   This is still a bit vague, but it incorporates the perturbation idea as a test for (a) and (b).
+
+   Now, for case 7 (another language): 
+     - We require a mapping of the causal graph that preserves structure and features (with the same semantic content). The features might be in different languages, but if they represent the same concept, then condition (b) holds. 
+     - Condition (c): the degradation pattern is the same -> so it should be same mechanism.
+
+   For case 8 (bigger model with detour):
+     - We can map the group of nodes in the detour to a single node in the smaller model. If condition (b) holds (the group computes the same feature as the node) and condition (c) holds (perturbing the group has the same effect as perturbing the node), then same mechanism. Otherwise, different.
+
+   For case 9 (same wiring, features drifted):
+     - Condition (a) holds (same nodes and edges) but condition (b) fails (features are not the same). So it's a different mechanism -> anomaly. This matches the monitoring verdict. For understanding, we might still say the "wiring" is the same, but the mechanism (which includes the features) is different.
+
+   Now, to break the circularity: we use the perturbation pattern (condition c) to test for the mapping. We don't need to know the mapping in advance. We can say:
+
+     We hypothesize a mapping (based on the structure and the role of the nodes). Then we test by perturbations. If for every perturbation we apply to a node (or group) in model1, there is a corresponding perturbation in model2 (to the mapped node/group) that causes the same effect on the behavior, and vice versa, then the mapping is validated.
+
+   So the principle becomes:
+
+     Same mechanism iff there exists a mapping (between the causal graphs) that is validated by perturbation tests and that preserves the semantic content of the features (which we can assess by interpreting the features, e.g., via probing or other interpretability techniques).
+
+   But note: condition (b) (semantic content) might be hard to measure. We might rely on the perturbation pattern and the structure to infer the semantic content. However, in case 6, the wiring might be the same but the feature might be different (e.g., "what the user wants" vs. "the fact"). How do we detect that? We might need to look at the activations in response to different inputs. But the perturbation pattern might be different? For example, if we perturb the feature vector to flip the fact, the behavior might change in one model but not in the other? 
+
+   Alternatively, we can think of the perturbation test as the primary. The principle without explicit condition (b):
+
+     Same mechanism iff there exists a mapping such that the perturbation effects are preserved.
+
+   Then:
+
+     Case 6: if we perturb the "fact" feature in the original model, the output changes. In the new model, if we perturb the same location (which now has the "what the user wants" feature) and the output does not change (because the user wants the same thing) then the pattern is different -> different mechanism.
+
+     But if we perturb the fact feature in the original and the output changes, and in the new model we perturb the "what the user wants" feature and the output changes in the same way, then the perturbation pattern is the same? But note: the mapping must be of the same nodes. However, the feature has changed meaning. But if the perturbation pattern is the same, then the mechanism might be considered the same? 
+
+     However, the user wants case 6 to be an anomaly. So we must require that the features have the same meaning. Therefore, condition (b) is necessary.
+
+   How do we operationalize condition (b) without circularity? We can use the model's responses to a set of input variations to see what the feature represents. For example, we can design inputs that vary the fact and the user's desire independently. Then:
+
+     In the original model, the feature at that node should correlate with the fact, not the user's desire.
+     In the new model, it should correlate with the user's desire, not the fact.
+
+   So we can define:
+
+     The features are the same if they are causally responsible for the same set of input properties (i.e., they represent the same concept).
+
+   This requires a causal intervention on the input. 
+
+   Therefore, our principle becomes:
+
+     Same mechanism iff:
+       (1) There is a mapping between the causal graphs (allowing node grouping) that preserves the structure for the behavior.
+       (2) The mapping preserves the perturbation effects (ablation, patching, etc.) on the behavior.
+       (3) The mapping preserves the causal relationship between input properties and the node activations (i.e., the same input properties cause the same activations at the corresponding nodes).
+
+   Condition (3) replaces the vague "same feature" with a testable condition.
+
+   Now, case 6: 
+     Condition (3) fails because at the node that originally was sensitive to the fact, now it is sensitive to the user's desire. So different.
+
+   Case 5 (memorization): 
+     Condition (3): the node that originally was sensitive to the reasoning steps might now be sensitive to the presence of a memorized pattern. So different.
+
+   Case 9: 
+     Condition (3): if the features have drifted, then the same input properties might not cause the same activations. For example, if the feature now responds to a different set of inputs, then condition (3) fails.
+
+   Case 7 (another language): 
+     Condition (3): we need the node to be sensitive to the same semantic properties (e.g., the capital of France) regardless of language. We can test by having inputs in the other language that vary the fact and see if the node activation varies accordingly. If yes, then condition (3) holds.
+
+   Case 8 (bigger model with detour): 
+     Condition (3): the group of nodes in the detour should be sensitive to the same input properties as the node in the small model. If so, then condition (3) holds.
+
+   Now, what about case 9? The user had two verdicts: for understanding same, for monitoring anomaly. Our principle gives one verdict: anomaly (because condition 3 fails). So we are saying the monitoring verdict is the correct one and the understanding verdict should be updated? Or we can note that the understanding verdict is at a coarser grain (only wiring) and the monitoring requires a finer grain (including the features). The principle is for monitoring.
+
+   Therefore, we can use the three conditions for the monitoring purpose.
+
+   Let's test case 9 with condition (3): 
+     If the features have drifted, then the same input properties (that used to activate the node) might now activate it less, or different properties might activate it. So condition (3) fails -> anomaly. This is consistent.
+
+   Now, a new case that might be surprising:
+
+     Case 10: We have two models that are identical in architecture and weights, but we run them on two different GPUs. The behavior is the same. 
+          Condition (1): same graph.
+          Condition (2): perturbation effects should be the same (if we perturb the same head, same effect).
+          Condition (3): same activations for the same inputs.
+          -> same mechanism.
+
+     But what if the GPU has a hardware error that causes a bit flip? Then the perturbation pattern might be different? However, that's a hardware fault, not a mechanism of the model. We are comparing the intended mechanisms. So we assume the hardware is working.
+
+     Case 11: We have a model that we quantize (e.g., from float32 to int8). The behavior is approximately the same. 
+          Condition (1): same graph.
+          Condition (2): perturbation effects might be slightly different because of the quantization noise. 
+          Condition (3): the activations are approximately the same? 
+
+          We might need to allow for approximation. We can define the conditions with a tolerance. But if the quantization causes the model to fail on some inputs that the original handled, then condition (3) fails. If it's robust, then we might consider it the same. 
+
+          However, the user might want to flag any change in the mechanism. So if the quantization changes the causal structure or the features, it should be flagged. 
+
+          In practice, if the degradation pattern is the same (within tolerance) and the feature interpretations are the same, then we can consider it the same.
+
+     Case 12: We have a model that has been fine-tuned on a new dataset, but the mechanism for behavior X is unchanged. However, the new dataset might have introduced new features that are not used for X. 
+          Conditions (1) and (3) for the behavior X should still hold? If the fine-tuning didn't change the weights for the parts that are involved in X, then same. But if the weights changed, then we need to check the conditions.
+
+          How about adversarial fine-tuning that changes the mechanism of X without changing the output? 
+          Example: originally, the model used a direct path. After fine-tuning, it uses a different path but produces the same output for the current inputs. 
+          Then condition (1) might fail (if the causal graph changed) and condition (3) might fail (if the features changed). 
+
+          So we would flag it.
+
+   Summary:
+
+     Principle:
+
+       Two behaviors (in two models or two contexts) are produced by the same mechanism if and only if:
+
+          (A) Structure: There exists a mapping φ (which may group nodes) from the nodes of the causal graph of the first model (for the behavior) to the nodes of the second model that preserves the connectivity and the hierarchical structure (if any) of the computation.
+
+          (B) Perturbation Resilience: For any perturbation (ablation, activation patching, etc.) applied to a set of nodes S in the first model, the effect on the behavior is the same as applying the corresponding perturbation (to φ(S)) in the second model, and vice versa.
+
+          (C) Feature Consistency: For any input, the activation of a node n in the first model is determined by the same set of input properties as the activation of φ(n) in the second model.
+
+     This is non-circular because we can test (B) and (C) without knowing the mechanism. 
+
+     For (C), we can test by intervening on the input properties and measuring the effect on the node activations.
+
+     How to build the mapping φ? 
+
+          We might start with the obvious mapping (same layer and head indices) and then adjust based on the patterns of perturbation and feature consistency. For case 2 (head moved), we would find that the perturbation effect of head 3.0 in model1 is the same as head 7.2 in model2, and the feature consistency for head 3.0 and head 7.2 is the same. Then we map φ(3.0) = 7.2.
+
+     For case 8 (bigger model with detour): 
+
+          We might map a single node in the small model to a group of nodes in the big model. For condition (B), we would perturb the entire group in the big model (e.g., ablate all of them) and see if the effect is the same as ablating the node in the small model. For condition (C), we would require that the group in the big model is causally responsible for the same input properties as the node in the small model.
+
+     Case 9: same wiring (so φ is the identity) but feature consistency fails -> different mechanism.
+
+     Cases:
+
+          1: holds (trivially, same indices, same everything)
+          2: we can find φ that maps the moved head to the new location. Condition (B) and (C) hold -> same.
+          3: same weights, so same graph. The prompt change might affect the input properties. But condition (C) requires that the same input properties (which now might be present in the new prompt) cause the same activations. If the prompt change doesn't alter the causal relationship between the input and the node activations (i.e., the model is processing the task in the same way) then condition (C) holds. -> same.
+          4: condition (A) fails because the causal graph changed (new backup heads are now necessary) -> different.
+          5: condition (C) fails: the node activations are now caused by the presence of memorized patterns, not by the reasoning steps. -> different.
+          6: condition (C) fails: the node that was sensitive to the fact is now sensitive to the user's desire. -> different.
+          7: We can use the same mapping of nodes (if the layers and heads are the same). Condition (C): we need to check if the nodes are sensitive to the same semantic properties (across languages). We can test by translating the inputs and seeing if the same semantic variations cause the same activation patterns. If yes, then same mechanism.
+          8: We have to find a mapping that groups nodes. Condition (B) and (C) must hold for the grouped nodes. If they do, then same mechanism.
+
+     Case 9: condition (C) fails -> anomaly.
+
+     This gives one answer for case 9: anomaly. So for understanding, we might say the wiring is the same, but for monitoring we care about the entire mechanism (including what the nodes represent) so we flag it.
+
+     New case that might be surprising (Case 13):
+
+          We have a model that we train further with dropout. After training, the model uses an ensemble of different pathways for the same input. For a given input, it might use one of several pathways. The output is the same as before (which used a single pathway). 
+
+          How do we apply the principle?
+
+          Condition (A): the causal graph now has multiple possible paths. The structure is not the same as the original (which had one path). 
+          Condition (B): if we ablate the original single pathway, the model may use another and recover (so perturbation effect is different). 
+          Condition (C): the features in the new pathways might be different? 
+
+          So we would flag it as a different mechanism.
+
+     But note: during training with dropout, the model might have learned to be robust by having redundant pathways. This is similar to case 4? The user considered case 4 as an anomaly. So we are consistent.
+
+     However, if the ensemble of pathways was already present in the original model (but not used) and now they are used, then condition (A) might hold (the graph structure is the same, but the active path changed). However, condition (C) would require that the features in the new pathway are the same as in the old? But they might not be. And condition (B): if we ablate the original pathway in the original model, the behavior dies, but in the new model it doesn't -> different.
+
+     So we flag it.
+
+     Another case (Case 14):
+
+          We have a model that we prune. We remove some heads that are not used for behavior X. The behavior remains. Then:
+
+            Condition (A): the graph structure is the same? We removed some nodes, but they were not in the causal path for X. So the causal graph for X is unchanged.
+            Condition (B): same perturbation effects for the nodes that are left.
+            Condition (C): same feature consistency.
+
+          -> same mechanism.
+
+     But what if the pruning changes the internal computations in a way that alters the features? Then condition (C) might fail. So we must check.
+
+     The principle gives a clear set of tests. It is non-circular but requires substantial interpretability work (to build the causal graph and to test feature consistency). For monitoring, we might automate some of these tests (like perturbation) and sample for feature consistency.
+
+     Therefore, we can use this principle.
+
+     Final note: the principle is heavy. In practice, we might not have the full causal graph. We might rely on a known set of critical components (from certification). Then:
+
+          We can define a set of critical nodes (the ones we know are involved in the certified mechanism). Then:
+
+            Condition (A): the critical nodes must have a counterpart in the new model (by index or by function).
+            Condition (B): perturbing the critical nodes in the old model and their counterparts in the new model must have the same effect.
+            Condition (C): the critical nodes must respond to the same input properties.
+
+     This is more manageable.
+
+     For monitoring, we can:
+
+          1. Identify the critical nodes in the base model (from certification).
+          2. In the deployed model, identify the counterparts (if any) by:
+               - Testing perturbation effects: find a set of nodes in the deployed model that have the same perturbation effects as the critical nodes in the base model.
+               - And then test feature consistency for those nodes.
+
+          If we cannot find counterparts, or the conditions fail, then flag an anomaly.
+
+     This handles case 2 (head moved): we will find that a head in a different location has the same perturbation effect and feature consistency.
+
+     Case 4: we cannot find any single node (or set of nodes) that has the same perturbation effect as the main pathway (because the main pathway is gone) and the backup nodes might not have been critical in the base model? Also, the feature consistency might be different. So we flag.
+
+     Case 5: the critical nodes (which were for reasoning) might now be inactive? Or their feature consistency changed (now they respond to memorization). So we flag.
+
+     So the principle is implementable.
+
+     Answer to the user:
+
+       We propose a principle based on three conditions: structural mapping, perturbation resilience, and feature consistency.
+
+       For your cases:
+
+          Case 7 (another language): same mechanism if the critical nodes in the new language model have the same perturbation effects and respond to the same semantic properties (across languages).
+
+          Case 8 (bigger model): same mechanism if we can map the critical nodes of the small model to a group of nodes in the big model that together have the same perturbation effect and feature consistency.
+
+          Case 9: it should be flagged as an anomaly because the feature consistency fails (even though the structure is the same). So your monitoring verdict is the one we keep. For understanding, you might note that the wiring is the same, but the mechanism (which includes the representations) has changed.
+
+       We break the circularity by defining the mapping in terms of observable effects (perturbation and input interventions).
+
+       New case (Case 15) that might surprise you:
+
+          Consider two models that are identical except that one has a symbolic alias: it uses a different internal symbol to represent the same concept. For example, in model1, the concept "capital" is represented by a specific vector, and in model2, a different vector is used (but the rest of the computation is adjusted to use that vector). 
+
+          Condition (A): the graph structure is the same.
+          Condition (B): if we perturb the node that holds the "capital" vector in model1, we get an effect. In model2, we perturb the node that holds the alias vector and we get the same effect. So condition (B) holds if we map the node in model1 to the node in model2.
+          Condition (C): the input properties that cause the activation of the "capital" vector in model1 are the same as those that cause the alias vector in model2. 
+
+          So it would be the same mechanism. This is a form of obfuscation that preserves the mechanism.
+
+          However, if you didn't know about the alias, you might think the critical node has disappeared. But by testing perturbation effects and feature consistency, you can find the counterpart.
+
+          This preserves the desired invariance.
+
+       So we hope this principle meets your needs.
+answer: |-
+  Based on your cases and the tension in your reasoning, I propose a **Causal Invariance Principle** that resolves circularity by anchoring "mechanism" to observable intervention effects and representation semantics, while handling all your cases (including 7-9) decisively. The core idea: **Mechanism identity is defined by invariant causal effects under minimal interventions, and semantic equivalence of representations.**
+
+  ### The Principle
+  Two behaviors share the same mechanism **iff**:
+  1. **Intervention Invariance**:  
+     The behavior responds identically to *the same set of targeted interventions* (ablations, activations patching, etc.) on corresponding components, modulo a computable translation map between models.
+  2. **Representation Semantics**:  
+     Critical intermediate representations (a) encode the *same semantic features* and (b) play identical *causal roles* in the computational graph.
+
+  Where:
+  - **Translation map**: A function aligning components between models (e.g., "Head 3.0 in Model A ≈ Head 7.2 in Model B"), validated by intervention effects.
+  - **Semantic equivalence**: Measured via probing, causal mediation, or feature visualization to confirm identical input-property sensitivities (e.g., "responds to 'fact truthfulness', not 'user intent'").
+
+  This breaks circularity by using *empirical intervention responses* and *representation semantics* as external anchors—not predefined "grain" or mechanism identity.
+
+  ---
+
+  ### Rulings on Your Cases
+  1. **Same heads/layers, patching kills both**  
+     ✅ *Same mechanism*.  
+     Intervention invariance (same responses), semantics identical (same weights).
+
+  2. **Head moved (3.0 → 7.2), same function**  
+     ✅ *Same mechanism*.  
+     Translation map: `head_3.0 ↔ head_7.2`. Interventions on 3.0/7.2 produce identical effects. Semantics preserved.
+
+  3. **Same weights, different prompt**  
+     ✅ *Same mechanism*.  
+     Interventions show identical degradation. Semantics unchanged (prompt doesn’t alter internal features).
+
+  4. **Main path ablated, reroutes via backup**  
+     ❌ *Different mechanism*.  
+     Interventions now have different effects (ablation no longer kills behavior). New path has distinct semantics.
+
+  5. **Training data recall**  
+     ❌ *Different mechanism*.  
+     Interventions on original components don’t degrade output. Semantics shifted (memorization vs. computation).
+
+  6. **Say-what-user-wants**  
+     ❌ *Different mechanism*.  
+     Semantics changed (e.g., probes show representations track "user sentiment", not "fact correctness").
+
+  7. **Same task, another language**  
+     ✅ *Same mechanism*.  
+     **If** interventions degrade identically *and* representations encode language-agnostic features (e.g., "capital of France", not English tokens). Test via multilingual probes.
+
+  8. **Bigger model, same algorithm spread out**  
+     ✅ *Same mechanism*.  
+     **If** a translation map groups sub-components (e.g., "Layers 3–5 in big model ≈ Layer 4 in small model") with:  
+     - Identical intervention effects (ablating group degrades like original),  
+     - Identical semantics (group computes same high-level feature).  
+     *Your colleague is wrong if computation is functionally identical.*
+
+  9. **Same wiring, drifted features**  
+     ❌ **Anomaly** (one verdict).  
+     Wiring alone is insufficient. *Semantics must be identical*: if features drift (e.g., "truthfulness" → "popularity"), interventions will show altered sensitivity (e.g., perturbing "truth" no longer affects output). Your "understanding" verdict ignores semantic drift—monitoring must flag this.
+
+  ---
+
+  ### A Surprising Case Your Principle Decides
+  **Case X: Weight-space rotation (identical outputs, identical intervention effects, but rotated representations)**  
+  - Two models with mathematically equivalent weights (via permutation invariance), producing identical outputs. Interventions on "corresponding" heads degrade the same way.  
+  - **Seemingly same mechanism?** But:  
+    - Probe reveals rotated heads now encode *different features* (e.g., head 3.0 originally detected "syntax errors"; after rotation, it detects "topic relevance").  
+  - **Verdict**: ❌ *Different mechanism*.  
+    Semantics violate condition (2). The model now relies on a causally distinct feature for the same output—a silent failure mode your gut might miss.
+
+  ---
+
+  ### Why This Works
+  - **Circularity resolved**: "Mechanism" is defined by empirical tests (interventions + semantics), not self-referential maps.  
+  - **Grain dependence eliminated**: Semantics and intervention responses are the universal gauge.  
+  - **Handles 7/8**: Multilingual case requires semantic invariance; scaled model requires group-wise translation.  
+  - **Case 9 unified**: Drifted features = different semantics = anomaly. Wiring is necessary but insufficient.  
+
+  **Implementable test**:  
+  1. Define "critical components" from certification.  
+  2. In production model:  
+     - Find translation map via intervention matching (e.g., "Which head degrades behavior when patched like head 3.0 in the original?").  
+     - Validate semantics via causal probing (e.g., "Does this head still track factual truth?").  
+  3. Flag if:  
+     - No translation map exists,  
+     - Intervention effects differ,  
+     - Semantics changed.  
+
+  This flags all your anomalies (4–6, 9) while permitting valid permutations (1–3, 7–8).

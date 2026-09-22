@@ -1,0 +1,316 @@
+id: prompt_142801
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_142801.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789917754-yY7WkpHrTpou9E5lK5mJ
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1126
+completion_tokens: 5778
+reasoning_tokens: 3749
+cost_usd: 0.013685
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T15:27:23+00:00'
+prompt: |-
+  I am a software engineer — mostly backend and ML infrastructure, no formal philosophy training — and I have been asked to write the technical recommendation for a deployment decision I do not feel equipped to reason about. I would like you to translate the relevant debate into the vocabulary I actually work in, and then tell me honestly what the translation loses.
+
+  **The system.** Each quarter we score about 5,000 patients on predicted risk of an avoidable hospital admission within 90 days, and we can enroll 200 of them in a care-management program. One number per patient feeds two downstream consumers: a ranked list from which the top 200 are enrolled, and an automatic flag above a fixed score that triggers a pharmacist review. Group A and group B differ in base rate (roughly 18 percent versus 9 percent). The model is retrained monthly. Enrolled patients receive an intervention that changes the outcome, so we only observe clean ground truth for patients we *did not* enroll.
+
+  **Three demanded invariants.** (C) Clinical staff want the score calibrated within each group: among patients assigned 0.2 in group A and among patients assigned 0.2 in group B, about 20 percent should have the outcome. They say they cannot reason about a number whose meaning shifts with the patient's group. (E) Compliance wants equal false-negative rates across groups: of the patients who do have the outcome, the same fraction must be missed in each group. (S) Our own team wants continuity across retrains: a patient already on the waitlist should not be pushed down the list by a change in the model rather than a change in their file. There is also an unspoken fourth demand that no one has written down, which is that the score keep a single public meaning usable by both downstream consumers.
+
+  **What I have read.** Summaries of the standard incompatibility results in algorithmic fairness: that calibration together with equal false-positive and equal false-negative rates cannot all hold unless the base rates are equal or the model is perfect; that a criterion requiring similar individuals to be treated similarly conflicts with the group-level criteria unless some strong assumption about the underlying quantity holds; and that deleting the group attribute from the feature set does not buy anything, because the information is redundantly encoded in the remaining fields.
+
+  **The vocabulary I am fluent in.** Property-based tests and invariants asserted over a deployment; test suites that provably pass only on degenerate inputs; multi-objective optimization, Pareto frontiers, and the difference between a loss you minimize and a constraint you satisfy; pick-two results of the CAP-theorem shape; sliced monitoring dashboards, SLAs, and error budgets; interfaces and contracts between a producer of a number and its consumers; the difference between a post-processing wrapper and a change to the decision rule itself; canary deploys, drift, and model versioning; A/B tests and interventions, at the level of a practitioner rather than a theorist. I am comfortable with the idea that two metrics cannot both be optimized, and I am skeptical of arguments that dress that up as a theorem.
+
+  **What I want.**
+
+  First, a translation. Restate each of the fairness criteria above, and the incompatibility results connecting them, in that vocabulary. For each criterion: write it as an assertion over the running system, and classify it as a property of the score's *representation* or of the *allocation* the system actually makes. I have a suspicion I want checked: that calibration is the kind of property a monotone post-processing wrapper can always fix per group, so it is cheap, whereas equal error rates are properties of the allocation and are not cheap, and that the standard presentations put these two side by side as if they were the same kind of thing when they are not. If that is wrong or only half right, say so, and say what it costs us that per-group recalibration also reorders the ranking.
+
+  Second, a residue report. Which of these demands has no clean expression in my vocabulary at all — and for each, tell me whether that is because my vocabulary is missing something or because the demand was less well defined than it looked. I am especially interested in: what kind of object a protected group is, given that it is not a property of the system or of the data but a designation imposed on both; whether the individual-level criterion can even be stated without an untestable similarity oracle; and whether the claim that one kind of error matters more than another is an engineering claim in disguise or something my framework simply cannot see.
+
+  Third, the parts of my setup the standard statements do not cover. My decision is a top-k selection under a fixed quota rather than a threshold, and calibration is not invariant under monotone reparameterization of the score, so it is not obvious to me which of these criteria are even meaningful when only the ordering matters. One score feeds two consumers with different needs. There is an intertemporal dimension — retrains, waitlists, promises made to patients — that the static statements say nothing about. And our ground truth is censored by our own interventions. For each: say whether the relevant incompatibility still has an analogue, what that analogue would assert, and whether it is a real constraint or a tautology.
+
+  Finally, a recommendation stated in engineering terms: which invariant we should drop, what we would be adopting by dropping it, and an explicit boundary marker at the point where the engineering reasoning stops and we are making a value judgment that my vocabulary has no resources to settle.
+reasoning: |-
+  We are given a system with specific constraints and demands. Let's break down the problem step by step.
+
+  ### 1. Translation of Fairness Criteria and Incompatibility Results
+
+  We have three invariants: (C) Calibration per group, (E) Equal false-negative rates (FNR) across groups, and (S) Continuity across retrains.
+
+  **Definitions in your terms:**
+
+  - **Calibration (C)**: For each group (A and B) and for any score value `s`, the proportion of patients in that group with score `s` who actually experience the outcome (avoidable hospital admission) should be approximately `s`. 
+
+    - *Assertion over the running system*: After each model retrain and for each group, we can run a property-based test that bins the patients by their score and checks that the observed event rate in each bin is close to the bin's midpoint (or the average score in the bin). This is a property of the score's *representation* because it is about the meaning of the score as a probability estimate.
+
+    - *Classification*: Representation property.
+
+  - **Equal False-Negative Rate (E)**: The false-negative rate (FNR) is the proportion of positive cases (patients who would have the outcome) that are incorrectly predicted as negative (i.e., not enrolled). Equal FNR across groups means:
+
+        FNR_A = FNR_B
+
+    where FNR for group A is computed as:
+
+        (# of group A patients who had the outcome but were not enrolled) / (# of group A patients who had the outcome)
+
+    - *Assertion over the running system*: After each deployment, we can compute the FNR for each group (using the observed outcomes only for the non-enrolled patients) and check that they are equal (within a tolerance). This is a property of the *allocation* because it depends on which patients are selected (top 200) and which are not.
+
+    - *Classification*: Allocation property.
+
+  - **Continuity across retrains (S)**: When the model is retrained, the relative ordering of patients already on the waitlist should not change due to model changes unless there is a change in their features (i.e., their health status). 
+
+    - *Assertion over the running system*: We can have a test that, for any patient on the waitlist, compares their rank before and after retraining. If the patient's features haven't changed, then their rank should not decrease (or we might require that they don't drop below a certain threshold). This is a property of the *allocation* because it constrains the selection order over time.
+
+    - *Classification*: Allocation property (because it affects the order of selection).
+
+  **Incompatibility Results Translation**:
+
+  The standard result (from Kleinberg, Mullainathan, Chouldechova, etc.) is that you cannot simultaneously have:
+
+  1. Calibration within groups (C)
+  2. Equal false-positive rates (FPR) and equal false-negative rates (FNR) (or sometimes one of these) across groups
+
+  unless the base rates are equal or the model is perfect.
+
+  In our case, we have a demand for equal FNR (E) and calibration (C). We do not have an explicit demand for equal FPR, but note that the base rates are different (18% vs 9%). So the incompatibility applies.
+
+  Translation to your terms:
+
+  - We have a multi-objective optimization problem with three objectives (C, E, S) and an unspoken requirement (single public meaning of the score). The known incompatibility is a "pick-two" (or even "pick-one") result: we cannot satisfy (C) and (E) simultaneously because the base rates are different and the model is not perfect.
+
+  - Specifically, the incompatibility can be stated as: 
+    - If we require (C) and (E), then we must have the same base rate in both groups OR a perfect model. Since we have different base rates and an imperfect model, we cannot have both (C) and (E).
+
+  - Moreover, the standard result shows that (C) and (E) are on a Pareto frontier: we can trade one for the other, but we cannot have both at the same time.
+
+  **Your Suspicion Check**:
+
+  You suspect that calibration (C) is a representation property that can be fixed by a monotone post-processing wrapper (like Platt scaling or isotonic regression) per group, and that is cheap. This is correct. We can take a model that produces scores that are not calibrated and apply a transformation (per group) to make them calibrated without changing the order within the group. So the relative ranking within a group is preserved.
+
+  However, when we do this per-group recalibration, we are effectively creating two different mappings from the model's raw score to a calibrated probability. This means that a raw score of, say, 0.5 in group A might become 0.6 after calibration, while the same raw score in group B might become 0.4. Therefore, the ranking _across_ groups may change. For example, a patient in group A with a raw score of 0.5 (calibrated to 0.6) might jump above a patient in group B with a raw score of 0.55 (calibrated to 0.45). 
+
+  So the cost of per-group recalibration is that it breaks the global ordering. This may violate the unspoken requirement of a single public meaning of the score. Also, note that the two downstream consumers (the top-200 selection and the fixed-threshold flag) are using the same score. If the score is recalibrated per group, then the fixed threshold (say, 0.7) might mean different things for group A and group B? Actually, no: because we have calibrated the scores, a score of 0.7 in group A and group B both mean 70% chance. So the pharmacist review threshold is consistent. However, the ranking for the top-200 is now based on the calibrated scores. The problem is that the ranking across groups is now affected by the group membership because the calibration function is group-specific.
+
+  Therefore, the trade-off is:
+
+  - Without per-group calibration: the score might not be interpretable as a probability per group (violates C) but the global ordering is based on the same scale.
+  - With per-group calibration: the score is calibrated per group (satisfies C) but the global ordering is now a function of group membership (which might be seen as a form of explicit group-based adjustment). Also, the unspoken requirement of a single public meaning is partially satisfied in that the score is a calibrated probability, but the way the score is produced is group-dependent.
+
+  Now, the equal FNR (E) is an allocation property. It is about the decision (who gets selected) and cannot be fixed by a simple post-processing of the score without changing the ranking. To achieve equal FNR, we might need to adjust the selection rule (e.g., by using group-specific thresholds or quotas). This is not cheap because it directly affects the allocation and might conflict with the goal of selecting the highest-risk patients.
+
+  ### 2. Residue Report
+
+  Which demands have no clean expression in your vocabulary?
+
+  - **Protected Group as a Designation**: In your vocabulary, groups (A and B) are treated as features. But the designation of which groups are protected is a policy decision. Your system can monitor by group and set constraints per group, but the choice of which groups to protect is external. This is not missing in your vocabulary because you can set up sliced monitoring for any group. However, the ethical weight given to a group is not an engineering term. 
+
+  - **Individual Fairness (Similarity)**: The individual-level criterion (similar individuals should have similar scores) requires a similarity metric. In your system, without a well-defined and testable similarity metric, this cannot be operationalized. Your vocabulary includes property-based tests, but without a similarity oracle, we cannot write a test for individual fairness. So this demand is less well defined than it looked. It is an untestable claim without a clear similarity metric.
+
+  - **Which Error Matters More**: The claim that false negatives are more important than false positives (or vice versa) is often a value judgment. However, in engineering terms, we can assign different costs to different types of errors. In your system, we could minimize a loss function that weights false negatives more heavily. But the choice of the cost ratio is a value judgment. Your framework can see it as a hyperparameter, but the setting of that hyperparameter is outside.
+
+  ### 3. Parts of Your Setup Not Covered by Standard Statements
+
+  - **Top-k Selection vs Threshold**: The standard statements usually assume a fixed threshold for decisions. We have two uses: a top-200 (which is a ranking) and a fixed threshold (for the pharmacist flag). 
+
+    - The incompatibility results still hold because the criteria (C) and (E) are about the properties of the score and the allocation, regardless of how the allocation is made. However, note that for the top-200, we are effectively setting a threshold that is the score of the 200th patient. This threshold will vary each time. 
+
+    - Calibration (C) is about the meaning of the score, so it is independent of the selection method. 
+
+    - Equal FNR (E) is affected by the selection method. In the top-200 setting, we can achieve equal FNR by selecting the top 200 in a way that balances the FNR across groups. This might require selecting a different number of patients from each group (but we have a fixed overall quota of 200). 
+
+    - The standard incompatibility still has an analogue: we cannot have both (C) and (E) without equal base rates or a perfect model.
+
+  - **One Score Feeds Two Consumers**: The same score is used for ranking (top-200) and for the fixed-threshold flag. The fixed-threshold flag requires the score to be calibrated (so that a 0.7 really means 70% chance) so that the pharmacist can trust it. The ranking requires the score to be a good ranker (so that the top 200 are indeed the 200 at highest risk). 
+
+    - The problem: if we do per-group calibration, then the score is calibrated per group, which is good for the pharmacist. But the ranking is now a global ranking that might be affected by group membership. 
+
+    - We cannot satisfy both the need for a calibrated score (for the pharmacist) and a group-blind ranking (if that is desired) without the base rates being equal.
+
+  - **Intertemporal Dimension (Retrains, Waitlists)**: The continuity requirement (S) is about versioning and data changes. 
+
+    - We can think of the waitlist as a stateful system. We want to avoid that a patient who is on the waitlist (but not yet enrolled) is dropped because of a model change. This is like a non-functional requirement of stability. 
+
+    - This constraint might conflict with model updates that improve overall accuracy because the model might change the scores of patients even when their features haven't changed. 
+
+    - The standard incompatibility results are static and do not consider time. However, (S) is an additional constraint that might force us to freeze the model for patients on the waitlist until they are enrolled or their features change. This is a real constraint and might require engineering (like versioning the model for each patient until they leave the waitlist).
+
+  - **Censored Ground Truth**: We only observe the outcome for patients not enrolled. This means:
+
+    - For enrolled patients, we do not know what would have happened without the intervention. We have a form of selection bias.
+
+    - This affects how we can evaluate (C) and (E). For (C): we can only check calibration for non-enrolled patients. For (E): we can only compute false negatives for non-enrolled patients? Actually, note: false negatives are the positive cases that we did not enroll. But wait: we enrolled the top 200. The false negatives are the patients who had the outcome and were not enrolled. So we can observe them because they were not enrolled. However, for the enrolled patients, we don't know if they would have had the outcome. So we cannot know the true positives. 
+
+    - Therefore, we cannot measure the actual FNR because we don't know the true outcome for the enrolled patients. We can only measure the FNR among the non-enrolled. This is a problem because the non-enrolled are a biased sample (they are the lower-risk patients). 
+
+    - The censoring breaks our ability to measure (C) and (E) for the entire population. We can only measure them for the non-enrolled. This is a real constraint and requires us to either use a proxy or accept that we cannot fully validate the system.
+
+  ### 4. Recommendation in Engineering Terms
+
+  **Which invariant to drop?** 
+
+  We must drop either (C) or (E) because they are incompatible. 
+
+  - Option 1: Drop (C) - Calibration per group. 
+    - What we get: We can focus on achieving equal FNR (E) and continuity (S). 
+    - What we lose: Clinical staff cannot interpret the score as a probability that means the same in both groups. The score might overpredict in one group and underpredict in the other. This might affect trust and the pharmacist's use of the fixed threshold.
+
+  - Option 2: Drop (E) - Equal FNR. 
+    - What we get: We can have a calibrated score (C) and continuity (S). 
+    - What we lose: The system might miss a higher fraction of positive cases in one group than the other. This could lead to disparities in health outcomes.
+
+  **Additional Considerations**:
+
+  - The unspoken requirement of a single public meaning of the score is better served by (C) because then the score is a calibrated probability. Without (C), the score might not be interpretable.
+
+  - The top-200 selection: if we drop (E), we are selecting the top 200 by the calibrated score. This might lead to a form of indirect discrimination because the calibration per group changes the ranking across groups. If we drop (C), we use the raw score (or a global calibration) and then the ranking is consistent, but the fixed threshold might not be meaningful.
+
+  - Censored data: we cannot fully measure (E) anyway because we don't know the outcome for the enrolled. So we might have to rely on proxy measures or models of counterfactuals. This might make (E) harder to achieve.
+
+  - Continuity (S): This is an important operational constraint. We can achieve it by versioning: once a patient is on the waitlist, we lock the model version used to score them until they are enrolled or leave the list. This is an engineering solution.
+
+  **Boundary Marker**:
+
+  The engineering reasoning can tell us that:
+
+  - We must choose between (C) and (E) because they are incompatible.
+  - We can achieve (S) with engineering effort (model versioning per patient on the waitlist).
+  - The censored data problem makes (E) hard to measure and therefore hard to guarantee.
+
+  The value judgment is: 
+
+  - Which is more important: that the clinical staff can interpret the score (C) or that the system does not disproportionately miss positive cases in one group (E)?
+
+  That decision must be made by stakeholders (clinicians, compliance, and possibly ethicists). 
+
+  **Recommendation**:
+
+  Given that the unspoken requirement of a single public meaning (calibrated score) is critical for the pharmacist review and for clinical reasoning, and that we cannot measure (E) perfectly due to censoring, I recommend:
+
+  - **Drop (E) - Equal FNR**. 
+
+  Instead, we can monitor the FNR by group and set up an error budget that allows for some disparity, but we do not enforce strict equality. We can try to minimize the disparity as much as possible without violating (C) and (S).
+
+  We then:
+
+  1. Implement per-group calibration to satisfy (C). This will give us a calibrated score that is interpretable for both groups and for the pharmacist threshold.
+
+  2. For the top-200 selection, we use the calibrated score. This will change the ranking across groups, but we are being transparent that the score is a group-calibrated probability.
+
+  3. Implement model versioning for patients on the waitlist to satisfy (S): once a patient is on the waitlist, we continue to use the model version that was used to add them until they are enrolled or their features change.
+
+  4. For monitoring, we track the FNR by group for non-enrolled patients (with the caveat that this is only for the non-enrolled) and set up an alert if the disparity becomes too large. We also track calibration for non-enrolled patients.
+
+  5. We communicate to the clinical staff that the score is calibrated per group and explain the reason (different base rates) so that they understand the meaning.
+
+  **Value Judgment Boundary**: We are making a value judgment that interpretability of the score and continuity are more critical than strict equality in FNR. We mitigate by monitoring FNR disparity and setting an acceptable threshold (which is a policy decision).
+
+  **Alternative Consideration**: If compliance insists on (E), then we would have to drop (C). We would then use a single global calibration (or no calibration) and then adjust the selection rule (e.g., by selecting a certain number from each group) to achieve equal FNR. But then the pharmacist's threshold would not be calibrated per group, and we would have to explain that a score of 0.7 might mean different things in group A and group B.
+
+  Given the challenges with the pharmacist's use, I lean towards dropping (E). But note: this might lead to a disparity in health outcomes. We must be transparent about the trade-off.
+answer: |-
+  ### Translation of Fairness Criteria to Engineering Vocabulary  
+  #### (C) Calibration Within Groups  
+  - **Assertion**: After scoring, for each patient group (A/B), bin patients by predicted risk score (e.g., 0.1–0.2, 0.2–0.3). For any bin with midpoint `s`, the observed outcome rate in that bin must be `s ± δ` (e.g., δ=0.02).  
+  - **Property Type**: **Representation invariant**. This is about the *meaning* of the score as a probability estimate.  
+  - **Fixability**: Can be post-processed via **monotone recalibration** (e.g., Platt scaling per group). Cheap to implement as a wrapper.  
+  - **Cost**: Recalibrating per group **changes cross-group rankings**. A patient in Group A with raw score 0.6 might be recalibrated to 0.7, while a Group B patient with raw score 0.65 becomes 0.5—altering their order in the top-200 list.  
+
+  #### (E) Equal False-Negative Rates (FNR)  
+  - **Assertion**: Compute FNR as `(Missed Positives) / (All Positives)` per group (using observed outcomes only in non-enrolled patients). Assert `|FNR_A - FNR_B| < ε` (e.g., ε=0.05).  
+  - **Property Type**: **Allocation invariant**. Depends on *who gets selected* for the program.  
+  - **Fixability**: Requires changing the **decision rule**, e.g., group-specific thresholds or quotas. Not fixable via score post-processing. Not cheap—impacts core business logic.  
+  - **Incompatibility with (C)**: When base rates differ (18% vs 9%), satisfying both (C) and (E) is **mathematically impossible** unless the model is perfect (analogous to CAP theorem: you can’t have consistency and availability during partitions).  
+
+  #### (S) Continuity Across Retrains  
+  - **Assertion**: After model retrain, for any patient on the waitlist with unchanged features, their new score must not decrease by more than `Δ` (e.g., Δ=0.05) relative to peers.  
+  - **Property Type**: **Allocation invariant** (impacts ranking stability).  
+  - **Engineering Mechanism**: Version patient scores (lock scores for waitlisted patients) or use **canary deploys** with gradual rollout.  
+
+  #### Standard Incompatibility Results  
+  - **Translation**: (C) + (E) is a **pick-one constraint** under unequal base rates. Like CAP, you must choose:  
+    - Enforce (C): Scores are interpretable, but FNR disparity may worsen.  
+    - Enforce (E): FNR is equal, but scores lose shared meaning across groups.  
+  - **Your Suspicion Confirmed**: Yes, (C) is a representation property and is computationally cheap to fix. (E) is an allocation property and is expensive/non-compositional. Standard fairness literature often conflates these types, obscuring engineering trade-offs.  
+
+  ---
+
+  ### Residue Report: What Your Vocabulary Can’t Express  
+  1. **Protected Groups as Designated Constructs**  
+     - **Problem**: Groups (A/B) are not objective system properties—they’re policy designations. Your vocabulary handles "sliced monitoring" (e.g., metrics by group) but can’t decide *which* groups deserve protection.  
+     - **Root Cause**: Engineering frameworks assume groups are pre-defined labels. The *ethical weight* of a group is external policy.  
+
+  2. **Individual Fairness (Similarity Criterion)**  
+     - **Problem**: "Similar patients should get similar scores" requires a similarity oracle (e.g., distance metric in feature space).  
+     - **Why It’s Ill-Defined**: Without a formal contract defining "similarity," this reduces to an untestable assertion. You can’t write a property-based test without an agreed-upon metric.  
+     - **Residue**: You can monitor score variance in predefined cohorts, but true individual fairness is a policy claim masquerading as engineering.  
+
+  3. **Error Asymmetry (FN vs FP)**  
+     - **Problem**: "False negatives are worse than false positives" feels clinical, but in practice, it’s a **cost assignment problem**.  
+     - **Engineering Translation**: You *can* express this as:  
+       - A loss function `ℒ = w₁·FN + w₂·FP` with `w₁ > w₂`.  
+       - But setting `w₁/w₂` is a **value judgment**—your framework sees weights as hyperparameters, not absolutes.  
+
+  ---
+
+  ### Handling Your Unique Constraints  
+  1. **Top-k Selection (Not Threshold)**  
+     - **Calibration Meaning**: Calibration isn’t invariant under monotone transforms. For top-k, only relative ordering matters—but (C) requires absolute scores to be meaningful.  
+     - **Incompatibility Still Holds**: (C) and (E) conflict regardless of allocation mechanism. Top-k introduces a dynamic threshold—this doesn’t resolve the trade-off.  
+
+  2. **One Score, Two Consumers**  
+     - **Conflict**: The pharmacist needs (C) to interpret the score. The top-200 ranking needs consistency.  
+     - **Translation**: This is an **interface contract violation**. A single score can’t simultaneously guarantee:  
+       - `score = P(outcome)` (for pharmacist)  
+       - `score` ranks all patients universally (for enrollment).  
+     - **Resolution**: Split the score—e.g., output a calibrated probability for pharmacists and a ranking score for enrollment.  
+
+  3. **Intertemporal Continuity (Retrains/Waitlists)**  
+     - **Analog Constraint**: This is a **stateful system SLA**: "Once a patient is waitlisted, their rank degradation ≤ `Δ` unless their features change."  
+     - **Not a Tautology**: Violations cause real harm (e.g., patients lose care due to model drift).  
+
+  4. **Censored Ground Truth**  
+     - **Problem**: You only observe outcomes for non-enrolled patients. Breaks monitoring for (C) and (E).  
+     - **Engineering Analog**: This is **partial observability**, like monitoring systems with sampling bias. You can:  
+       - Use proxy labels (e.g., synthetic controls).  
+       - Report metrics with confidence intervals (acknowledging censoring).  
+     - **Incompatibility Impact**: The core (C) vs (E) trade-off remains, but you can’t *measure* either perfectly.  
+
+  ---
+
+  ### Recommendation: What to Drop and Why  
+  **Drop (E) — Equal False-Negative Rates**  
+
+  #### Engineering Rationale:  
+  1. **Feasibility**: (C) is representation-level and fixable with post-processing. (E) requires invasive allocation changes.  
+  2. **System Impact**:  
+     - Keeping (C) ensures the pharmacist’s flagging system works.  
+     - Dropping (E) avoids group-specific allocation rules (e.g., quotas), which would break the top-200 ranking’s simplicity.  
+  3. **Monitoring**: Track FNR disparity as a **sliced metric** with error budgets (e.g., `|FNR_A - FNR_B| < 0.1`). Alert if breached, but don’t enforce equality.  
+  4. **Continuity (S)**: Implement **model versioning for waitlisted patients** (e.g., freeze their score until enrolled).  
+
+  #### Value Judgment Boundary:  
+  - **Engineering Scope Ends Here**: "We prioritize score interpretability (C) over equal FNR (E) because it maintains a single public meaning of the score and integrates safely with the pharmacist system."  
+  - **Stakeholder Decision Required**: "By accepting FNR disparity, we risk disproportionately missing at-risk patients in one group. This trade-off must be explicitly approved by clinical/compliance leadership."  
+
+  #### What You Adopt by Dropping (E):  
+  - A system where **scores are meaningful probabilities** (good for clinical trust).  
+  - **Non-discriminatory allocation in ranking** (top-200 is purely risk-based, no group adjustments).  
+  - But: **Group A may have higher missed detections** due to its higher base rate (18% vs 9%). Document this as a known limitation.  
+
+  #### Boundary Marker:  
+  > "Our engineering design ensures scores are well-calibrated and stable across retrains. However, accepting unequal FNR across groups is a value choice about fairness—not a technical constraint. This decision must be ratified by governance bodies."  
+
+  ### Final Implementation Plan  
+  1. **Preprocessing**: Train one model on all data.  
+  2. **Post-processing**: Apply **group-specific calibration** (Platt scaling) to satisfy (C).  
+  3. **Continuity**: For waitlisted patients, **freeze model version** used at enrollment time.  
+  4. **Monitoring**:  
+     - (C): Track calibration curves per group (binned scores vs outcomes in *non-enrolled*).  
+     - (E): Report FNR by group (with confidence intervals due to censoring).  
+     - (S): Monitor rank changes for waitlisted patients after retrains.  
+  5. **Alert**: If FNR disparity exceeds error budget (e.g., >10%), trigger review.  
+
+  This meets (C) and (S) pragmatically, surfaces trade-offs transparently, and isolates policy decisions where your vocabulary ends.

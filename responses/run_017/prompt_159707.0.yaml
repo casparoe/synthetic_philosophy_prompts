@@ -1,0 +1,376 @@
+id: prompt_159707
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_159707.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789959135-xkdrdONfn3g9mPkibhPU
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 643
+completion_tokens: 6649
+reasoning_tokens: 4465
+cost_usd: 0.015409
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-21T02:57:37+00:00'
+prompt: |-
+  i work on agent infra, mostly test-time compute: an LLM agent that decides how long to deliberate and how many tool calls to burn before it commits to an answer. our reward is a rubric graded by another model, so it's a proxy and it's gameable; we have hard latency budgets; the eval harness reports pass-rate at a fixed compute budget. product keeps telling us "good enough is fine, don't overthink it", and someone on the team pointed out that this is basically satisficing, and now we're arguing about whether that's a genuine design principle or just optimization with a compute cost bolted onto it. settle it for me in the vocabulary i actually use — policies, reward proxies, planning budget / inference-time compute, anytime algorithms, optimal stopping and reservation values, constrained MDPs and their Lagrangian relaxations, regret against a fixed eval set, meta-level versus object-level decisions (deliberation as an action that costs reward), Goodhart / proxy-gaming, distribution shift between train and deployment.
+
+  Translate these one at a time, as faithfully as you can: (1) Simon's satisficing, including the bit where aspiration levels are not fixed but drift as you see more options; (2) the objection that satisficing is just constrained optimization once you put a price on search, i.e. that the threshold is secretly a Lagrange multiplier or a reservation value; (3) bounded optimality — being optimal among the programs you can actually run on your architecture within your compute budget, which is optimality over policies-with-compute rather than over outcomes; (4) the fast-and-frugal heuristics / ecological rationality claim, that in some environments a dumb one-reason decision rule beats a heavier optimizer out of sample, and that this is a claim about fit between mechanism and environment rather than about being lazy; (5) the procedural vs substantive rationality split — judging the procedure versus judging the outcome.
+
+  Anchor it in this case, which is the one I actually can't formalize: candidate answers arrive one at a time, the agent never learns how many are still coming, and each extra candidate costs latency. There's no horizon and no clean prior over the option stream, so I can't even write down the maximization problem.
+
+  Deliverables: for each of the five, say what translates cleanly, what only translates with distortion, and what has no expression at all in my vocabulary. Then a short residue report: where the residue is really my framework being too thin, and where it's the philosophy being vaguer than it sounds. Give me pseudocode for two policies in the streaming case — a satisficing one with an adaptive threshold, and a bounded-optimal one — and tell me where they'd actually diverge and what I'd have to measure in the harness to tell them apart. Bonus question I care about: does "good enough" buy any real protection against proxy gaming, or does it just lower the score at which Goodhart starts biting?
+
+  No citations or reading lists please, i can't look anything up and i don't care who said it first.
+reasoning: |-
+  We are in the context of an LLM agent that, during inference (test-time), must decide how long to deliberate (i.e., how many candidate answers to generate and evaluate) before committing to an answer. The agent operates under a latency budget (so each candidate costs time) and is evaluated by a fixed compute budget (pass-rate at that budget). The reward is a rubric score from another model (which is a proxy and gameable). We are to compare several concepts in this setting.
+
+  Key elements of the problem:
+  - **Streaming candidates**: Candidate answers arrive one at a time. The agent does not know how many are left (no horizon) and there's no clean prior over the option stream.
+  - **Cost per candidate**: Each candidate costs latency (so we have a trade-off between quality and time).
+  - **Reward proxy**: The rubric score is given by another model (which might be gamed).
+
+  We are to analyze five concepts and then provide pseudocode for two policies (satisficing with adaptive threshold and bounded-optimal) and compare them.
+
+  Let's break down each concept:
+
+  ### (1) Simon's Satisficing
+  - **Idea**: The agent sets an aspiration level (a threshold of "good enough"). It stops when it finds an option that meets or exceeds this level. The aspiration level may adjust over time (e.g., if it doesn't find a satisfactory option quickly, it might lower its standards; if it finds good options easily, it might raise them).
+  - **In our context**: The agent has a dynamic threshold for the rubric score. If it hasn't found a candidate above the current threshold after some time, it lowers the threshold. If it finds a candidate easily, it might raise the threshold for the future.
+  - **Translation**:
+      - Clean: We can model the aspiration level as a state that evolves (e.g., based on the best seen so far, or based on time spent). The stopping rule is: stop when current candidate's score >= current aspiration level.
+      - Distortion: Simon's original idea is about human decision-making and might include complex psychological adjustments. We are simplifying to an algorithmic adjustment rule.
+      - No expression: The original idea of "aspiration" as a psychological construct doesn't translate directly.
+
+  ### (2) Satisficing as Constrained Optimization
+  - **Objection**: Satisficing is just constrained optimization where the aspiration level is a Lagrange multiplier (i.e., the shadow price of search) or a reservation value (like in optimal stopping). In other words, if you put a cost on search, then setting a fixed threshold is equivalent to solving an optimization problem with a cost per search.
+  - **In our context**: If we have a known cost per candidate (in latency) and we can model the value of the candidate as a random variable, then the optimal stopping rule might be a fixed threshold (reservation value). But note: our setting lacks a prior and the stream is arbitrary.
+  - **Translation**:
+      - Clean: If we had a known distribution of candidate scores and a known cost, we could set a fixed threshold (reservation value) that balances the expected improvement against the cost. This is the optimal stopping rule (e.g., as in the secretary problem with known distribution).
+      - Distortion: In our case, without a prior, we cannot compute the reservation value. Moreover, Simon's satisficing adjusts the threshold dynamically, while in constrained optimization the threshold is fixed (unless we do adaptive control). Also, the Lagrange multiplier interpretation comes from a relaxation of a constrained MDP, but we don't have an MDP model here.
+      - No expression: The objection assumes we have a known distribution and cost, which we don't. Without that, we cannot set the threshold optimally.
+
+  ### (3) Bounded Optimality
+  - **Idea**: Instead of optimizing for the best outcome, we optimize for the best policy that can run within our computational constraints. The policy itself is chosen from a set of feasible policies (given the compute budget) to maximize expected reward.
+  - **In our context**: We design a policy (a stopping rule) that, given the constraints on latency (or compute budget), maximizes the expected rubric score (or pass-rate) over the distribution of problems. The policy is chosen from a set of policies that do not exceed the compute budget.
+  - **Translation**:
+      - Clean: We can define a set of stopping policies (e.g., stop after k candidates, or stop when score > threshold, etc.) that respect the latency budget. We then choose the policy that maximizes the expected reward (as measured by the proxy) on our training set (or by simulation). This is essentially policy search in a constrained space.
+      - Distortion: The original bounded optimality concept (by Russell and Subramanian) is defined in the context of AI agents and their architectures. We are applying it to a specific policy choice within a fixed architecture.
+      - No expression: The full generality of bounded optimality (which might involve changing the agent's program) is not needed here because our agent's architecture is fixed; we are only choosing a stopping rule.
+
+  ### (4) Fast-and-Frugal Heuristics / Ecological Rationality
+  - **Idea**: In some environments, a simple heuristic (e.g., take the first candidate that meets a simple criterion) can outperform a more complex optimizer, especially out-of-sample, because it avoids overfitting and is robust. This is due to the fit between the heuristic and the environment structure.
+  - **In our context**: A simple stopping rule (like "stop at the first candidate with score > 0.8") might be more robust to distribution shift and less gameable than a complex rule that tries to optimize the proxy.
+  - **Translation**:
+      - Clean: We can implement such a heuristic and compare its performance (on the proxy and in real terms) with more complex policies. The claim is that if the environment has a certain structure (e.g., candidates are generally good, or the proxy is reliable at a certain threshold), then a fixed threshold might be better than an adaptive one that overfits to the training set.
+      - Distortion: The original idea is about human cognition and ecological fit. We are applying it algorithmically and might not capture the adaptive nature of heuristics (which might be tuned to the environment). Also, we are in a fixed environment (the deployment) but with possible distribution shift from training to deployment.
+      - No expression: The idea of "ecological rationality" as a match between the heuristic and the environment's statistical structure is hard to quantify without a model of the environment.
+
+  ### (5) Procedural vs Substantive Rationality
+  - **Idea**: Substantive rationality judges the outcome (the answer's quality), while procedural rationality judges the decision-making process (e.g., was it efficient, did it use available information appropriately). A procedurally rational process might lead to substantively irrational outcomes and vice versa.
+  - **In our context**: We are currently judging by the outcome (the rubric score, which is a proxy for substantive quality). But we also care about the process (latency, compute cost). The product's "good enough" might be a nod to procedural rationality: if the process is efficient and gets a good enough outcome, then it's acceptable.
+  - **Translation**:
+      - Clean: We are already measuring both: the outcome (by the proxy) and the procedure (by latency). The trade-off is explicit. We can design policies that are procedurally rational (stop quickly) and hope they are substantively rational enough.
+      - Distortion: The philosophical distinction is clear, but in practice we have to combine both in a single objective (e.g., pass-rate under latency constraints). The product's view is that we should not over-optimize the proxy (which is substantive) because of procedural constraints and potential gaming.
+      - No expression: The deeper philosophical debate about what constitutes rationality is beyond our engineering scope.
+
+  ### Residue Report
+  - **Where our framework is too thin**:
+      - We lack a model of the candidate stream (distribution, dependencies) and the true quality (we only have a gameable proxy). Without these, we cannot formally define an optimal policy.
+      - We don't have a prior, so we cannot compute reservation values or set optimal fixed thresholds without training data.
+      - The concept of ecological rationality requires an understanding of the environment's structure that we might not have.
+
+  - **Where the philosophy is vaguer**:
+      - Satisficing's aspiration level adjustment: How exactly should it drift? There isn't a single rule.
+      - Bounded optimality: What exactly is the set of feasible policies? We have to define it arbitrarily (e.g., by the complexity of the policy).
+      - Fast-and-frugal: What counts as a "dumb" rule? And how do we know if the environment is right for it?
+
+  ### Pseudocode for Two Policies
+
+  We'll design two policies for the streaming candidate scenario:
+
+  #### Policy 1: Satisficing with Adaptive Threshold
+  - We start with an initial aspiration level (e.g., 0.9).
+  - At each step, we generate a candidate and get its score (from the proxy).
+  - We update the aspiration level: 
+      - If we have seen many candidates without success, we lower the aspiration (e.g., by a decay factor).
+      - Alternatively, we can set the aspiration level to the best score so far (plus a margin) but then we are more like an optimizer? 
+      - A more Simon-like approach: lower the aspiration if we haven't found a satisfactory candidate after a fixed number of tries. We can also raise it if we find one easily? But note: we are in a stream and we stop at the first above threshold.
+
+  We'll do:
+  - Initialize: `aspiration = initial_aspiration` (e.g., 0.9)
+  - `decay_rate` (e.g., 0.95) for lowering the aspiration after each failure.
+  - `timeout` as the maximum number of candidates (due to latency budget).
+
+  ```
+  def satisficing_policy(initial_aspiration, decay_rate, timeout):
+      aspiration = initial_aspiration
+      best_candidate = None
+      best_score = -infinity
+      for i in range(timeout):
+          candidate, score = generate_candidate()  # This is the next candidate and its proxy score
+          if score > best_score:
+              best_candidate = candidate
+              best_score = score
+          # If the current candidate meets the aspiration, return it immediately
+          if score >= aspiration:
+              return candidate
+          # Otherwise, we lower the aspiration for the next candidate
+          aspiration = aspiration * decay_rate
+          # Alternatively, we could lower it in other ways, e.g., aspiration = best_score + delta (if we want to be more like an optimizer) but that's not satisficing.
+
+      # If we run out of time, return the best we've seen so far
+      return best_candidate
+  ```
+
+  Note: This policy may return the first candidate that meets the current aspiration, which may not be the best overall. But we also track the best candidate and return it if we time out.
+
+  #### Policy 2: Bounded-Optimal Policy
+  - We train a policy within the set of policies that never exceed the timeout (the compute budget). We assume we have a training set of problems (each problem is a stream of candidates and their scores). We choose a policy from a predefined class (e.g., a threshold that may be a function of time, or a neural network) that maximizes the expected score (or pass-rate) on the training set.
+
+  But note: without a prior, we cannot know the future. So we can design a policy that uses the information so far to decide.
+
+  One bounded-optimal policy might be: at each step, decide whether to stop or continue by comparing the expected improvement from continuing (which we learn from data) against the cost (which is the time, but we are constrained by timeout). However, without a model, we might use a rule learned from data.
+
+  Alternatively, we can do:
+
+  We precompute a policy that, at each step (given the current best score and the time left), either stops or continues. We can use dynamic programming if we have a model of the candidate distribution. But we don't. So we might use a trained threshold function.
+
+  For simplicity, we design a policy that uses a threshold curve: a function that gives the threshold for stopping at step i (given we have generated i candidates). We set the threshold curve by training on historical data to maximize the expected score without exceeding the timeout.
+
+  In pseudocode, we precompute a list of thresholds: `threshold[i]` for i=0 to timeout-1.
+
+  ```
+  def bounded_optimal_policy(thresholds, timeout):
+      best_candidate = None
+      best_score = -infinity
+      for i in range(timeout):
+          candidate, score = generate_candidate()
+          if score > best_score:
+              best_candidate = candidate
+              best_score = score
+          # Check if we should stop now: if the current best_score is above the threshold for step i, we stop.
+          if best_score >= thresholds[i]:
+              return best_candidate
+
+      return best_candidate
+  ```
+
+  We can also design a policy that only checks the current candidate (like the satisficing) but with a fixed threshold curve. But note: the bounded-optimal policy might track the best so far and stop when the best so far is above a threshold that depends on time.
+
+  #### Where They Diverge
+  - **Satisficing**:
+      - Stops at the first candidate that meets the current aspiration (which is decaying), so it might stop earlier with a candidate that is not the best seen so far (if a candidate that meets the aspiration appears early, even if later candidates are worse, we stop). But note: we are tracking the best so far and return it on timeout. However, during the loop, we return the candidate that meets the aspiration even if it isn't the best we've seen? Actually, we return the candidate that meets the aspiration at the moment we see it. But we are not required to keep the best? We are returning the candidate that meets the aspiration immediately. So we might return a candidate that is not the best overall. However, we are tracking the best for the timeout fallback.
+
+      But the aspiration is decaying, so if we don't find a candidate above the initial aspiration, we might eventually accept a candidate that is above the decayed aspiration. And we return that candidate immediately (without waiting to see if it is the best so far). So we are not comparing to the best so far in the stopping condition? We are comparing the candidate's score to the aspiration.
+
+      Example: 
+          Candidate1: score=0.85, aspiration=0.9 -> decay aspiration to 0.85, and move on.
+          Candidate2: score=0.82 -> below 0.85, so decay again to 0.8075 -> and so on.
+
+      We return the candidate that first meets the aspiration. So if Candidate1 had been 0.9, we would have returned it immediately.
+
+  - **Bounded-Optimal**:
+      - We are comparing the best score so far (which might be from a previous candidate) to a threshold that depends on the number of candidates we have generated. So we might not stop on the first candidate even if it meets the threshold for step0, because we might expect that we can get a better one? Actually, we stop if the best so far is above the threshold at step i. So if we have a candidate at step0 that is above threshold[0], we stop and return it (the best so far, which is that candidate). But if we have a candidate at step0 that is 0.8 and threshold[0]=0.9, we continue. Then at step1, we might have a candidate of 0.85 (so best so far=0.85). If threshold[1]=0.88, we continue. Then at step2, we get 0.87 -> best remains 0.85. If threshold[2]=0.82, then we stop and return the candidate with 0.85.
+
+      The thresholds are set by training: they might be set high initially (because we expect to see more candidates) and then drop as we run out of time.
+
+  **How to tell them apart in the harness?**
+  - We have to measure two things:
+      1. **The stopping time**: The satisficing policy might stop earlier if it finds a candidate that meets the aspiration (even if it's not the best) and then return that candidate. The bounded-optimal policy might stop when the best candidate seen so far meets the threshold for that time step, so it might run longer to get a better candidate even if it already has one that meets an aspiration level? Or it might stop earlier if the threshold at step0 is low? 
+      2. **The policy's behavior as a function of the candidate stream**: 
+          - In a stream where early candidates are good: 
+              - Satisficing stops very early (at the first good candidate) and returns it.
+              - Bounded-Optimal might also stop early if the threshold at step0 is low enough? But if the thresholds were trained to expect better candidates later, it might not stop even if the first candidate is good.
+          - In a stream where good candidates come late:
+              - Satisficing might have decayed its aspiration and might accept a mediocre candidate early? But note: if no candidate meets the aspiration until late, then the aspiration might be very low and it might accept the first candidate that meets that low bar. But if the mediocre candidate comes early and meets the (then higher) aspiration, we return it.
+              - Bounded-Optimal might run longer because the thresholds at early steps are high (so it doesn't stop) and then at a later step, if the best candidate meets the threshold for that step, it stops.
+
+      To distinguish, we need to run both policies on a variety of candidate streams and see:
+          - The distribution of stopping times.
+          - The distribution of the returned candidate's scores.
+          - The pass-rate (if we have a true quality measure) and the proxy scores.
+
+      We might also measure the robustness to distribution shift: if the training and deployment candidate streams differ, which policy degrades less?
+
+  ### Bonus: Does "good enough" protect against proxy gaming?
+  - **Analysis**: 
+      - Satisficing (with a fixed aspiration) might be less prone to gaming because it stops as soon as it hits the threshold. There is no incentive to keep optimizing the proxy beyond the threshold. However, if the threshold is set too low, then the agent might produce low-quality answers (which might be more easily gamed?).
+      - But note: the proxy is gameable. If the agent is designed to just meet the threshold, it might learn to produce answers that just barely meet the threshold (by gaming the proxy) without real quality. However, if the threshold is set at a level that corresponds to acceptable true quality, then it might be safe.
+      - However, the adaptive threshold in satisficing might adjust downward under pressure, which might lead to accepting gamed answers that are of low true quality.
+      - Bounded-optimal policies, by contrast, might try to maximize the proxy score within the budget, which might lead to more aggressive gaming (because they are optimizing for the proxy).
+
+      So "good enough" might help by reducing the incentive to push the proxy score very high (which might require more complex and possibly more gamed responses). But it doesn't eliminate the problem: the agent might still produce an answer that just barely meets the threshold and is gamed.
+
+      The key is: if the threshold is set at a level where the proxy score is well-calibrated to true quality (i.e., above the threshold, true quality is acceptable and not easily gamed without real quality), then satisficing might be more robust. But if the proxy can be gamed even at low scores, then both are vulnerable.
+
+      Therefore, "good enough" does not inherently buy protection against proxy gaming. It might only lower the score at which Goodhart starts biting? Yes, but note: Goodhart's law says that when a measure becomes a target, it ceases to be a good measure. So if we set a target (the aspiration level), then we are creating an incentive to game to that level. However, by not pushing beyond that level, we avoid the extreme over-optimization that often leads to severe gaming. So it might be a partial protection.
+
+      In summary: 
+          - Satisficing might be less vulnerable to extreme forms of proxy gaming because it doesn't try to maximize the proxy. But it is vulnerable to gaming at the threshold level.
+          - The real protection must come from having a proxy that is robust at the threshold and from monitoring true quality.
+
+  ### Final Note
+  We've translated the concepts as requested, noting where they fit, where they distort, and where they don't apply. The pseudocode provides two concrete policies for the streaming case, and we've discussed how they differ and how to measure that. The bonus question is answered: "good enough" might reduce the incentive for extreme gaming but doesn't eliminate the problem.
+answer: |-
+  ### Translation of Concepts into Your Vocabulary
+
+  #### (1) Simon's Satisficing
+  - **Core idea**: Stop when an option meets a "good enough" threshold (aspiration level). Aspiration drifts up/down based on observed options (e.g., lower threshold if no good options appear after time).
+  - **Clean translation**:  
+    - **Aspiration level** = dynamic reward threshold $\tau_t$ at step $t$.  
+    - **Drift**: $\tau_t$ updates via $\tau_{t+1} = f(\tau_t, \text{best observed reward}_t, \text{time}_t)$.  
+    - **Policy**: Stop when candidate reward $r_t \geq \tau_t$.  
+  - **Distortion**:  
+    - Simon's "aspiration" is psychological; here it's a heuristic update rule without regret guarantees.  
+  - **No expression**:  
+    - No direct analog for "organizational behavior" or "cognitive scarcity" drivers of aspiration drift.  
+
+  **In your context**:  
+  - Initialize $\tau_0$ high (e.g., 0.9).  
+  - If no candidate meets $\tau_t$ after $k$ steps, decay $\tau_{t+1} \leftarrow \tau_t \cdot \gamma$ ($\gamma < 1$).  
+  - If high-reward candidates appear early, $\tau_t$ increases.  
+
+  ---
+
+  #### (2) Satisficing as Constrained Optimization  
+  - **Objection**: Satisficing is just constrained optimization with search cost. The threshold is a shadow price (Lagrange multiplier) or reservation value.  
+  - **Clean translation**:  
+    - **Reservation value** $\lambda$ = fixed reward threshold where marginal cost of another search equals expected marginal gain.  
+    - **Lagrangian**: In CMDPs, $\tau$ maps to dual variable $\lambda$ penalizing latency.  
+  - **Distortion**:  
+    - Simon's aspiration drift isn't equivalent to $\lambda$ unless $\tau_t$ is Bayesian-updated as a dual variable.  
+  - **No expression**:  
+    - Satisficing doesn't require explicit cost/reward tradeoff calculus; it’s myopic and heuristic.  
+
+  **In your context**:  
+  - If you had a known prior over candidate rewards, $\lambda$ would solve $\mathbb{E}[\max\{r - \lambda, 0\}] = c$ (search cost $c$).  
+  - Without priors, you *can’t* compute $\lambda$ – this is where satisficing heuristically fills the gap.  
+
+  ---
+
+  #### (3) Bounded Optimality  
+  - **Core idea**: Optimal policy *within* the set of policies runnable under compute budget. Optimizes over programs, not outcomes.  
+  - **Clean translation**:  
+    - **Policy space** $\Pi_{\text{feasible}}$ = policies with inference cost $\leq$ latency budget.  
+    - **Objective**: $\max_{\pi \in \Pi_{\text{feasible}}} \mathbb{E}[R(\pi)]$ (proxy reward $R$).  
+  - **Distortion**:  
+    - Bounded optimality assumes known $\Pi_{\text{feasible}}$; you might approximate via neural architecture search.  
+  - **No expression**:  
+    - "Optimality over programs" implies hardware-aware design (e.g., kernel optimizations). Your agents use fixed architectures.  
+
+  **In your context**:  
+  - Train $\pi$ to maximize proxy reward $R$ on fixed eval set, subject to hard latency constraint.  
+
+  ---
+
+  #### (4) Fast-and-Frugal Heuristics  
+  - **Core idea**: Simple rules (e.g., "stop at first $r_t > 0.8$") beat heavy optimizers in some environments due to robustness.  
+  - **Clean translation**:  
+    - **Heuristic**: Low-complexity policy (e.g., threshold rule).  
+    - **Ecological fit**: Generalizes when environment has low $\text{cov}(r_t, \text{true quality})$ or high variance.  
+  - **Distortion**:  
+    - "One-reason" rules assume environmental structure (e.g., options are IID); your candidates may be correlated.  
+  - **No expression**:  
+    - "Ecological rationality" as a *predictive theory* of which heuristics work where. You lack this model.  
+
+  **In your context**:  
+  - A fixed threshold policy could outperform adaptive policies under distribution shift (e.g., if proxy gaming corrupts complex rules).  
+
+  ---
+
+  #### (5) Procedural vs Substantive Rationality  
+  - **Core idea**: Judge the *process* (latency, compute) vs. the *outcome* (proxy reward).  
+  - **Clean translation**:  
+    - **Substantive**: Proxy reward $R$.  
+    - **Procedural**: Inference cost, latency, simplicity.  
+  - **Distortion**:  
+    - "Good enough" implies satisficing on $R$ to optimize procedural metrics.  
+  - **No expression**:  
+    - Philosophical "rationality" debates don’t impact your metrics.  
+
+  **In your context**:  
+  - Product prioritizes procedural rationality (low latency) over substantive (proxy reward).  
+
+  ---
+
+  ### Residue Report  
+  - **Your framework is too thin for**:  
+    - **Aspiration drift mechanics**: No theory for how $\tau_t$ *should* update without priors. Heuristics are ad hoc.  
+    - **Ecological fit**: Can’t predict when simple policies will outperform without environment diagnostics.  
+  - **Philosophy is vaguer than it sounds**:  
+    - "Satisficing" isn’t rigorously separable from optimization; it’s optimization with incomplete adaptation to unknowns.  
+    - "Bounded optimality" is underspecified without $\Pi_{\text{feasible}}$.  
+
+  ---
+
+  ### Pseudocode Policies for Streaming Candidates  
+  **Problem**: Candidates stream in; no prior on horizon/distribution; cost per candidate.  
+
+  #### (A) Satisficing with Adaptive Threshold  
+  ```python  
+  def satisficing_policy(initial_threshold=0.8, decay=0.9, min_threshold=0.5, timeout=10):  
+      threshold = initial_threshold  
+      best_candidate = None  
+      for step in range(timeout):  
+          candidate = generate_candidate()  
+          r = proxy_reward(candidate)  # Gameable proxy  
+          if r >= threshold:  
+              return candidate  # Stop early if "good enough"  
+          if r > (best_candidate or -1):  
+              best_candidate = candidate  
+          # Lower aspiration if no good candidates  
+          threshold = max(threshold * decay, min_threshold)  
+      return best_candidate  # Fallback to best seen  
+  ```  
+
+  #### (B) Bounded-Optimal Policy (Approximated)  
+  ```python  
+  # Pre-trained on fixed eval set; optimizes proxy reward within latency budget  
+  def bounded_optimal_policy(threshold_schedule, timeout=10):  
+      best_candidate = None  
+      for step in range(timeout):  
+          candidate = generate_candidate()  
+          r = proxy_reward(candidate)  
+          if r > (best_candidate or -1):  
+              best_candidate = candidate  
+          # Stop if best-so-far exceeds time-dependent threshold  
+          if best_candidate and r >= threshold_schedule[step]:  
+              return best_candidate  
+      return best_candidate  
+  ```  
+  - **Threshold schedule**: Learned via RL on historical data. E.g., `threshold_schedule = [0.95, 0.9, 0.85, ...]` (high early, decaying).  
+
+  ---
+
+  ### Where Policies Diverge & How to Measure  
+  | **Scenario**                     | **Satisficing**                          | **Bounded-Optimal**                     | **Test Metric**                         |  
+  |----------------------------------|------------------------------------------|------------------------------------------|-----------------------------------------|  
+  | Early high-reward candidate      | Stops immediately                        | Continues if threshold not met          | **Avg. latency** (satisficing lower)    |  
+  | All candidates mediocre          | Returns first $r_t > \tau_{\text{decay}}$| Returns best-so-far at timeout          | **Proxy reward** (bounded-optimal higher) |  
+  | Proxy-gamed candidates           | Accepts gamed candidates earlier         | Optimizes gamed proxy aggressively      | **True quality** (if measurable)        |  
+  | Distribution shift (e.g., harder env) | Aspiration drops; accepts lower rewards | May fail (trained on fixed eval)        | **Out-of-distribution pass-rate**       |  
+
+  **Key measurements**:  
+  1. **Pass-rate**: % of tasks where proxy reward $>$ target (at fixed compute).  
+  2. **True quality gap**: $\mathbb{E}[\text{true quality} - \text{proxy}]$ (measures gaming).  
+  3. **Latency distribution**: Steps taken before stopping.  
+
+  ---
+
+  ### Bonus: Does "Good Enough" Protect Against Proxy Gaming?  
+  **No**. It only shifts the gaming target.  
+  - **Mechanism**:  
+    - Satisficing sets a lower reward target $\tau$. Agents learn to *just* exceed $\tau$ (e.g., via adversarial training).  
+    - Goodhart's law still applies: $\tau$ becomes a target, so proxy $\not\approx$ true quality near $\tau$.  
+  - **Outcome**:  
+    - **Lower absolute gaming**: Less effort to game $\tau = 0.7$ vs. $\max R$.  
+    - **Same vulnerability**: If proxy is gameable at $\tau$, agents will exploit it.  
+  - **Mitigation**: Satisficing helps *only if*:  
+    - True quality $\geq$ acceptable when proxy $r \geq \tau$ (i.e., $\tau$ in ungameable region).  
+    - You use aspiration drift to reject gamed candidates (e.g., decay $\tau$ slower if many candidates barely pass).  
+
+  **Empirical test**:  
+  - Train agents with "good enough" vs "max reward" objectives.  
+  - Measure $\text{true quality} | \text{proxy} \geq \tau$: If gap is smaller for satisficing, it helps.

@@ -1,0 +1,404 @@
+id: prompt_139540
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_139540.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789896294-tNHtkOqMusbeZZ8iQnLY
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 988
+completion_tokens: 7158
+reasoning_tokens: 5073
+cost_usd: 0.016742
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T09:30:40+00:00'
+prompt: |-
+  Hi — I'm the lead on a four-person data team at a regional hospital network. We run the merge layer that stitches patient charts together from four source systems (two legacy EHRs, a lab system, and a hand-entered intake tool) into the single chart clinicians actually read. We can't change the source systems; we only decide what the merged chart says and what gets shown.
+
+  Our problem is contradictions. Maybe forty a day survive automated matching: a penicillin allergy in the old system and no known allergies in the new one; a medication that's active and discontinued as of the same date; two dates of birth; a consent flag that's yes in one place and no in another; a patient discharged from one service and admitted to another on the same day. Our rulebook right now is basically: take the more recent entry, unless the older one came from a clinician, in which case escalate — plus a hand-written per-field safety rule for about thirty fields (for allergies we keep the more alarming value, for everything else we take the newest). It's forty pages long and nobody trusts it. On top of that, compliance won't let us destroy anything: every conflicting value has to stay auditable, so "resolve it by dropping the loser" isn't available as a data operation, only as a display decision.
+
+  I've been reading about paraconsistent logic and dialetheism and it feels like it's about exactly this — a logic where a contradiction doesn't let you derive everything, and the further claim that some contradictions are actually true — but I can't turn any of it into something my team can run. So: write me a decision procedure we can actually use.
+
+  What I need:
+
+  - The questions to ask in order, and what counts as a sufficient answer to each. We've got maybe three to five minutes per flag and the team are data stewards, not logicians, so it has to be a one-page thing for the ops wiki plus a laminated card.
+  - Where the procedure stops with a no and refuses to auto-merge, and where it hands off to a human because the question is one of values rather than facts — our risk tolerance for a missed allergy is not the same as for a false one, and somebody has to own that choice explicitly rather than have it buried in a per-field rule.
+  - A blast radius rule. When a field is in quarantine, which downstream values have to carry a marker saying they were computed from something contested, and when can we drop the marker? This is the bit I most expect you to get wrong or fudge, and it's the bit the forty-page rulebook is really about.
+  - It has to work for someone who thinks a contradiction is always a sign of an error somewhere. Our compliance officer thinks the whole idea of accepting both values is mad, and I need something that doesn't depend on settling that. So: don't assume any contradiction is really true, but do say plainly whether there's a case where the dialetheist-sounding thing — both entries correct under two different rulebooks — actually shows up, and if it does, whether it should change what we do differently from the plain "we don't know which" case.
+  - Two distinctions I think must survive the simplification: the one between an apparent contradiction that dissolves once you fix the time-slice, the granularity or the sense of the predicate (including the case where the two values are really contraries that could both be false rather than contradictories), and a real one; and the one between "we don't know which side is right" and "both sides are right." Tell me which distinctions you're deliberately throwing away, and why.
+  - Where it's honest about being a judgment call dressed up as a procedure.
+
+  Then run it on three real-shaped cases: (1) penicillin allergy documented in a 2011 intake note as a childhood rash, a 2019 allergy clinic test saying there's no penicillin allergy, and no known allergies entered by a resident in 2023; (2) an anticoagulant that's active in the medication list with a refill yesterday but discontinued because of bleeding in a discharge summary three days ago, with no reconciliation note; (3) a consent field where the patient signed a treatment consent and separately declined research use of their data, and the intake tool has a single yes/no box that got filled in twice with different values. I have a feeling your procedure is going to tell me to do something on the second one that my team will absolutely hate — say it anyway, and say what it costs.
+
+  Finally: give me four or five one-line test cases I can use to check whether a new hire has actually understood the procedure, and tell me what the procedure can't do — the failures I should expect in six months that won't look like failures at first.
+reasoning: |-
+  We are designing a decision procedure for resolving contradictions in patient data that survives automated matching. The procedure must be implementable by data stewards (not logicians) in 3-5 minutes per flag, must not destroy any data (for audit purposes), and must handle the fact that sometimes both values might be correct under different rulebooks.
+
+  The procedure will be presented as a one-page guide for the ops wiki and a laminated card. It will include:
+  1. A step-by-step flowchart of questions.
+  2. Clear stopping points for when to refuse auto-merge and escalate to a human.
+  3. Rules for "blast radius" (marking downstream data as contested when they depend on a quarantined field) and when to drop the marker.
+  4. It must not assume that contradictions are always errors, but also not require accepting that some contradictions are true. We must distinguish between:
+     - Apparent contradictions that can be resolved by clarifying time, granularity, or predicate sense (including contraries) vs. real contradictions.
+     - "We don't know which is right" vs. "both are right" (though the latter is rare and we might treat it as a special case of the former for practical purposes).
+  5. It must be honest about being a judgment call in some places.
+
+  We are going to design the procedure in steps. We'll break it down into a decision tree.
+
+  **Decision Procedure Steps (for each contradiction):**
+
+  1. **Check for Trivial Resolution (e.g., same value in different representations):**
+     - Question: Are the conflicting values actually the same when normalized (e.g., "Penicillin" vs. "penicillin", or "01/01/2000" vs. "2000-01-01")?
+     - If yes, then merge as same and stop (no contradiction). Else, next.
+
+  2. **Check for Temporal Context (time-slice):**
+     - Question: Do the conflicting values apply to different time periods? (e.g., one is current, the other is historical and no longer valid)
+     - How: Look at the effective dates (start/end) or the date of the record. If one value is superceded by the other because of time, then the newer one is current and the old one is historical. But note: we cannot destroy the old one, so we mark the current one as the one to display, but keep both with timestamps.
+     - If resolved by time, then display the most recent (or current) value and mark the other as historical. The blast radius: only this field is marked as having a historical override (but the displayed value is the recent one). Downstream calculations that use this field do not need to be marked because we are taking the current value as authoritative for the present. However, the historical value remains in the audit trail. Stop.
+
+  3. **Check for Granularity or Scope (predicate sense):**
+     - Question: Are the values about the same thing at the same time but at different levels of detail or in different contexts? (e.g., one system records a general category and another a specific subcategory; or one system records for inpatient and another for outpatient)
+     - How: Check if the two values are contraries (could both be false) or if they are about different aspects? For example, "allergy to penicillin" and "no known allergies" might be reconciled if "no known allergies" is a default and the allergy is known in a specific context. But note: if the allergy is documented and the "no known allergies" is entered later without acknowledging the allergy, then it's a contradiction.
+     - If they are about different contexts, then we might display both with context labels (if the system allows). Otherwise, if they are truly about the same context, then we have a real contradiction and proceed to next step.
+
+  4. **Check for Human Override (per-field safety rule):**
+     - We have about thirty fields with hand-written per-field safety rules. We will incorporate these as a step. For example, for allergies: keep the more alarming value (so if one source says allergy and the other says none, we display allergy). For other fields, take the newest.
+     - Question: Is there a per-field safety rule for this field?
+     - If yes, apply it: either take the safer value (for critical fields) or the newest (for non-critical). Then mark the field as having a resolved contradiction (with the rule applied) and note the rule used. The blast radius: downstream fields that depend solely on this field might be marked as derived from a resolved conflict (if the rule is considered safe enough, we might not mark; but if the rule is a heuristic, we might mark). However, note that compliance requires keeping both, so the display is one value but the audit has both. We do not mark downstream if the rule is considered definitive (like for allergies we take the alarming one because it's safer). But for non-safety fields, we might not mark downstream either because we take the newest and that's our policy. This is a judgment.
+
+  5. **Check for Source Reliability and Clinician Input:**
+     - Our current rule: take the more recent, unless the older one came from a clinician, then escalate.
+     - We formalize: 
+       - Question: Is one of the sources a clinician-entered note (vs. automated or non-clinician entry) and the other not?
+       - If yes, and the clinician entry is the older one, then escalate to human (because clinician input might override recency). If the clinician entry is the newer one, then we can take the newer (clinician) one and mark the other as overridden (but keep both). But if the non-clinician entry is newer and the clinician one is older, we escalate because we don't want to override a clinician without human review.
+
+  6. **Check for Both Values Being Correct (Dialetheism?):**
+     - This is rare, but we must consider: could both be true in different respects? For example, the patient might have a penicillin allergy in the sense of a rash (so they should avoid it) but also have a negative test (so they are not at risk for anaphylaxis). Or the consent: one yes for treatment and one no for research. 
+     - Question: Are the two values actually about two different questions? (e.g., one is about treatment consent and the other about research consent, but the system has only one box). If so, then we have an error in the data model, but we cannot change the source. We must then treat it as a contradiction that cannot be resolved automatically because the single field is being used for two purposes. We must escalate to human to decide which one to display (or if we can split the field in our merged view, but that might not be possible). 
+     - If we determine that both are correct but for different aspects, and we cannot represent both in the merged view (because the destination field is a single value), then we must escalate. We cannot represent both, so we have to choose one and mark the field as contested. The blast radius: any downstream field that uses this field must be marked as derived from a contested source.
+
+  7. **Default: Escalate to Human**
+     - If none of the above steps resolve the contradiction, then escalate to a human for review.
+
+  **Blast Radius Rules:**
+  - When a field is in quarantine (i.e., we have a contradiction that is not fully resolved and we are displaying one value but with an audit trail of the other, or we are marking it as contested), we must mark downstream fields that are computed from this field.
+  - Downstream fields must carry a marker if:
+     - The computation is deterministic and the contested field is an input (e.g., a calculated risk score that uses the contested field).
+     - The marker should be dropped when the contested field is resolved (by a human) or when the downstream field is recalculated after resolution.
+     - However, if we applied a per-field safety rule (like for allergies) and we are confident in the rule (because it's safety-critical and we are erring on the side of caution), then we do not mark downstream. The rationale is that the rule is designed to be safe and the downstream use is also safe.
+
+  **Handling the Distinctions:**
+  - We are deliberately throwing away the distinction between "we don't know which" and "both are right" in the automated part because in practice, for display, we have to choose one or mark as contested. We treat both cases as needing human review if we cannot resolve by the above steps. The dialetheist case is rare and will be caught in step 6, which then escalates because we cannot represent both in a single field.
+
+  **The Procedure as a Flowchart (for the laminated card):**
+
+  ```
+  Start: Contradiction in field F between value A (from source S1) and value B (from source S2)
+
+  1. Normalize A and B. If they become the same, merge and stop.
+
+  2. Check time: 
+     - If A and B have effective dates and one is current (and the other expired), then take the current one for display, mark the other as historical. Stop.
+
+  3. Check granularity/context:
+     - If A and B are about different contexts (e.g., inpatient vs outpatient) and we can display both with context, do so and stop.
+     - If they are about the same context and are contraries (could both be false) but we have no evidence of that, then proceed to step 4.
+
+  4. Apply per-field safety rule if exists for F:
+     - If F is a critical field (like allergy, critical lab, etc.), take the safer value (e.g., for allergy, take the presence of allergy). Mark as resolved by safety rule. Do not mark downstream. Stop.
+     - If F is non-critical and the rule says take newest, then take the newest. Mark as resolved by recency. Do not mark downstream. Stop.
+
+  5. Check source:
+     - If one source is clinician-entered and the other is not:
+          - If the clinician entry is newer, take it and stop.
+          - If the clinician entry is older, escalate to human. Mark F as contested. Mark downstream fields that depend on F until resolved. Stop.
+
+  6. Check for both being correct in different senses:
+     - If the values are about two different questions (because of a data model issue) and we cannot represent both, escalate to human. Mark F as contested. Mark downstream fields that depend on F until resolved. Stop.
+
+  7. Otherwise, escalate to human. Mark F as contested. Mark downstream fields that depend on F until resolved.
+  ```
+
+  **Honesty about Judgment Calls:**
+  - The per-field safety rules are judgment calls (e.g., why is allergy handled by taking the alarming one? because we'd rather avoid a deadly reaction). We are encoding our risk tolerance in these rules.
+  - Deciding whether two values are about the same context or not is a judgment call (step 3). We might get it wrong, so if in doubt, we proceed to the next step.
+
+  **Running the Cases:**
+
+  Case 1: Penicillin Allergy 
+  - 2011 intake: allergy (childhood rash)
+  - 2019 allergy clinic: no penicillin allergy
+  - 2023 resident: no known allergies
+
+  Contradiction: allergy vs no allergy.
+
+  Steps:
+  1. Normalization: not applicable.
+  2. Time: The 2019 test is newer than 2011, but the 2023 entry is even newer. However, the 2023 entry is "no known allergies" which might be a default. But note the 2019 test is specific. 
+  3. Granularity: The 2011 and 2019 are about the same thing (penicillin allergy). The 2023 is a blanket statement. We cannot display with context? We have to pick one for the merged chart.
+  4. Per-field safety rule: for allergies, we keep the more alarming value (so we would take "allergy present"). But note: we have a 2019 test that says no allergy. Our rule doesn't account for that. However, the rule says "keep the more alarming", so we take the allergy. 
+     - But wait: the 2019 test is from an allergy clinic and is more reliable? And it's newer than 2011 but older than 2023. The 2023 entry is by a resident and might be a mistake (not noting the allergy). 
+     - Our procedure: step 4 says if there's a per-field rule for allergy, take the safer value (so allergy). We do not mark downstream. 
+
+  But note: step 5 might kick in because the 2019 test is from a clinician (allergy clinic) and the 2023 is also a clinician (resident). So we have two clinician entries. The rule in step 5 is about one being clinician and the other not. Here both are clinicians? And we have three sources. 
+
+  We need to handle multiple sources. We can extend: if multiple contradictions, we take the most recent non-overridden value? But we have a safety rule that overrides recency for allergies. 
+
+  Given the safety rule, we take the allergy. However, we have a 2019 test that says no allergy. This might be a case where we should escalate because the 2019 test is from a specialist and contradicts the 2011 note. But our procedure doesn't have a step for reliability (like specialist vs general). We only have clinician vs non-clinician. 
+
+  This is a gap. We might add a step between 4 and 5: if there is a per-field rule, apply it, but then check if the source that is being overridden is a high-reliability source (like a specialist test) and then escalate? But we don't have that. 
+
+  Alternatively, we could note that the 2019 test is a clinician entry and it's newer than 2011 and the 2023 entry is also clinician but less specific. So step 5: if we have two clinician entries, we take the newest? But the safety rule says for allergy take the alarming one. 
+
+  I think we have to stick to the safety rule: take the alarming value. But we can note that the 2019 test is a strong counter. So we mark the field as resolved by safety rule but with a note that there is a conflicting test. We might display the allergy but with a flag that there is a negative test. However, the requirement is to have a single value for display? 
+
+  But note: the merged chart can show both? The problem says we decide "what the merged chart says and what gets shown". We might show the allergy and then in a note, mention the conflicting test. But the field itself (e.g., "allergies" field) might be a list. The contradiction is about whether penicillin is in that list. 
+
+  We are forced to pick one? Or can we show both with annotations? The problem says we run the merge layer that stitches into a single chart. It doesn't say each field is a single value. But in practice, for allergies, we might have a list. We can have both entries? Then it's not a single value. 
+
+  But the problem states: "contradictions" in the same field. If we are merging into a list, then we might have the allergy and the test result. But the test result might not be an allergy entry. So the field might be "allergy list" and the test result is in a different field? 
+
+  We must clarify: the contradiction is in the same field (e.g., the "penicillin allergy status" field). So we have to have one value: yes or no. 
+
+  Therefore, we must choose. Our procedure says: for allergies, take the alarming value. So we choose "yes, allergy". We do not mark downstream because of the safety rule. 
+
+  Case 2: Anticoagulant medication
+  - Active in medication list with a refill yesterday.
+  - Discontinued because of bleeding in a discharge summary three days ago.
+
+  Contradiction: active vs discontinued.
+
+  Steps:
+  1. Normalization: not applicable.
+  2. Time: The refill yesterday is after the discharge summary three days ago. So the refill is more recent. But the discharge summary is a document that says it was discontinued three days ago. The refill might be an error? 
+     - We take the more recent? But step 4: per-field safety rule for medications? We don't have a specific rule for medications? Then we default to step 4: if non-critical, take the newest. But medications can be critical. 
+
+  We need to know: do we have a per-field rule for medications? The problem says we have about thirty fields with rules. Let's assume medications are one of them? The problem doesn't specify. If we don't, then we proceed to step 5.
+
+  Step 5: Check source. The discharge summary is clinician-entered (and more recent? no, the refill is more recent). The refill might be from a pharmacy or a medication list updated by a nurse? We don't know. 
+
+  But step 5: if one source is clinician and the other not, then if the clinician is older, escalate. The discharge summary is clinician and it's older than the refill? The refill is yesterday, the discharge summary is three days ago. So the clinician entry is older. Therefore, we escalate. 
+
+  We mark the medication status as contested and mark downstream fields that depend on it (like drug-drug interaction checks) until resolved.
+
+  But note: the team will hate this because it's a critical medication and we are not taking a safe side. However, the safe side might be to assume it's discontinued? But we don't have a safety rule for medications. We could add one: for medications that are discontinued for safety reasons (like bleeding), we take the discontinued status as the safe choice? But that's not in our procedure. 
+
+  This shows a gap: we don't have a safety rule for medications. We should consider adding one. But for now, we follow the procedure: escalate.
+
+  Case 3: Consent field
+  - Patient signed treatment consent (yes) and declined research use (no). 
+  - The intake tool has a single yes/no box that got filled in twice with different values.
+
+  Steps:
+  1. Normalization: not applicable.
+  2. Time: same time? We don't know, but let's assume same time.
+  3. Granularity: they are about two different things (treatment vs research). But the field is a single box. So step 6: check for both being correct in different senses. 
+     - They are about two different questions. We cannot represent both in the single field. Therefore, we escalate to human. Mark as contested and mark downstream fields that depend on consent until resolved.
+
+  **Test Cases for New Hire:**
+
+  1. Two addresses: one from 2020 and one from 2023. The newer one is from a billing system and the older one from a clinic visit. (Should resolve by time: take the 2023 address.)
+  2. Two phone numbers: one labeled "home" and the other "mobile". (Resolve by context: we can keep both because they are different contexts, so no contradiction.)
+  3. Allergy field: one source says "allergy to aspirin" and another says "no known allergies". (Per-field safety rule: take the allergy. But note: if the "no known allergies" is from a clinician and the allergy is from an old non-clinician, then step 5: if the clinician entry is the "no known allergies" and it's newer, we take it? But step 4 overrides: safety rule says take the allergy. We take the allergy regardless.)
+  4. Lab result: one source says glucose 100 (from a fingerstick) and another says glucose 200 (from a venous sample) at the same time. (This is an apparent contradiction due to different measurement methods. We might escalate because we don't have a rule for which is more accurate. Or if we know the venous sample is the standard, we take that. But our procedure doesn't have a step for that. We would go to step 7 and escalate.)
+  5. Medication: two active orders for the same drug at the same dose and route, but from two different clinicians. (This is not a contradiction? It might be a duplicate. We don't have a step for duplicates. We would not flag as contradiction? But if we do, then step 1: same value? If normalized same, then merge.)
+
+  **What the Procedure Can't Do (Expected Failures):**
+
+  1. It doesn't handle source reliability beyond clinician vs non-clinician. For example, a specialist test vs a general note. This might lead to cases where we apply a safety rule and override a more reliable negative test with an old positive note, which might be wrong.
+
+  2. It doesn't handle duplicates (like two identical entries) because we are focused on contradictions. Duplicates might be a separate issue.
+
+  3. The blast radius marking might be too simplistic: we mark downstream fields that directly depend on a contested field, but what about fields that depend on multiple fields, one of which is contested? We mark them too. But in practice, the dependency graph might be complex, and we might miss some.
+
+  4. The time-slice resolution assumes that the newer value supersedes the old one. But sometimes, the old value might be more accurate (e.g., a corrected lab result). We don't have a step for corrections.
+
+  5. The per-field safety rules are fixed and might not cover all critical fields. We might need to periodically review and add rules.
+
+  6. In the consent case, we escalate, but the human might not be able to fix the source system. They might have to choose one, and that might be arbitrary.
+
+  **Final Procedure Summary for Laminated Card:**
+
+  ```
+  CONTRADICTION RESOLUTION PROCEDURE
+
+  For each field F with conflicting values A and B:
+
+  1. NORMALIZE: If A and B normalize to the same value, merge and done.
+
+  2. TIME: If one value is current and the other expired by date, take current. Mark historical. Done.
+
+  3. CONTEXT: If A and B are about different contexts (e.g., home vs work phone) and we can show both, do so. Done.
+
+  4. SAFETY RULE: If F has a per-field safety rule (see list):
+     - Critical (e.g., allergy, critical lab): take the safer value.
+     - Non-critical: take the newest.
+     Done.
+
+  5. SOURCE: 
+     - If one source is clinician-entered and the other is not:
+          - If clinician entry is newer: take it. Done.
+          - If clinician entry is older: escalate to human. Mark F contested. Mark downstream.
+          Done.
+
+  6. BOTH CORRECT? If A and B are both true but for different questions (and F is a single field), escalate. Mark F contested. Mark downstream. Done.
+
+  7. Otherwise, escalate. Mark F contested. Mark downstream.
+
+  BLAST RADIUS: 
+  - Downstream fields that use a contested field must be marked as "computed from contested data".
+  - Remove mark when the contested field is resolved by human.
+  - If resolved by steps 1-4, do not mark downstream (except step 4 for non-critical might be considered safe without marking? but we said non-critical we take newest and don't mark downstream).
+
+  PER-FIELD SAFETY RULES (examples, partial list):
+  - Allergies: take the more alarming value (presence over absence).
+  - Critical labs: take the more abnormal value (if conflicting, the one indicating more severe condition).
+  - Medications: [we don't have a rule in the example, but if we add] for discontinued status due to adverse event, take discontinued.
+  - Others: take the newest.
+
+  ESCALATION: When marked for human review, the steward must decide or pass to clinician.
+  ```
+
+  We must document the per-field safety rules separately (but they are already in the 40-page rulebook). The laminated card can refer to them.
+
+  Now, we write the one-page version for the ops wiki.
+answer: |-
+  ### **Decision Procedure for Contradictory Patient Data**  
+  **One-Page Ops Wiki Guide + Laminated Card Flowchart**  
+
+  #### **Step 1: Normalize & Check for Pseudo-Contradictions**  
+  **Question:** "Are the values *truly* contradictory, or can they coexist under different contexts?"  
+  - **Sufficient Answer:**  
+    - **NO (Pseudo-Contradiction):** Values are contraries (e.g., "allergy to NSAIDs" vs. "no known allergies" – both can be false if only penicillin allergy exists) or differ in granularity/time (e.g., "admitted to cardiology" vs. "discharged from oncology" on the same day).  
+    - **Resolution:** Display both values with context labels (e.g., "Admitted: Cardiology | Discharged: Oncology"). **No quarantine.** Proceed to blast radius rules.  
+    - **Stop & Auto-Merge?** YES – if resolved.  
+
+  #### **Step 2: Apply Temporal Reconciliation**  
+  **Question:** "Is one value outdated by a newer, *authoritative* source?"  
+  - **Sufficient Answer:**  
+    - **YES:** Newer value overrides older if:  
+      - Both from non-clinician sources (e.g., automated lab feeds).  
+      - Newer value is clinician-entered AND older is non-clinician.  
+    - **NO:** Proceed to Step 3.  
+    - **Resolution:** Display newer value; archive older as "historical." **No quarantine.**  
+    - **Stop & Auto-Merge?** YES – if resolved.  
+
+  #### **Step 3: Execute Per-Field Safety Rules**  
+  **Question:** "Is this field on the Critical Safety List?" (See laminated card for list.)  
+  - **Critical Fields (e.g., allergies, critical meds, consents):**  
+    - **Resolution:** Take the **safest value** (e.g., assume allergy exists, med is active if risk of harm).  
+    - **Blast Radius:** No downstream marking – safety justifies override.  
+  - **Non-Critical Fields (e.g., address, non-critical labs):**  
+    - **Resolution:** Take the **newest value**.  
+    - **Blast Radius:** No downstream marking.  
+  - **Stop & Auto-Merge?** YES – if field has a rule.  
+
+  #### **Step 4: Escalate to Human**  
+  **Question:** "Does the contradiction persist after Steps 1–3?"  
+  - **Escalate IF:**  
+    - Clinician-entered data conflicts (e.g., MD note vs. MD note).  
+    - Both values are defensible under different rulebooks (e.g., consent for treatment vs. research).  
+    - Field lacks a safety rule AND sources are equally reliable/timely.  
+  - **Resolution:**  
+    - Quarantine field; display **BOTH values** with "CONFLICT" flag.  
+    - Handoff note: "Specify risk tolerance: e.g., false allergy (harm = under-treatment) vs. missed allergy (harm = anaphylaxis)."  
+  - **Stop & Auto-Merge?** NO – human must decide.  
+
+  ---
+
+  ### **Blast Radius Rules**  
+  - **When Field is Quarantined (Escalated):**  
+    - **Downstream Marking:** Any derived value (e.g., drug interaction score using a quarantined med flag) carries a "⚠️ Source Contested" flag.  
+    - **Drop Marker When:**  
+      - Human resolves the conflict.  
+      - Contested source is replaced/voided in source system (e.g., lab system corrected).  
+  - **Exceptions:**  
+    - Safety-rule resolutions (Step 3) **never** propagate flags.  
+    - Pseudo-contradictions (Step 1) **never** propagate flags.  
+
+  ---
+
+  ### **Key Distinctions Preserved**  
+  1. **Pseudo vs. Real Contradictions:** Kept (Step 1 filters contraries/granularity mismatches).  
+  2. **"Don’t Know" vs. "Both True":** Kept but **pragmatically merged**:  
+     - "Both true" (e.g., consent for treatment ≠ consent for research) escalates to human (Step 4).  
+     - "Don’t know" escalates identically – same operational outcome.  
+     - **Why?** Display systems can’t show "both" in a single field; risk ownership requires human judgment.  
+
+  #### **Deliberately Discarded Distinction**  
+  - **"Contradiction as Error" vs. "Dialetheic Truth":**  
+    - Compliance’s view ("always an error") and dialetheism ("sometimes true") lead to identical actions: quarantine and human review.  
+    - **Why?** Operational workflow depends on *source trustworthiness*, not philosophical truth.  
+
+  ---
+
+  ### **Case Studies**  
+  #### **Case 1: Penicillin Allergy**  
+  - Sources: `2011 intake (rash)`, `2019 clinic test (none)`, `2023 resident (none)`.  
+  - **Procedure:**  
+    1. **Step 1:** Real contradiction (allergy vs. none).  
+    2. **Step 2:** 2023 entry newest, but 2019 test is clinician-entered.  
+    3. **Step 3:** Critical field → take safest value: **keep allergy**.  
+    4. **Blast Radius:** No downstream flag (safety rule override).  
+  - **Outcome:** Display "Penicillin allergy"; document 2019 test in audit trail.  
+
+  #### **Case 2: Anticoagulant Medication**  
+  - Sources: `Active w/ refill (yesterday)`, `Discontinued due to bleeding (3 days ago)`.  
+  - **Procedure:**  
+    1. **Step 1:** Real contradiction (active vs. discontinued).  
+    2. **Step 2:** Refill is newer, but discharge summary is clinician-entered → **escalate (Step 4)**.  
+    3. **Quarantine:** Field marked "CONFLICT"; downstream alerts (e.g., bleeding risk scores) flagged.  
+  - **Cost:** Delayed reconciliation; clinician must review. Team will hate this, but safety demands it – automated "newest" could kill the patient.  
+
+  #### **Case 3: Consent Field**  
+  - Sources: `Treatment consent (yes)`, `Research consent (no)`, but source system has one yes/no box.  
+  - **Procedure:**  
+    1. **Step 1:** Pseudo-contradiction (different contexts).  
+    2. **Step 6:** Cannot display both in one field → **escalate (Step 4)**.  
+    3. **Handoff Note:** "Specify which consent the field represents (treatment/research). Default: prioritize treatment consent."  
+  - **Outcome:** Human must map to source system’s flawed schema.  
+
+  ---
+
+  ### **Test Cases for New Hires**  
+  1. **Two addresses:** Current from EHR (2023), old from lab system (2020).  
+     *→ Resolution: Step 2 (temporal) → auto-merge 2023 address.*  
+  2. **Allergy field:** "No known allergies" (MD, 2024) vs. "Morphine allergy" (nurse, 2023).  
+     *→ Resolution: Step 3 (critical) → keep allergy; no escalate.*  
+  3. **Lab result:** Glucose 150 (venous) and 110 (fingerstick) at same time.  
+     *→ Resolution: Step 1 (pseudo) → flag both with collection methods.*  
+  4. **Medication:** "Active" (pharmacist) vs. "Discontinued" (MD) same day.  
+     *→ Resolution: Step 4 → escalate (clinician conflict).*  
+  5. **Consent:** "Yes" (treatment) vs. "No" (research) in one field.  
+     *→ Resolution: Step 4 → escalate (both defensible).*  
+
+  ---
+
+  ### **What This Procedure Can’t Do (Future Failure Modes)**  
+  1. **Hidden Source Corruption:**  
+     - E.g., a silent bug in the intake tool mangles dates → undetected pseudo-contradictions.  
+     - **Monitor:** Audit logs for source system version changes.  
+  2. **Over-Reliance on Safety Rules:**  
+     - E.g., "always take alarming allergy" ignores a specialist’s override → false positives.  
+     - **Mitigate:** Quarterly reviews of safety rule outcomes.  
+  3. **Blast Radius Cascade:**  
+     - Complex derived fields (e.g., predictive risk scores) may retain flags after source resolution.  
+     - **Fix:** Build "flag reset" triggers in data pipeline.  
+  4. **Human Escalation Bottlenecks:**  
+     - Unclear ownership for values-based decisions (e.g., consent) → delays.  
+     - **Solve:** Pre-define risk owners (e.g., compliance for consent, MD for meds).  
+
+  ---
+
+  ### **Laminated Card Summary**  
+  ```plaintext
+  1. NORMALIZE: Same value? → Merge.  
+  2. TEMPORAL: Newer overrides? → Display it.  
+  3. SAFETY RULE: Critical field? → Take safest. Non-critical? → Take newest.  
+  4. ESCALATE: Clinician conflict/both true? → Quarantine & flag downstream.  
+  BLAST RADIUS: Flag derived data until human resolves.  
+  ```  
+  **Critical Safety Fields:** Allergies, Meds, Consents, Critical Labs. (Full list in wiki.)  
+
+  This procedure enforces consistency, bakes in safety, and forces explicit ownership of ambiguity – without requiring your team to become logicians.

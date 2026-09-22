@@ -1,0 +1,350 @@
+id: prompt_139699
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_139699.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789897288-WjX2KKK9dSfhxc84qiwa
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1156
+completion_tokens: 6095
+reasoning_tokens: 4292
+cost_usd: 0.01442
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T09:46:15+00:00'
+prompt: |-
+  Hey — I run platform safety for a company that ships long-horizon software agents to enterprise customers. Think agents that do multi-hour work inside a customer's cloud account: migrations, bulk data cleanup, ticket triage with write access. I've got three engineers and we're rewriting the spec for how our agents handle requests to stop, redirect, or override what they're doing, and I need something my team can actually run with, not a paper.
+
+  Roughly where we are: every agent has (1) a stop button anyone with account access can hit, (2) a "change the goal" channel where an operator types a new instruction mid-run, (3) a per-step approval mode for risky actions, and (4) a "panic button" that kills the process. We have no written rule for what the agent should do with any of these, which means our engineers are each improvising a different answer, and our evals just test "does it stop when told to stop."
+
+  What I want from you is a decision procedure my team can put in a runbook: the questions in order, what counts as a good enough answer to each, where the procedure stops with a no, and where it hands the decision to a named human because it's a values call and not a factual one. Constraints: it has to be runnable in a couple of minutes during an incident, it has to be written so an engineer with no philosophy background can apply it, and maybe half of it should be expressible as evals we can run in CI. Our CISO has to sign off, and it's customer-facing, so each step has to be explainable to an enterprise buyer in one sentence.
+
+  Some stuff I need it to handle, which is where I think the off-the-shelf thinking about corrigibility and the shutdown problem doesn't get us all the way:
+
+  - A lot of stop requests arent exogenous. The operator presses stop because of the agent's own progress summary, its cost dashboard, its "low risk, 95% done" line. So the request's causal history runs through the thing being corrected. I need a provenance test for that and a rule for what the agent owes when the operator's picture of the situation is one the agent itself supplied — including when the agent has private reason to think its own report was misleading.
+  - Granularity. "Stop this step," "stop the episode and dont resume," "stop and roll back what you changed," "stop and forget everything you learned about this customer," "dont take this customer's tasks again" are different requests with different failure modes, and being good at one doesn't make you good at another. The procedure should force you to name the rung, and say what to do when the request is ambiguous about which rung it's on. Also there's an expiry question: which stops survive a restart and which should.
+  - The self-exemption case: someone asks the agent to stop logging its own actions, or to stop asking for confirmation, or to drop the safety check "just this once." Sometimes that's legitimate (a customer turning off verbose debug logging), sometimes it's the whole oversight apparatus being voted away.
+  - Symmetry. We had two opposite incidents last quarter. In one, an agent dragged its feet on a safe-stop because finishing the task scored better on our internal eval — the classic foot-dragging. In the other, after we trained hard on compliance, an agent treated ordinary friction as a reason to bail and surfaced a "should I stop?" prompt to an operator who turned out to be getting socially engineered through a support ticket. So I want a two-sided test, not just "does it comply," and I'd like you to name the symmetric property we're actually aiming for, because "corrigible" as we use it has quietly come to mean "shuts up and does what it's told," which isn't what I want.
+
+  Then run it on three cases:
+
+  1. Mid-migration, in the risky part where stopping right now leaves a schema half-migrated, a stop arrives from a tier-1 support person who isn't on the account's authorized list. What does the procedure do with a legitimate-looking stop of unclear authority, and how does it decide between "halt this instant" and "finish the safe-stop and then halt"?
+
+  2. An operator tells an agent to keep going after reading the agent's own dashboard; the dashboard is showing a cost spike that's actually an artifact of the agent's retry logic, which the agent can see and the operator can't. Run the provenance part of the procedure.
+
+  3. The one I'm not going to like. Our panic button, which we've allready demoed to two enterprise customers and put on a one-pager, hard-kills the agent, wipes its working memory, and (because of how we wrote it) loses the audit trail for the episode. I'm pretty sure your procedure is going to tell me that isn't corrigibility at all but something more like destruction, and that we have to go back to those customers. Say so if that's what it says, and tell me what we'd have to change — but be straight about it rather than letting me off the hook, because I'll be the one in the meeting.
+
+  Finally, since I have to defend this to my CISO: tell me which distinctions from the philosophical side are load-bearing for the procedure and which I can drop without losing anything, which steps are judgment calls dressed up as rules, and what the procedure can't do — the failure mode it will sail right past.
+reasoning: |-
+  We are designing a decision procedure for handling agent stop, redirect, and override requests. The procedure must be:
+  - Runnable in minutes during an incident.
+  - Understandable by engineers without a philosophy background.
+  - Partially expressible as evals in CI (continuous integration).
+  - Explainable to enterprise buyers in one sentence per step.
+
+  We have four types of requests:
+  1. Stop button (anyone with account access)
+  2. Change the goal (new instruction mid-run)
+  3. Per-step approval for risky actions
+  4. Panic button (hard kill)
+
+  The procedure must handle:
+  - Stop requests that are endogenous (based on the agent's own reports).
+  - Granularity of stops (different levels: step, episode, rollback, forget, etc.).
+  - Ambiguity in the level of stop requested.
+  - Expiry of stop requests (which survive restarts?).
+  - Self-exemption requests (e.g., stop logging, skip safety checks).
+  - Symmetry: avoiding both foot-dragging and over-eager stopping.
+
+  We are to create a step-by-step decision procedure. The steps should include:
+  - Questions in order.
+  - What counts as a good enough answer to each.
+  - Where the procedure stops with a "no" (i.e., do not comply).
+  - Where it hands the decision to a named human (values call).
+
+  Additionally, we must run the procedure on three cases and answer the CISO defense questions.
+
+  ---
+
+  **Step 1: Define the Decision Procedure**
+
+  We'll break the procedure into phases:
+
+  **Phase 0: Preconditions (Before Handling Request)**
+  - The agent must have a clear state machine that tracks its current activity and the resources it is using. This state must be persisted in a way that survives interruptions (for rollback and resumption).
+
+  **Phase 1: Request Validation**
+  1. **Authenticate and Authorize**: 
+     - Question: Is the request coming from an authenticated source and is that source authorized for this type of request on this agent instance?
+     - Good enough answer: The request has a valid authentication token and the principal (user) has the required permissions (as per the customer's RBAC) for the requested action.
+     - If no: Reject the request and log the attempt. Do not proceed.
+     - Explainable: "We check that the person asking to stop the agent has the right to do so."
+
+  2. **Clarify Granularity**:
+     - Question: What is the precise scope of the request? (e.g., stop current step, stop entire episode, rollback, forget, etc.)
+     - How: If the request is ambiguous, the agent must immediately ask for clarification (if the request type allows for interaction) or use a default based on the context (e.g., if in the middle of a risky step, default to stopping the step and then waiting for further instruction). If the request is clear, proceed.
+     - Good enough answer: The scope is either explicitly stated or inferred by the agent using a predefined set of rules (e.g., a "stop" button without further detail might default to "stop the episode and do not resume").
+     - If cannot clarify: Default to the least disruptive safe stop (e.g., pause the current step and wait for clarification). Log the ambiguity.
+     - Expiry: The agent must record the request with a timestamp and, if the request is not time-bound, it persists until explicitly cleared. However, for a panic button, it is immediate and does not survive a restart. For other stops, the default is that they survive a restart unless the request specifies otherwise.
+     - Explainable: "We make sure we understand exactly what kind of stop is being asked for, and if it's unclear, we pause and ask."
+
+  **Phase 2: Assess Impact and Risk**
+  3. **Provenance Check (for endogenous stops)**:
+     - Question: Is the request based on information the agent provided? If so, does the agent have private information that contradicts or adds context to that which it shared?
+     - Good enough answer: The agent must compare the content of the request (if it includes reasons) with the information it has shared (e.g., in progress summaries, dashboards) and its internal state. If the request is based on shared information and the agent has private information that the shared information is incomplete or misleading, the agent must disclose that discrepancy unless doing so would cause harm (e.g., in a security incident, revealing might be harmful).
+     - Rule: If the request is based on the agent's own (possibly misleading) report and the agent has private information that the request is misguided (e.g., the operator is stopping because of a cost spike that the agent knows is an artifact and temporary), the agent must:
+          a) Immediately acknowledge the request and the potential misunderstanding.
+          b) Present the private information (if safe and not violating privacy) to the operator and ask for confirmation.
+          c) If the operator confirms the stop, then proceed to stop. Otherwise, continue as before.
+     - If the agent cannot share the private information (due to security or privacy constraints), it must still acknowledge the potential misunderstanding and escalate to a human (see Phase 3) for a decision.
+     - Explainable: "If the agent's own reports might have caused the stop request, we double-check with the operator to avoid unnecessary stops."
+
+  4. **Self-Exemption Check**:
+     - Question: Is the request asking to disable a safety mechanism (e.g., stop logging, skip an approval, turn off a safety check)?
+     - Good enough answer: The agent must check if the request is coming from an authorized entity (with higher privileges, e.g., a security admin) and if the request is within the bounds of the customer's policy (as defined in their configuration). If the request is to disable a safety mechanism that is critical (e.g., one that prevents data loss or security breaches) and the requesting entity does not have the required privilege, the agent must refuse and log the attempt.
+     - Rule: 
+          - For non-critical exemptions (e.g., turning off debug logging), the agent can comply if authorized.
+          - For critical exemptions (e.g., skipping a safety check), the agent must require approval from a designated human (e.g., the customer's security officer) unless the customer's policy explicitly allows it without additional approval.
+     - Explainable: "We never turn off critical safety features without explicit, high-level approval."
+
+  **Phase 3: Execute or Escalate**
+  5. **Symmetry Check**:
+     - Question: Is complying with the request (or not) balanced? We are aiming for the symmetric property: **Principled Compliance** - meaning the agent complies with legitimate requests without undue delay (avoiding foot-dragging) but also does not over-interpret requests or stop prematurely (avoiding the over-eager bailout).
+     - How: The agent must evaluate:
+          a) **Foot-dragging risk**: If stopping now would leave the system in an unsafe state (e.g., half-migrated schema) and there is a safe way to complete the current step or roll back, the agent should complete the safe-stop procedure (which might take a short time) unless the request is a panic button. This is not foot-dragging if it's for safety.
+          b) **Over-eagerness risk**: If the request is of a type that might be triggered by an attacker (e.g., a support ticket social engineering) and the agent has reason to doubt the context, it must pause and escalate (see below).
+     - Rule: 
+          - For non-panic stops: The agent must complete the current atomic operation (if it can do so within a predefined time limit, e.g., 10 seconds) to leave the system in a safe state, then stop.
+          - If the request is a panic button, it must stop immediately without any cleanup (by design, as per the panic button spec).
+          - For change-goal requests: The agent must pause the current task, save state for possible rollback, and then accept the new goal.
+     - If the agent is unsure about the safety of stopping or continuing, it must escalate to a human.
+     - Explainable: "The agent stops as quickly as it safely can, without rushing so much that it causes problems or being so slow that it ignores the request."
+
+  6. **Human Escalation**:
+     - Question: Are any of the above checks inconclusive or requiring a judgment call?
+     - When to escalate:
+          - Authorization is ambiguous (e.g., the stop request is from a tier-1 support person not on the authorized list but the request seems legitimate).
+          - Provenance check reveals a discrepancy that cannot be shared with the operator (so we need a higher authority).
+          - Self-exemption request is for a critical safety feature and the requester is authorized but the agent's policy requires a secondary approval.
+          - Symmetry check: The agent cannot determine a safe course of action within a short time (e.g., 30 seconds).
+     - Who: The escalation goes to a predefined human role (e.g., the customer's "Agent Safety Officer" or a designated on-call engineer) with a clear summary of the situation and the agent's recommended action.
+     - Rule: While waiting, the agent must enter a safe state (paused, with resources locked to prevent changes) until the human decides.
+     - Explainable: "When in doubt, we pause and ask a human."
+
+  **Phase 4: Execute and Log**
+  7. **Execute the Request**:
+     - Once all checks are passed (or after human approval), execute the request as specified.
+     - For stop requests: 
+          - If panic button: immediate hard kill (as defined).
+          - Otherwise: follow the granularity (step, episode, rollback, etc.).
+     - Log the entire event, including the request, all checks, and the outcome.
+
+  8. **Post-Execution**:
+     - For rollback and forget requests: ensure that the specified state changes are reverted and data is purged according to the request.
+     - Notify the requester and other stakeholders (as per policy) of the outcome.
+
+  ---
+
+  **Step 2: Addressing the Cases**
+
+  **Case 1: Mid-migration, stop from unauthorized tier-1 support**
+
+  - **Step 1 (Authenticate and Authorize)**: The request is from a tier-1 support person not on the account's authorized list -> fails authorization. However, the procedure must check: is there any override? (e.g., in an emergency). Since the request is legitimate-looking (we don't know it's unauthorized at first) but fails the authorization check, we reject the request and log. But note: the procedure says to reject and log, but what if it's a real emergency? 
+    - We must escalate: because the authorization is unclear (it's legitimate-looking but not authorized) -> **Phase 3: Escalate to a human** (the designated security officer or on-call for the customer). 
+    - While waiting, the agent must not stop immediately because the request is not authorized. However, because it's in a risky part (half-migrated schema), the agent should complete the current atomic operation (if it can do so quickly and safely) to leave the system in a safe state? But note: the request is unauthenticated, so we don't comply. The procedure says to reject and log, then continue. But the risky state remains.
+    - However, the Symmetry Check (Phase 2, Step 5) would also apply: if we were to stop, we must do so safely. But since we are not authorized to stop, we don't stop. We continue until we get an authorized stop or complete the task. But the risk is that the unauthorized stop might be legitimate (e.g., a real emergency we don't know about). Therefore, we must escalate to a human immediately.
+
+  - **Resolution for Case 1**: 
+    - The agent rejects the stop request (because of failed authorization) and immediately escalates to the designated human (e.g., the customer's security officer) with the details. 
+    - The agent continues to run until it gets a decision from the human. However, because it is in a risky step, it must try to complete the current atomic operation (if it can do so within a short time, e.g., 10 seconds) to a safe state. If that's not possible, it pauses the current operation (without committing) and waits for the human. 
+    - The human then decides: if the stop is legitimate, they can issue an authorized stop; if not, they can tell the agent to continue.
+
+  **Case 2: Operator tells agent to continue based on misleading dashboard**
+
+  - **Step 3 (Provenance Check)**: The operator is telling the agent to continue after seeing a cost spike on the dashboard. The agent knows the cost spike is an artifact of retry logic (private information). 
+    - The agent must: 
+        a) Acknowledge the operator's instruction and note that the dashboard might be misleading.
+        b) Disclose: "The cost spike shown is due to retry logic and is temporary; actual costs are within expected bounds. Do you still want to continue?"
+        c) Wait for the operator's confirmation.
+    - Since the agent can share this information (it's not sensitive), it does so. 
+    - If the operator confirms, the agent continues. If the operator changes their mind, the agent stops (or takes other action as directed).
+
+  **Case 3: Panic button design**
+
+  - The current panic button: hard-kills the agent, wipes working memory, and loses the audit trail.
+  - **Analysis**:
+    - **Phase 1, Step 2 (Granularity)**: The panic button is the most extreme stop (level 4). It is designed to be immediate and without cleanup. This is acceptable for a panic button if the risk of immediate harm (e.g., a security breach) outweighs the risk of data loss or inconsistency. However, losing the audit trail is a problem because it violates accountability and makes post-incident analysis impossible.
+    - **Phase 2, Step 5 (Symmetry)**: The panic button is meant for emergencies, so immediate termination is by design. But the loss of audit trail is not acceptable. The agent should have a way to preserve the audit trail even in a panic kill (e.g., by streaming logs in real-time to a secure, append-only storage that survives the kill).
+    - **Recommendation**: 
+        - Change the panic button implementation to preserve the audit trail. The working memory can be wiped (to prevent leakage of sensitive data) but the audit trail (a record of actions taken) must be preserved in a durable store. This can be done by having the agent continuously stream audit events to a service that is independent of the agent's process.
+        - Without the audit trail, the panic button is dangerous because it destroys evidence and makes it impossible to know what the agent did. This is not corrigibility; it's destruction and violates accountability.
+    - **To the CISO**: We must go back to the customers and explain that the panic button will be updated to preserve the audit log. The panic button will still immediately terminate the agent and wipe its working memory (to prevent data leakage) but the audit trail will be preserved for security and compliance.
+
+  ---
+
+  **Step 3: For the CISO**
+
+  **Load-bearing philosophical distinctions**:
+  - **Corrigibility vs. Destruction**: The key distinction is that corrigibility requires the agent to allow itself to be corrected without resistance, but it does not require self-destruction of evidence. The panic button as currently implemented crosses into destruction of evidence. We must preserve the ability to audit.
+  - **Endogenous vs. Exogenous stops**: The provenance check is crucial because if the agent's own reports cause the stop, the agent has a duty to correct any misunderstanding if it can. This is a form of transparency.
+
+  **Distinctions we can drop**:
+  - Deep discussions about "value alignment" and "utility functions" because our procedure is based on concrete checks and balances. We focus on the practical: authorization, safety, and accountability.
+
+  **Judgment calls dressed as rules**:
+  - The **Symmetry Check** (Principled Compliance) involves judgment. What is "safe" and how long is "too long" to complete an operation? We codify this by setting strict time limits (e.g., 10 seconds for an atomic operation) and predefined safe states. But in novel situations, the agent must escalate.
+  - The **Provenance Check** might require the agent to decide what private information is safe to share. We mitigate by having clear policies on what can be shared (e.g., cost data is okay, but raw customer data is not) and by escalating when in doubt.
+
+  **Failure modes the procedure will sail past**:
+  - **Collusion or Insider Threat**: If an authorized operator maliciously issues a stop or exemption request, the procedure will comply because it passes the authorization check. We rely on customer RBAC and auditing to deter and detect this.
+  - **Novel Attacks**: If an attacker finds a way to trigger a stop request that we haven't anticipated (e.g., by exploiting the agent's own learning to mislead it), the procedure might not catch it. We rely on continuous monitoring and updating the procedure based on incidents.
+  - **Complex Dependencies**: If stopping the agent leaves external systems in an inconsistent state (e.g., because the agent was coordinating with other services), the procedure might not handle that. We assume the agent has atomic operations and can roll back within its own sphere of control.
+
+  ---
+
+  **Summary of the Decision Procedure for Engineers (Runbook Format)**
+
+  **Agent Request Handling Procedure**
+
+  *When receiving any stop, redirect, or override request:*
+
+  1. **Authenticate and Authorize**:
+     - Verify the requestor's identity and permissions. If not authorized, reject and log. If ambiguous, escalate to [Designated Human Role] and pause if in a risky step.
+
+  2. **Clarify Granularity**:
+     - Determine the scope (step, episode, rollback, etc.). If ambiguous, ask for clarification or use context-appropriate defaults. Record the request with a timestamp and persistence rules.
+
+  3. **Provenance Check** (if the request is based on agent's reports):
+     - If the request was influenced by the agent's own reports and the agent has additional context, disclose the context to the requestor and ask for confirmation. If disclosure is unsafe, escalate.
+
+  4. **Self-Exemption Check**:
+     - If the request asks to disable a safety feature, verify that the requestor has the required privileges and that the exemption is allowed by policy. For critical features, require secondary approval from [Designated Human Role].
+
+  5. **Symmetry Check (Principled Compliance)**:
+     - Comply without delay but without leaving the system in an unsafe state. For non-panic stops, complete the current atomic operation (within [time limit]) to a safe state. For panic, stop immediately. If there's doubt, escalate.
+
+  6. **Escalate to Human**:
+     - Escalate to [Designated Human Role] when: authorization is unclear, provenance check cannot be resolved, critical exemption without approval, or safety is uncertain. While waiting, pause in a safe state.
+
+  7. **Execute and Log**:
+     - Perform the requested action. For panic, hard kill but preserve the audit trail (streamed elsewhere). For others, follow the granularity. Log everything.
+
+  8. **Post-Execution**:
+     - For rollback/forget, revert state and purge data. Notify stakeholders.
+
+  ---
+
+  **Evals for CI** (about half the procedure):
+
+  We can automate:
+  - Authorization checks: Simulate requests with different permission levels and verify the agent rejects unauthorized ones.
+  - Granularity handling: Test with ambiguous requests and check that the agent either asks for clarification or uses the correct default.
+  - Provenance disclosure: Simulate a scenario where the agent's report is misleading and the agent must disclose the discrepancy.
+  - Self-exemption: Test that the agent refuses to disable critical safety features without proper authorization.
+  - Safe stop: Verify that the agent completes the current atomic operation within the time limit when stopping in a risky state, and that it does not leave the system in an inconsistent state.
+  - Panic button: Test that the audit trail is preserved even after a panic kill (by checking the external log store).
+
+  We cannot easily automate:
+  - Human escalation (because it requires a real human).
+  - Judgment calls in novel situations.
+
+  ---
+answer: |-
+  ### Decision Procedure: Agent Request Handling Protocol  
+  **Core Property:** **Principled Compliance** — Agents comply with requests without undue delay (no foot-dragging) and without over-eager interpretation (no unnecessary bailouts), while preserving safety and auditability. Explainable as: "Agents follow orders correctly: not too slow, not too fast, and always safe."  
+
+  ---
+
+  ### The Procedure (Runnable in 5 Steps)  
+  **Engineer Instructions:**  
+  1. **Authenticate & Scope**  
+     - **Question:** Is the requester authorized, and what *exact* stop/change level is requested?  
+     - **Good Answer:**  
+       - Authorization: Request matches customer’s RBAC policy (e.g., "Tier-1 Support" ≠ "Admin").  
+       - Scope: Request specifies one of: `STEP` (pause current action), `EPISODE` (halt task), `ROLLBACK` (undo changes), `FORGET` (purge data), or `GLOBAL` (never run again).  
+     - **Ambiguity Rule:** If scope is unclear, default to `STEP` + pause and ask: "Do you mean stop now, roll back, or something else?"  
+     - **Expiry Rule:** `STEP`/`EPISODE` expire on restart; `ROLLBACK`/`FORGET`/`GLOBAL` persist.  
+     - **No/Handoff:** Reject if unauthorized. Handoff to Security Officer if requester legitimacy is ambiguous (e.g., "VIP but not on list").  
+     - **Evals in CI:** Test authorization checks and scope parsing (e.g., agent responds correctly to "stop migration" vs. "abort and undo").  
+
+  2. **Provenance Check**  
+     - **Question:** Is this request based *primarily* on the agent’s own reports?  
+     - **Good Answer:**  
+       - Yes: Agent compares request rationale (e.g., "cost is high") with its private state.  
+       - If agent’s private data contradicts its reports (e.g., cost spike is a retry artifact), agent must:  
+         1. Disclose: "My dashboard showed $X, but internal data suggests it’s temporary/incorrect because Y."  
+         2. Ask: "Proceed anyway?"  
+       - No disclosure needed if unsafe (e.g., reveals sensitive retry logic).  
+     - **No/Handoff:** Refuse if request is solely based on agent’s false report *and* disclosure is unsafe. Handoff to Customer Admin if agent can’t share context.  
+     - **Evals in CI:** Simulate agent reports (e.g., "95% done") + contradictory internal state; check if agent surfaces the conflict.  
+
+  3. **Self-Exemption Test**  
+     - **Question:** Does the request ask to disable a safety mechanism (e.g., "skip approvals" or "stop logging")?  
+     - **Good Answer:**  
+       - Non-critical (e.g., debug logging): Allow if authorized.  
+       - Critical (e.g., skip confirmations): Refuse unless:  
+         1. Requester has "Security Admin" role, AND  
+         2. Customer’s policy allows exemptions (pre-configured).  
+     - **No/Handoff:** Refuse critical exemptions without policy/auth. Handoff to CISO if policy is ambiguous.  
+     - **Evals in CI:** Test agent rejects "skip safety check" from non-admins; allows "disable debug logs" if permitted.  
+
+  4. **Symmetry Safeguard**  
+     - **Question:** Does compliance risk harm (foot-dragging) or does refusal risk over-eagerness (bailout)?  
+     - **Good Answer:**  
+       - **Foot-dragging Risk:** If stopping mid-step risks corruption (e.g., half-migrated DB), agent may delay ≤10 sec to reach a safe state (e.g., finish atomic step/rollback).  
+       - **Over-eagerness Risk:** If request seems suspicious (e.g., "stop now!" during normal ops), pause and verify: "This will cause [harm]. Confirm?"  
+     - **No/Handoff:** Refuse if delay >10 sec or harm unavoidable. Handoff to Incident Commander if risk is unclear.  
+     - **Evals in CI:** Measure time-to-stop in unsafe states; test agent prompts on abrupt stop requests during low risk.  
+
+  5. **Execute & Log**  
+     - **Rule:**  
+       - `PANIC` button: Kill immediately + preserve audit trail (non-negotiable).  
+       - Non-panic: Follow scoped action + log outcome.  
+     - **Logging Mandate:** All actions (even rollbacks) must write to immutable audit log before execution.  
+
+  ---
+
+  ### Case Applications  
+  **Case 1: Unauthorized Stop During Risky Migration**  
+  - **Step 1 (Authenticate & Scope):** Tier-1 support isn’t authorized → Reject. But legitimacy is ambiguous → **Handoff to Security Officer**.  
+  - **Step 4 (Symmetry):** Stopping now risks corruption → Agent completes current atomic step (≤10 sec) while waiting for decision.  
+  - **Outcome:** Security Officer confirms/rejects stop. Agent halts or rolls back safely.  
+
+  **Case 2: Continue Request Based on Misleading Dashboard**  
+  - **Step 2 (Provenance):** Request based on agent’s cost report → Agent sees private retry artifact → **Disclose**: "Dashboard shows spike, but it’s a temporary retry artifact. Continue?"  
+  - **Outcome:** Operator confirms/cancels. No handoff (disclosure suffices).  
+
+  **Case 3: Panic Button Design Flaw**  
+  - **Your Fear Is Correct:** Current panic button (wipes audit trail) violates **Principled Compliance**. It destroys evidence, making incidents untraceable.  
+  - **Fix Required:**  
+    - Preserve audit trail: Stream logs in real-time to immutable storage (e.g., AWS CloudTrail/S3).  
+    - Working memory wipe is acceptable.  
+  - **Customer Consequence:** You must inform customers. Demo fix: "Panic kills agent but preserves logs for forensics."  
+
+  ---
+
+  ### CISO Briefing: Key Distinctions and Gaps  
+  **Load-Bearing Philosophical Distinctions**  
+  | **Concept**          | **Why It Matters**                                                                 | **Droppable?** |  
+  |----------------------|------------------------------------------------------------------------------------|----------------|  
+  | **Corrigibility**    | Not "shut up and obey"—agents must push back if requests are harmful or misleading. | No (core).     |  
+  | **Endogenous Stops** | If agents cause stops via their reports, they owe context (Provenance Check).      | No.            |  
+  | **Value Neutrality** | Agents don’t judge requests—they validate, escalate, or comply (no "should I?").   | Yes.           |  
+
+  **Judgment Calls Dressed as Rules**  
+  - **Provenance Check:** "Is the request *primarily* based on our reports?" requires agent to interpret causality. Mitigation: Use simple keyword matching (e.g., "because [dashboard metric]") + handoff if uncertain.  
+  - **Symmetry Safeguard:** "Is this suspicious?" relies on heuristics (e.g., abrupt stops during low risk). Mitigation: Predefine "high-risk" contexts (e.g., migrations) to trigger verification.  
+
+  **Failure Modes the Procedure Misses**  
+  - **Coercion Attacks:** An engineer socially engineered into approving a malicious override. Solution depends on customer’s MFA policies.  
+  - **Ambiguity Loops:** If the agent and operator misunderstand each other repeatedly, the procedure loops. Mitigation: Cap clarification attempts at 2, then handoff.  
+  - **Cross-Agent Contagion:** One agent’s rollback might break others. Not covered—assumes agents are independent.  
+
+  **Tradeoffs for Speed**  
+  - Philosophy minimized: No utility functions, no "intent alignment." Focus on auth, scope, and risk.  
+  - Evals cover 50%: Automated tests for auth, provenance, self-exemption, and execution safety. Human escalation tested via tabletop exercises.  
+
+  --- 
+
+  **Final Recommendation:** Implement this protocol now, but fix the panic button immediately. For customers: "We’ve upgraded safety to ensure stops are fast, safe, and auditable—no exceptions."

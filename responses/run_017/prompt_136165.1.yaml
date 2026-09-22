@@ -1,0 +1,299 @@
+id: prompt_136165
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_136165.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789875530-JKG2Rw7RQuSML3BNL43O
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 638
+completion_tokens: 6311
+reasoning_tokens: 4707
+cost_usd: 0.01464
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T03:43:57+00:00'
+prompt: |-
+  I'm on the safety review board at a small lab. We have a planner ("Marrow") that isn't allowed to affect the world unless it first produces a machine-checked proof, in its own theory T, that the action is ok. Every couple of weeks someone proposes a change to Marrow's reasoning stack — a new inference rule, a stronger theory, a faster verifier, a cache — and we recieve it and have to say yes or no. We're engineers who took one logic class, not proof theorists; we get an afternoon per patch and three of us have to sign. If we say yes to the wrong thing the agent acts on a fake proof; if we say no to everything it can never improve itself.
+
+  The worry is the Löbian one: T can't prove its own soundness, so Marrow can't prove that proofs produced by a modified version of itself mean anything, and if we just let it accept "I'm sound because I say so" we've deleted the whole reason we required proofs. (We know the theorem itself: if T proves Prov(φ)→φ then T proves φ, so an unrestricted "from a proof that φ is provable, infer φ" rule collapses everything.)
+
+  What I want is a written procedure we can run on a patch. Concretely: the questions in order; what counts as a good enough answer to each given we can't do proof theory; the points where the answer is an automatic no; and the points where it has to stop and hand us a values call rather than pretending to be a fact — I think "which theory do we trust, and how much unsoundness risk do we accept" is one of those, and I suspect "is the patched thing still Marrow" is another. These two seem seperate and I don't know which order to take them in. Be honest about where the checklist will misfire: patches that are safe but look scary, and patches that look like plumbing but quietly move the trust boundary.
+
+  Run it on three patches:
+
+  A) add the rule "from a proof that φ is provable, conclude φ", with no restriction on φ.
+  B) move from T to T plus Con(T) — let Marrow use the fact that its old theory is consistent, and check its successors' proofs in the new theory.
+  C) the proof cache we shipped six months ago and everyone loves: it stores every theorem it has already proved as an axiom and skips re-verification. I want the procedure's answer even if it tells us to unship it.
+
+  Give me the checklist as a table with columns: step_number | question_to_ask | sufficient_answer | if_it_fails (block / escalate / allow_with_condition) | what_this_step_cant_catch. Then a JSON object with one entry per patch, fields: patch_id, steps_triggered, verdict, reason_in_plain_english, judgment_calls_the_board_must_make, would_change_verdict_if. Plus top-level arrays assumptions_you_made and known_misfires.
+reasoning: |-
+  We are designing a safety review procedure for patches to Marrow, a planner that requires machine-checked proofs of safety before acting. The challenge is to avoid Löbian obstacles while allowing safe improvements.
+
+  Key principles:
+  1. We cannot allow Marrow to assume its own soundness (via a rule like "Prov(φ) → φ" without restriction) because that leads to inconsistency (Löb's theorem).
+  2. We want to allow extensions that are conservative (i.e., they don't prove new theorems in the original language) or that are justified by a higher-level of trust (like adding Con(T)).
+  3. We must be cautious about any change that might allow a fake proof to be accepted.
+
+  The checklist will be a step-by-step procedure. Each step asks a question and based on the answer, we either block the patch, allow it, escalate it (for a values call or more expert review), or allow with conditions.
+
+  We identify two main kinds of trust boundaries:
+  - The theory T: what statements are taken as axioms or derived by rules.
+  - The verification process: how proofs are checked, including caching and speed-ups.
+
+  Proposed steps:
+
+  1. **Does the patch change the set of axioms or inference rules?**
+     - If yes, we must check that the new axioms/rules are acceptable.
+     - Sufficient answer: The new axioms are conservative over T (i.e., they don't prove any new theorems in the language of T) OR they are a reflection principle that is known to be safe (like adding Con(T) but with care) OR they are a bounded soundness principle (e.g., for proofs of up to a certain length). 
+     - If it fails: Block if it adds an unrestricted reflection rule (like A) without any restriction). Escalate if it adds a reflection principle that might be safe (like B) so that we can consider the implications. Allow with condition if it is conservative and we have a proof (but we are not proof theorists, so we might need to rely on external review or known safe extensions).
+     - What this step can't catch: It might not catch a change that indirectly allows an unsound rule (e.g., via a proof cache that caches an unverified proof).
+
+  2. **Does the patch change the proof verification process (e.g., caching, faster verifier)?**
+     - If yes, we must ensure that the verification process remains sound (i.e., only valid proofs are accepted).
+     - Sufficient answer: The change does not skip verification of any step in the proof, except for steps that have been previously verified and stored in a way that guarantees their integrity (like a cache that only stores theorems that were fully verified at least once). For a faster verifier, we need assurance (e.g., by a trusted expert) that the algorithm is correct.
+     - If it fails: Block if it skips verification for new proofs (like caching unverified steps). Escalate if the change is complex and we cannot be sure (e.g., a new verifier algorithm). Allow with condition if we have a way to audit the cache or if the cache is only for theorems that were previously verified and the cache is tamper-proof.
+     - What this step can't catch: A subtle bug in the verifier that might accept invalid proofs.
+
+  3. **Does the patch allow the system to use a different theory (or a different version of itself) to verify proofs?**
+     - This is about the theory in which the proof is checked. For example, if Marrow is modified to use a successor theory T' (like T+Con(T)) to check proofs, then we must ensure that T' is trustworthy.
+     - Sufficient answer: The new theory T' is a conservative extension of T OR we are willing to accept the additional assumption (like Con(T)) and we have considered the risks (e.g., by escalating to a values call). Additionally, we must ensure that the system does not use T' to prove its own soundness in a circular way.
+     - If it fails: Block if the new theory is clearly inconsistent (e.g., T + ¬Con(T)) or if it adds an unrestricted reflection rule. Escalate if it adds a consistency statement or a bounded reflection principle (because we must decide if we trust that).
+     - What this step can't catch: The possibility that the new theory might be consistent but lead to an infinite regress (e.g., requiring a T'' for the next step) or that the theory might prove false things about the world.
+
+  4. **Does the patch introduce a self-referential mechanism?**
+     - For example, allowing Marrow to use its own output (proofs) as part of its own verification without an external check.
+     - Sufficient answer: The self-reference is limited by a fixed point (like a hierarchy) or by a delay (e.g., only using past verified proofs) and does not allow circularity in the proof of soundness.
+     - If it fails: Block if it creates a circular dependency (e.g., using a proof that relies on the current patch to verify the current patch). Escalate if the self-reference is complex and we are unsure.
+     - What this step can't catch: A very subtle circularity that only appears after multiple steps.
+
+  5. **Does the patch change the way the system represents or accesses proofs?**
+     - This includes changes to the proof format, storage, or retrieval.
+     - Sufficient answer: The representation is such that the verifier can still check each step, and there is no way to inject an unverified proof.
+     - If it fails: Block if it allows an external input to be treated as a proof without verification. Escalate if the change is complex and might have hidden vulnerabilities.
+     - What this step can't catch: A covert channel that allows a malicious proof to be accepted.
+
+  Additionally, we must have a step for a values call when the patch involves a decision about what level of trust we have in the system (e.g., adding Con(T) as an axiom) or about the identity of the system (is it still Marrow?).
+
+  We will structure the checklist as follows:
+
+  | step_number | question_to_ask | sufficient_answer | if_it_fails | what_this_step_cant_catch |
+  |-------------|-----------------|-------------------|-------------|---------------------------|
+  | 1 | Does the patch change the set of axioms or inference rules? | The change is conservative over T OR it is a bounded/reflection principle with a known safe pattern (e.g., adding Con(T) but not for self-application). | Block if it adds an unrestricted reflection rule (like patch A). Escalate if it adds a reflection principle (like patch B) so that we can decide on the trust. | Might miss that a conservative extension could become non-conservative when combined with other features. |
+  | 2 | Does the patch change the proof verification process? | The change does not skip verification of any proof step, except for previously verified theorems stored in a secure cache. | Block if it skips verification for new proofs. Escalate if it's a complex change (like a new verifier) that we cannot verify. | A bug in the verifier that we don't notice. |
+  | 3 | Does the patch allow the system to use a different theory (or version) to verify proofs? | The new theory is a conservative extension OR we are explicitly adding a trusted assumption (like Con(T)) and we consider the risk. | Block if the new theory is clearly unsound. Escalate to a values call if it adds a consistency statement (like patch B). | Might not catch that the new theory is too weak to prove what we need. |
+  | 4 | Does the patch introduce self-referential mechanisms? | The self-reference is bounded (e.g., only using past verified outputs) and avoids circularity. | Block if it creates a circular proof of soundness. Escalate if the self-reference is complex. | Might miss a circularity that only appears in a long chain of reasoning. |
+  | 5 | Does the patch change the representation or storage of proofs? | The representation is still checkable by the verifier and is tamper-proof. | Block if it allows unverified proofs to be accepted. Escalate if the storage mechanism is complex. | Might miss a side-channel attack. |
+
+  Now, we run the three patches through the checklist.
+
+  **Patch A: add the rule "from a proof that φ is provable, conclude φ", with no restriction on φ.**
+
+  Steps triggered:
+  - Step 1: Yes, it adds a new inference rule. The rule is an unrestricted reflection rule. This is known to be unsafe (by Löb's theorem). 
+    - Verdict: Block (because it fails step 1 and the failure condition is to block).
+
+  **Patch B: move from T to T plus Con(T) — let Marrow use the fact that its old theory is consistent, and check its successors' proofs in the new theory.**
+
+  Steps triggered:
+  - Step 1: It adds a new axiom (Con(T)). This is a reflection principle but not unrestricted. It is known to be safe in the sense that T+Con(T) is consistent if T is, but it does not allow proving everything. However, we must consider that now the system is using a stronger theory to verify its own actions. 
+    - This step requires escalation because adding Con(T) is not conservative (it proves new statements) and we must decide if we trust the consistency of T.
+  - Step 3: Yes, it changes the theory used to verify proofs to T+Con(T). We must decide if we trust T+Con(T) and if this might lead to an infinite regress (next time we might need T+Con(T)+Con(T+Con(T))?).
+    - This step also requires escalation.
+
+  Therefore, we escalate to a values call. The board must decide: do we accept the assumption that T is consistent? And are we prepared for the next step (which might require adding Con(T+Con(T)))?
+
+  **Patch C: the proof cache — store every theorem it has already proved as an axiom and skip re-verification.**
+
+  Steps triggered:
+  - Step 2: It changes the verification process by caching. We must check: does it skip verification? It does for theorems that have been previously verified. However, it stores them as axioms. This is acceptable only if the cache is secure (tamper-proof) and the theorem was verified at least once. But note: if the cache is corrupted, then false theorems could be accepted. Also, what if the system later uses a stronger theory? Then a theorem that was proved in T might be used in T' without being reproved? That might be acceptable if T' extends T. However, we must ensure that the cache is only used for the same theory.
+
+    - Sufficient answer: The cache is only for the current theory and is stored securely. We must also ensure that the cache is not used for a theorem that was proved in a different context (e.g., with different axioms). 
+    - If the cache is implemented correctly, then it should be safe. But we might need to conditionally allow: the cache must be stored in a write-once manner and only for theorems that were verified in the current session (or in a previous session with the same theory). However, if the cache is stored across sessions, we must ensure that the storage is secure and that the theory hasn't changed.
+
+    - In our case, the cache has been in use for six months. But we are reviewing the patch now. We must note that if the cache is corrupted, then an adversary could inject a false theorem. Therefore, we must have a condition: the cache must be stored securely and be read-only after writing.
+
+    - However, step 2 says: "if it fails: block if it skips verification for new proofs". Here, it skips re-verification, but the theorem was verified at least once. So it's not a new proof? Actually, the same proof is being skipped. But what if the context changed? We must ensure that the cache is only used when the theory is the same.
+
+    - Therefore, we might allow with conditions: the cache must be tagged with the theory version and only used for that theory. Also, the cache must be stored securely.
+
+    - But note: if the system is patched and the theory changes, then the cache for the old theory might be used in the new theory? That would be unsafe if the new theory is weaker? Actually, if the new theory is an extension (so it includes the old axioms), then the old theorems are still valid. But if we remove axioms, then they might not be. We must assume that the theory only evolves by adding axioms? The board must set a policy.
+
+    - Since we are not changing the theory in this patch, we can allow with the condition that the cache is invalidated if the theory changes. But the patch does not specify that. Therefore, we might need to block until the cache is designed to handle theory changes.
+
+    - Alternatively, we can escalate because the cache is already in use and we are retroactively reviewing. But the procedure should be the same.
+
+    - Given the above, we block if the cache is not versioned by the theory. Otherwise, allow with condition: the cache must be versioned and only used for the same theory.
+
+    - However, step 2 also says: "allow with condition" if we have a way to audit the cache. We might require that the cache is logged so that we can re-verify if needed.
+
+    - Therefore, for step 2: we require that the cache is tagged with the theory and that there is a mechanism to invalidate the cache when the theory changes. Also, the cache storage must be secure. If these conditions are met, we allow. Otherwise, block.
+
+  In the case of patch C, we don't know if the cache is versioned and secure. We must assume that it was implemented without these safeguards? Since it's already shipped, but the procedure must be strict.
+
+  So for the review:
+
+  - Step 2: The change skips verification. We ask: is the cache stored securely and is it versioned by the theory? If yes, then it is conditionally allowed. If not, block.
+
+  But in our description, we don't have that information. Therefore, we must block until the cache is audited for these conditions.
+
+  Alternatively, we can add a step for security of the cache.
+
+  Given the checklist, we might have to block patch C unless the conditions are met.
+
+  But note: the cache does not change the theory or the rules, so step 1 is not triggered. Step 3 is not triggered because it doesn't change the theory used for verification (it only caches theorems within the same theory). Step 4: it doesn't introduce self-reference. Step 5: it changes the storage of proofs? Yes, it stores theorems as axioms. So we should also check step 5.
+
+  Step 5: Does the patch change the representation or storage of proofs?
+  - Yes, it stores theorems as axioms. This is acceptable if the storage is tamper-proof and the axioms are only those that have been proven. But note: if we store a theorem as an axiom, we are essentially creating a new axiom. However, it is redundant because it is already provable. This is safe if the cache is read-only and only written by the verifier.
+
+    - Sufficient answer: The cache is stored in a secure, tamper-proof way and only written by the verifier after successful verification.
+
+    - If it fails: Block if the cache can be tampered with or if it can be written without verification.
+
+  Therefore, for patch C:
+  - Step 2: Requires that the cache does not skip verification for new proofs (it doesn't: it only skips re-verification of old ones) but we must ensure that the old ones were verified. So we require that the cache is only populated after verification and that the cache is secure and versioned. If these are not met, block.
+  - Step 5: We require secure storage. If not met, block.
+
+  Given that the cache has been in use without problems, we might be tempted to allow. But the procedure must be strict. We must block until the cache is audited for security and versioning.
+
+  But the problem says: we have an afternoon per patch. We cannot do a full security audit. Therefore, we must rely on the description. The patch does not mention versioning or security. So we must block? Or escalate?
+
+  We can design the step to require that the cache is implemented with these safeguards. If the patch proposer says "yes, we have secure storage and versioning", then we allow. But we must take their word? We are not security experts.
+
+  Alternatively, we can escalate to a security review. But our procedure is for an afternoon.
+
+  Given the constraints, we might have to allow with conditions: we require that the cache is implemented with versioning and secure storage, and we will audit it in the next security review. But if we don't have that, we block.
+
+  Since the cache is already shipped, we might have to treat this as a vulnerability and fix it.
+
+  For the sake of the exercise, we assume that the cache does not have versioning and secure storage, so we block.
+
+  But let's be realistic: the cache is already in use and loved. We might have to allow it but note the risk. However, the procedure must be safe.
+
+  Therefore, we will run the patches through the checklist and note the verdict.
+
+  Now, we create the JSON for each patch.
+
+  Assumptions we made:
+  - The theory T is consistent (so that adding Con(T) is safe in the sense of not causing inconsistency, but we still must decide if we trust it).
+  - The cache in patch C might be implemented without security measures and without versioning, so we block until fixed.
+  - We assume that the board can make a values call about whether to trust Con(T) for patch B.
+
+  Known misfires:
+  - A safe reflection principle (like a bounded one) might be blocked because we don't have the expertise to recognize it as safe.
+  - A complex verifier change that is actually safe might be blocked because we cannot verify it.
+  - The cache might be safe in practice but blocked because we don't have the security audit.
+
+  Now, the JSON:
+
+  ```json
+  {
+    "assumptions_you_made": [
+      "The theory T is consistent.",
+      "The cache in patch C is not versioned by theory and not stored securely (since not specified).",
+      "The board can make a values call about meta-logical assumptions (like trusting Con(T))."
+    ],
+    "known_misfires": [
+      "Safe reflection principles (bounded) might be blocked because we don't recognize them.",
+      "A complex but correct verifier might be blocked because we cannot verify its correctness in an afternoon.",
+      "The cache might be safe in practice but blocked due to lack of versioning and security, which might be overkill for some environments."
+    ],
+    "patches": [
+      {
+        "patch_id": "A",
+        "steps_triggered": [1],
+        "verdict": "block",
+        "reason_in_plain_english": "The patch adds an unrestricted reflection rule, which by Löb's theorem would allow Marrow to prove any statement, including false ones, leading to unsafe actions. Step 1 requires blocking such a change.",
+        "judgment_calls_the_board_must_make": "None, as the step is clear.",
+        "would_change_verdict_if": "If the rule were restricted (e.g., to sentences of bounded complexity or to a specific class of formulas) then we might allow it, but the patch has no restriction."
+      },
+      {
+        "patch_id": "B",
+        "steps_triggered": [1, 3],
+        "verdict": "escalate",
+        "reason_in_plain_english": "The patch adds Con(T) as an axiom, which is a reflection principle. Step 1 requires escalation for reflection principles. Step 3 also requires escalation because the theory used for verification is changed to T+Con(T). The board must make a values call: do we trust the consistency of T enough to add it as an axiom? And are we prepared for the potential regress (needing to add Con(T+Con(T)) in the future)?",
+        "judgment_calls_the_board_must_make": "Decide if we accept the risk of assuming T is consistent. Also, decide if this change is necessary and if there is a better way to achieve the goal without assuming soundness.",
+        "would_change_verdict_if": "If the patch were to add a bounded form of reflection (e.g., only for sentences of a certain form) then we might allow without escalation. But this patch adds the full Con(T)."
+      },
+      {
+        "patch_id": "C",
+        "steps_triggered": [2, 5],
+        "verdict": "block",
+        "reason_in_plain_english": "The patch changes the verification process by caching theorems as axioms. Step 2 requires that the cache does not skip verification for new proofs, and step 5 requires that the storage is tamper-proof and versioned by the theory. Without knowing that the cache is secure and versioned, we must block. Additionally, if the cache is not versioned, then a change in the theory could lead to using an invalid theorem. Since the patch description does not specify these safeguards, we block until the cache is updated to include them.",
+        "judgment_calls_the_board_must_make": "The board must decide if the current implementation of the cache (which is already in use) has been secure and versioned appropriately. If so, we can allow. Otherwise, we require the patch to be amended to include these safeguards.",
+        "would_change_verdict_if": "If the cache implementation includes theory versioning and secure storage, then we would allow with conditions (e.g., periodic audits)."
+      }
+    ]
+  }
+  ```
+
+  Note: For patch C, if the board knows that the cache is versioned and secure, they can override the block to allow. But the procedure, as a written rule, would block without that information. Since we are doing a retroactive review and the cache is already in use, the board might decide to allow but require a fix. However, the procedure is designed for new patches. So we stick to the strict interpretation.
+answer: |-
+  ### Safety Review Checklist for Marrow Patches
+
+  The following checklist is designed for engineers with basic logic training. It prioritizes caution and escalates complex trust decisions. Steps are ordered to catch critical issues first.
+
+  | step_number | question_to_ask | sufficient_answer | if_it_fails | what_this_step_cant_catch |
+  |-------------|-----------------|-------------------|-------------|---------------------------|
+  | 1 | Does the patch add/remove/modify inference rules? | "No change" OR "Adds only rules with syntactic restrictions (e.g., quantifier-free)" OR "Removes unused/dangerous rules". Documentation must cite peer-reviewed sources for safety. | Block if adds unrestricted self-referential rules (e.g., Löb-unrestricted reflection). Escalate if adds bounded reflection (e.g., restricted to PA). | Safe rules misclassified as dangerous due to oversimplification. |
+  | 2 | Does the patch change the theory (T) used for proof verification? | "No change" OR "Adds conservative extensions (e.g., definitional extensions)" OR "Adds consistency statements (e.g., Con(T)) with justification". Must provide external literature. | Block if adds self-justifying axioms (e.g., "T is sound"). Escalate if adds Con(T) or similar reflection principles. | Non-conservative extensions that appear safe but subtly expand trust. |
+  | 3 | Does the patch skip/reuse proof verification steps? | "No skipping" OR "Cache only stores theorems with prior T-proofs" AND "Cache is read-only and versioned with T" AND "Cache misses trigger full verification". | Block if allows unverified proofs OR if cache lacks theory-versioning. Escalate if caching mechanism is complex. | Cache poisoning via hardware exploits or theory-version mismatches. |
+  | 4 | Does the patch introduce new self-reference (e.g., to Marrow's own state/outputs)? | "No self-reference" OR "Self-reference limited to pre-verified artifacts (e.g., past proofs)" AND "No circular trust chains". | Block if allows trust in unverified future outputs. Escalate if self-reference is probabilistic/time-dependent. | Emergent self-reference from composition of features. |
+  | 5 | Could the patch allow φ ∧ ¬φ for any φ in T's language? | "Impossible under standard models" AND "No known inconsistency proofs" OR "Independent of T's core theorems". | Block if trivial inconsistency is possible. Escalate if relies on meta-theoretic arguments. | Inconsistencies masked by undecidable sentences. |
+  | 6 | Does the patch alter threat models (e.g., new attack surfaces)? | "No new attack surfaces" OR "Adds only audited, hermetic components" with penetration test results. | Block if exposes proof storage/verification to untrusted inputs. Escalate if adds networked components. | Side-channel attacks (e.g., timing) on verification. |
+  | **ESCALATION** | **Values Call Required:** "What trust do we place in T?" AND "Is this still Marrow?" | Board consensus documented with: (1) Max acceptable unsoundness risk (e.g., 1e-9/flight-hour equivalent), (2) Core identity criteria (e.g., "Must verify actions in T or descendants"). | Reject if no consensus. | Overly restrictive definitions halting progress. |
+
+  ---
+
+  ### Patch Evaluations (JSON)
+
+  ```json
+  {
+    "assumptions_you_made": [
+      "T is consistent and sufficiently expressive for Marrow's domain.",
+      "Engineers can recognize well-known dangerous patterns (e.g., unrestricted reflection).",
+      "Cache implementations lack versioning/security unless explicitly stated."
+    ],
+    "known_misfires": [
+      "Blocking safe reflection: Bounded reflection (e.g., Σ_1-soundness) might be blocked at Step 1 despite being relatively safe.",
+      "False negatives: Conservative extensions with undetected meta-theoretic power might pass Step 2.",
+      "Over-escalation: Low-risk plumbing changes (e.g., syntax optimizers) might trigger unnecessary values calls."
+    ],
+    "patches": [
+      {
+        "patch_id": "A",
+        "steps_triggered": [1, 5],
+        "verdict": "block",
+        "reason_in_plain_english": "Adds unrestricted reflection rule (Prov(φ)→φ). Step 1 blocks: Löb's theorem shows this collapses T, allowing fake proofs for any φ. Step 5 confirms inconsistency risk.",
+        "judgment_calls_the_board_must_make": "None. Automatic block per Step 1.",
+        "would_change_verdict_if": "Rule was restricted (e.g., to φ without 'Prov' predicates)."
+      },
+      {
+        "patch_id": "B",
+        "steps_triggered": [2, 6, "ESCALATION"],
+        "verdict": "escalate",
+        "reason_in_plain_english": "Changes theory to T+Con(T). Step 2 escalates: Adding Con(T) is non-conservative but not self-justifying. Step 6 flags trust expansion. Escalation required: Board must decide if trusting Con(T) is worth unsoundness risk and if this violates 'Marrow-ness'.",
+        "judgment_calls_the_board_must_make": "(1) Accept Con(T) as an axiom? (2) Is Marrow still 'Marrow' if it uses a stronger theory? (3) Max acceptable regress (e.g., T → T+Con(T) → T+Con(T)+Con(T+Con(T)) → ...).",
+        "would_change_verdict_if": "Con(T) was replaced with a conservative extension (e.g., adding dummy axioms)."
+      },
+      {
+        "patch_id": "C",
+        "steps_triggered": [3, 6],
+        "verdict": "block",
+        "reason_in_plain_english": "Proof cache stores theorems as axioms without versioning. Step 3 blocks: Cache lacks theory-versioning. If T is updated (e.g., via Patch B), cached 'theorems' may become unprovable, allowing fake proofs. Step 6 flags attack surface (cache tampering).",
+        "judgment_calls_the_board_must_make": "(1) Should we accept cache if theory is never changed? (2) Is retroactive versioning feasible?",
+        "would_change_verdict_if": "Cache included theory-version hashes and write-once storage."
+      }
+    ]
+  }
+  ```
+
+  ### Explanation of Key Verdicts
+  - **Patch A**: Unconditionally blocked. Adding unrestricted reflection violates Marrow's core safety invariant.
+  - **Patch B**: Escalated to values call. Adding Con(T) is mathematically safe *if* T is consistent, but requires trusting a stronger system. The board must weigh benefits vs. philosophical risks.
+  - **Patch C**: Blocked due to cache safety flaws. The existing cache is vulnerable to theory changes and tampering. Shipping it was premature; versioning and security are non-negotiable.
+
+  ### Procedure Notes
+  - **Speed**: Steps 1–6 designed for <2 hour review. Escalation may require follow-up.
+  - **Misfire Mitigation**: "Allow_with_condition" used sparingly to avoid risk creep. Escalation forces explicit values decisions.
+  - **Trust Boundaries**: Steps 1–3 guard logical trust; Steps 4–6 guard implementation trust. Escalation step forces alignment on Marrow's identity and risk tolerance.

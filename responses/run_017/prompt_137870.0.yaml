@@ -1,0 +1,253 @@
+id: prompt_137870
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_137870.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789884457-DctJSoXpSAkmoYdRtwHu
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 450
+completion_tokens: 6128
+reasoning_tokens: 4011
+cost_usd: 0.014127
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T06:12:58+00:00'
+prompt: |-
+  I train RL agents for a living — MDPs, Bellman backups, value iteration, on-policy vs off-policy data, self-play, n-step lookahead with a bootstrap value estimate, fixed points as convergence targets, regret, epsilon-greedy. I know the centipede setup already, so don't walk me through it.
+
+  Take the backward induction paradox (the "rational" answer being that you grab the small pile at the very first node, which everyone agrees is nuts) and restate the whole argument in that vocabulary, as faithfully as you can: opponent as part of the environment, common knowledge of rationality as a model I have of their policy, the terminal node as the base case of a recursion. But do it twice: once with the full tree unrolled, and once where I only get k steps of lookahead and then bootstrap off a value function I learned from actual play. Also do a mirror version, where both players are literally the same trained checkpoint with shared weights and each can run the other's policy — that seems like the one case where "I know what you'd do at node 40" stops being hand-waving and becomes a computation.
+
+  Then the residue report, in three buckets: what carried over exactly, what fit only after being bent, and what has no expression in my vocabulary at all. Two bits I'm most curious about. One: the entire argument runs on what would happen at nodes that never get visited, and I only ever get data on-path — I half-remember game theory having an equilibrium notion where beliefs only have to be correct along the path actually played; name it if it's real, otherwise describe the closest thing, and say whether it dissolves the paradox or whether backward induction rides right through it. Two: my gut says the paradox is just an artifact of hard-coding the opponent as a known, fixed, exactly-rational policy inside my environment, and that against a real learned opponent the first-node grab collapses — is that right, or am I sneaking something in? For each piece of residue, say whether my vocabulary is missing something real or the puzzle was never as sharp as it's made out to be.
+reasoning: |-
+  We are restating the backward induction paradox (centipede game) in RL vocabulary.
+
+  The centipede game is a sequential game with two players alternating turns. There's a pile of money that grows at each node. At each decision point, a player can either "grab" the current pile (ending the game and taking the larger share) or "pass" (which grows the pile but passes the move to the opponent). The game has a fixed number of moves. The backward induction solution says that at the very first node, the first player should grab the small pile because if they pass, the second player would grab at the next node (leaving the first player with less), and so on.
+
+  We'll do three versions:
+
+  1. **Full tree unrolled (backward induction as dynamic programming):** We have the full MDP (which is actually a deterministic game tree). We compute the value of each node by backward induction (Bellman backup). The base case is the terminal node (if reached). The value for a player at a node is the maximum over their actions of the immediate reward plus the discounted value of the next state (but note: in the centipede game, there is no discounting in the classical setup, so we set discount factor γ=1, but also note that the game ends when someone grabs). However, the next state's value depends on the opponent's optimal play.
+
+     We model the opponent as part of the environment. Since the environment is deterministic, the state transition is determined by the joint actions. We assume common knowledge of rationality: both players use an optimal policy (which is the subgame perfect equilibrium). 
+
+     We define the value function for player 1 (V1) and player 2 (V2) at each state. The state is defined by the current turn and the current pot sizes. The Bellman equations for a state where it's player 1's turn:
+
+     - Action "grab": immediate reward = current pot for player 1 (and the opponent gets 0, but note: in the centipede game the split is defined, so if player 1 grabs, they take the larger share and leave a smaller one for player 2? Actually, the setup: when a player grabs, they take the larger portion of the current pot and the other player gets the smaller portion. Let's denote: at a node, the pot is P. If the current player grabs, they get P - c (where c is a small fixed amount) and the opponent gets c. But for simplicity, often the pot is split such that the grabbing player gets P1 and the other gets P2, with P1 > P2 and P1+P2 = P. However, in the standard centipede, the pot grows when passed and the split is fixed: the grabber takes the larger share, the other the smaller. Without loss of generality, we can denote the state by the turn and the current pot size, and the split rule is fixed.
+
+     Actually, let's define: at a node, if the current player grabs, then they receive a reward of `grab_reward` (which is a fixed amount for that node, typically increasing over time) and the opponent receives a fixed small amount (or zero in some versions). But in the classic paradox, the total sum increases. We can abstract the state by an index `t` (step) and the current pot sizes for the two players if the game were to end at that node by a grab.
+
+     However, to be consistent, we model:
+
+     - State s_t: turn t (t=0,1,...,T-1), and it's player i's turn (i=1 if t even, 2 if t odd). The pot at step t is P_t (which increases with t). If at state s_t, the current player grabs, then:
+          R1 = a_t (if player 1 is grabbing) or R2 = b_t (if player 2 is grabbing) and the other player gets a fixed small amount (or zero). But note: in the standard centipede, the payoffs are asymmetric. For simplicity, we can think of the payoffs as (a_t, b_t) if player 1 grabs at t (if it's player 1's turn) and (b_t, a_t) if player 2 grabs (if it's player 2's turn) and then the pot grows at each pass.
+
+     Actually, a common parametrization: 
+       - At node 0 (player 1's turn): if grab, (1,0) [or sometimes (0.4,0.1) but the exact numbers don't matter as long as the relative incentives hold].
+       - If pass, the pot grows and it becomes player 2's turn at node 1: then if player 2 grabs, (0,2) [so player 1 gets 0 and player 2 gets 2] or if passes, then at node 2 (player 1 again) the pot is even larger, etc.
+
+     We'll abstract: at state s (with index t), the current player i can:
+       - Grab: gets a reward g_i(t), the opponent gets g_j(t) (with g_i(t) > g_j(t) and g_i(t)+g_j(t) = P_t, the current pot).
+       - Pass: the game moves to state s_{t+1} (and the pot grows).
+
+     The backward induction:
+
+       At the last state (say T-1, which is the last decision node), the current player (say player 2) will grab because if they pass, the game ends and they get a very small amount (or zero) and by grabbing they get g_2(T-1) which is high. So V_i(s_{T-1}) = g_i(T-1) for the current player i (and the opponent gets g_j(T-1)).
+
+       Then at state T-2 (which is player 1's turn, if T-2 is even), player 1 has two choices:
+          - Grab: gets g_1(T-2)
+          - Pass: then the state becomes T-1, and then player 2 will grab, so player 1 will get g_1(T-1) (which is the opponent's reward when player 2 grabs? Actually, when at state T-1, player 2 grabs, then player 1 gets the smaller share, say g_1(T-1) [which is the amount for the non-grabbing player] and note that g_1(T-1) < g_1(T-2) because the pot has grown? Wait, no: the pot grows so the amounts at later nodes are larger? Actually, in the standard centipede, the grabbing reward for the current player at a later node is higher, but the non-grabbing player's reward is also higher? But the key is: the non-grabbing player's reward at the next node (if the opponent grabs) is less than what the current player could get by grabbing now? Actually, no: by passing, the current player is hoping that the opponent will pass too and then they can grab later. But in the backward induction, since the opponent at the next node will grab, then the current player (at T-2) by passing will get only the non-grabbing share at T-1, which is less than the grabbing share at T-2? Actually, that is the setup: the non-grabbing share at T-1 is less than the grabbing share at T-2. So player 1 at T-2 prefers to grab.
+
+       Therefore, we recursively show that at every node, the current player grabs.
+
+  2. **k-step lookahead with a bootstrap value function:** Now we consider an agent that doesn't have the full tree but uses a value function approximation. The agent can look ahead k steps and then uses a learned value function for the state at the end of the k-step lookahead. The value function is trained on actual play.
+
+     We'll assume we have a value function V(s; θ) that estimates the expected return for the current player from state s. The policy is to choose the action that maximizes the expected return over the next k steps and then the bootstrapped value.
+
+     However, note that the value function must be for the current player. But the state s might be the same for both players? Actually, we need to know whose turn it is. So we include the player identity in the state.
+
+     The agent at state s (with turn information) will simulate the next k steps (including the opponent's moves, which we model using a fixed policy for the opponent, or we can use the same value function for the opponent? but note: in self-play, the opponent is the same agent). For now, we assume the opponent is modeled by the same value function (so we have a shared value function for both players, but the value for a state is from the perspective of the current player).
+
+     The k-step lookahead:
+
+       At state s0 (current state, current player i), we expand the tree for k steps. At each node, we consider both actions. At leaf nodes of the lookahead tree (depth k), we use V(s_k; θ) to estimate the value. Then we back up the values to the root using the Bellman equation (with the opponent modeled as playing optimally according to the same value function).
+
+       However, note: the value function V(s; θ) is trained to estimate the expected return for the current player from state s under the agent's policy. But in the lookahead, we are assuming the opponent is also using the same policy? That might not be the case in reality. But in the setting where both players are the same trained checkpoint, then it is.
+
+     How does the backward induction paradox manifest? 
+
+       At the first node, we do a k-step lookahead. If k is less than the total number of steps, then we don't see the terminal state. We bootstrap at depth k. The bootstrapped value might be high (if the value function has learned that it's beneficial to pass in the middle of the game) or low? 
+
+       The key is: if the value function has been learned from actual play where players often pass until late in the game, then V(s) for an early state might be high, because the agent expects the game to continue and get a large reward. Then the lookahead might suggest passing at the first node. This breaks the backward induction.
+
+       However, if we train the value function using the Bellman equation that assumes the opponent is playing optimally (according to the same policy), then the value function might converge to the backward induction value. But in practice, with function approximation and limited data, it might not.
+
+  3. **Mirror version (same trained checkpoint):** Both players are the same trained agent with shared weights. The agent's policy is defined by a neural network that takes the state and outputs a policy (and possibly a value). The agent can simulate the opponent's moves because the opponent is the same agent.
+
+     In this case, at a state s, the agent can compute exactly what the opponent would do at the next state because it has the same policy. Then the agent can do a full lookahead (if computationally feasible) or use a learned value function.
+
+     The paradox: if the agent is trained to optimality (converged to the subgame perfect equilibrium), then it will grab at the first node. But during training, if the agent hasn't converged, it might pass. However, the backward induction argument still holds: if the agent has converged to the optimal policy, then it must grab at every node. But then why would the agent ever pass during training? Because the agent might learn that passing leads to higher rewards (if the opponent also passes). This is the exploration-exploitation trade-off.
+
+     However, in self-play with shared weights, the agent knows that the opponent is exactly itself. Therefore, at state s0, the agent knows that if it passes, then at state s1 (opponent's turn) the opponent (which is itself) will face the same decision. The agent can recursively compute: at the last node, the opponent (itself) will grab. Then at the second last node, the agent (if it were at that node) would grab because the opponent at the next node will grab and leave it with a small amount. Then the agent at s0 knows that by passing, the opponent at s1 will grab (because the opponent is itself and it would grab at s1). Therefore, the agent at s0 grabs.
+
+     So the paradox remains: the agent grabs at the first node.
+
+  Residue report:
+
+  We break down into three buckets:
+
+  A. What carried over exactly:
+     - The MDP structure and backward induction as dynamic programming (Bellman backups) fit exactly. The full tree unrolled version is a direct restatement of the backward induction.
+     - The base case of the recursion at the terminal node is exactly the base case of the value iteration.
+     - The concept of common knowledge of rationality: we model the opponent as part of the environment with a fixed (optimal) policy. This is the same as assuming the opponent uses the optimal policy (subgame perfect equilibrium).
+     - In the mirror version (same checkpoint), the knowledge of the opponent's policy is exact because it is the same as the agent's own policy. So the recursion becomes a computation.
+
+  B. What fit only after being bent:
+     - The k-step lookahead with bootstrapping: in the original paradox, we assume full knowledge of the entire tree. With limited lookahead and bootstrapping, the agent might not see the entire chain of reasoning. The bootstrap value function, if learned from actual play, might reflect a different policy (one that passes) and thus break the backward induction. But note: the backward induction solution is still the unique subgame perfect equilibrium. So if the agent converges to the optimal policy, it must grab at the first node. However, with function approximation and limited data, the agent might not converge to the optimal policy. Therefore, in practice, we might observe passing. This is a "bent" fit: the backward induction solution is still the theoretical optimum, but the agent may not achieve it due to learning challenges.
+
+  C. What has no expression in the vocabulary at all:
+     - The original paradox relies on the assumption that both players are rational and that this is common knowledge. In RL, we can model the opponent as a fixed policy (rational) and we can have common knowledge by assuming the opponent uses the optimal policy. However, in the case of learning from data, we only have on-path data. The equilibrium concept that requires beliefs to be correct only along the path is called "self-confirming equilibrium" (SCE). In SCE, players may have incorrect beliefs about off-path play. This can lead to different outcomes. In the centipede game, if the players have never observed the opponent grab at an early node, they might believe that the opponent will pass, and thus they pass. This can sustain an equilibrium where the game proceeds for several steps. The backward induction solution (grab at the first node) is still a self-confirming equilibrium because if both players grab at the first opportunity, then off-path behavior (passing) is never observed and beliefs about off-path behavior can be arbitrary. But note: the backward induction solution does not require any off-path play. However, there are other self-confirming equilibria in which players pass for a while. The paradox does not dissolve because the backward induction solution is still one of the self-confirming equilibria, but it is not the only one. The original backward induction argument relies on the players' beliefs about off-path play being correct (i.e., the opponent would grab if given the chance). In SCE, if a player never observes the opponent at an off-path node, they might believe the opponent would pass, which would make passing rational. So the paradox is avoided in practice if the agents maintain such beliefs.
+
+     - The gut feeling: the paradox might collapse against a real learned opponent. Why? Because if the opponent is not perfectly rational (i.e., they might pass sometimes), then the backward induction chain breaks. If at some node the opponent is believed to pass with positive probability, then it might be rational to pass. In RL, we are often dealing with imperfect opponents. Therefore, if the agent has learned that the opponent sometimes passes (or even passes with high probability) in the early nodes, then the agent might pass at the first node. This is not sneaking in anything; it's a direct consequence of the opponent model. The backward induction solution requires that the opponent is rational and that this is common knowledge. Without that, the solution changes.
+
+     So for the two bits:
+
+     1. The equilibrium concept that only requires beliefs to be correct along the path is the self-confirming equilibrium (SCE). It does dissolve the paradox in the sense that it allows for non-backward-induction outcomes (like passing) to be equilibria. However, the backward induction outcome is also a SCE. So the paradox doesn't completely vanish, but it becomes less inevitable.
+
+     2. The gut feeling is correct: against a real learned opponent (who might not be perfectly rational) the backward induction chain breaks. The agent might pass at the first node if it believes the opponent will pass at the next. This is because the agent's model of the opponent's policy is not the fixed rational one but a learned one that might predict passing. Therefore, the paradox collapses. This is not a flaw in the vocabulary; it's a feature: RL agents can adapt to the actual policy of the opponent.
+
+     What is missing? The original paradox assumes perfect rationality and common knowledge. In the real world (or in RL with imperfect opponents and limited information), these assumptions are not met. Therefore, the backward induction solution, while logically sound under its assumptions, may not be the observed behavior. The RL vocabulary captures this by allowing the opponent model to be learned from data, which may not reflect perfect rationality.
+
+     The residue: 
+       - The concept of "common knowledge of rationality" is not directly represented in RL; instead, we have a learned opponent model. The RL vocabulary is richer in that it allows for imperfect opponents and learning, but it does not have a built-in notion of "rationality" per se. We can define a rational opponent as one that maximizes its own return, but we don't assume that the opponent is rational unless we have learned that it is.
+       - The backward induction paradox is sharp under the assumptions of perfect rationality and common knowledge. In RL, we can break the paradox by relaxing these assumptions. Therefore, the puzzle is not as sharp in the real world of learned policies.
+
+  Conclusion: The RL vocabulary can express the backward induction paradox exactly in the case of a known rational opponent (full tree, mirror version). It also explains why the paradox might not hold in practice (limited lookahead, learned opponent model, self-confirming equilibria). The residue is mainly in the relaxation of the strong assumptions of the paradox.
+answer: |-
+  ### Restatement of the Backward Induction Paradox in RL Vocabulary
+
+  #### **1. Full Tree Unrolled (Exact Backward Induction as DP)**
+  - **MDP Setup**: The game is a finite-horizon deterministic MDP. States are game nodes (including turn player), actions are {grab, pass}. The opponent is part of the environment dynamics; their policy is fixed and known (rational optimizer).  
+  - **Value Function Definition**:  
+    - \(V_i(s)\): Expected return for player \(i\) from state \(s\), assuming both players act optimally.  
+    - Terminal state \(s_T\): Base case where values are the payoffs (grab executed).  
+  - **Bellman Backup**:  
+    For a state \(s\) where player \(i\) acts:  
+    \[
+    V_i(s) = \max_{a \in \{grab, pass\}} \left[ R_i(s, a) + \gamma \cdot V_i(s') \right]
+    \]  
+    - If \(a = \text{grab}\): Immediate reward \(R_i\) (large share), opponent gets \(R_j\) (small share), game ends.  
+    - If \(a = \text{pass}\): Transition to \(s'\) (next player's turn), \(\gamma=1\) (no discount).  
+  - **Backward Induction**:  
+    - Start recursion from terminal node \(s_T\):  
+      \[
+      V_i(s_T) = R_i(s_T, \text{grab}) \quad (\text{forced grab})
+      \]  
+    - At penultimate node \(s_{T-1}\) (player \(j\)'s turn):  
+      \[
+      V_j(s_{T-1}) = \max \{ R_j(\text{grab}), \underbrace{V_j(s_T)}_{\text{player } i \text{ grabs at } s_T} \}
+      \]  
+      Since \(R_j(\text{grab}) > V_j(s_T)\) (by game design), player \(j\) grabs.  
+    - Recursively, at \(s_0\) (player 1's turn):  
+      \[
+      V_1(s_0) = \max \{ R_1(\text{grab}), V_1(s_1) \}
+      \]  
+      But \(V_1(s_1)\) is the value when player 2 grabs immediately at \(s_1\) (leaving player 1 worse off), so player 1 grabs at \(s_0\).  
+  - **Key Insight**:  
+    Common knowledge of rationality (CKR) is encoded as **known opponent policy** (always takes the Bellman-optimal action). The recursion collapses to the first node.  
+
+  ---
+
+  #### **2. \(k\)-Step Lookahead with Bootstrapped Value Function**  
+  - **Partial Model**: Agent has limited horizon \(k\). Beyond \(k\) steps, bootstrap using a learned \(V_\theta(s)\).  
+  - **Policy Execution**:  
+    At state \(s_t\), player \(i\):  
+    1. Unrolls a \(k\)-step search tree (including opponent moves modeled via their known policy).  
+    2. At leaf nodes \(s_{t+k}\), uses \(V_\theta(s_{t+k})\) to estimate future returns.  
+    3. Backs up values to \(s_t\) via Bellman:  
+       \[
+       \hat{V}_i(s_t) = \max_a \left[ R_i(s_t, a) + \gamma \cdot \text{rollout}(s', k-1) \right]
+       \]  
+       where \(\text{rollout}\) uses opponent policy for their turns.  
+  - **Bootstrapped Paradox**:  
+    - If \(k\) is small (e.g., \(k=1\)):  
+      \[
+      \hat{V}_i(s_t) = \max \{ R_i(\text{grab}), V_\theta(s_{t+1}) \}
+      \]  
+      - If \(V_\theta(s_{t+1})\) is **optimistic** (e.g., learned from cooperative play), \(\hat{V}_i\) favors **pass**.  
+      - If \(V_\theta(s_{t+1})\) is **pessimistic** (e.g., learned from adversarial data), \(\hat{V}_i\) favors **grab**.  
+    - **Dependence on \(V_\theta\)**:  
+      The paradox vanishes if \(V_\theta\) encodes passing as high-value (e.g., from off-policy data where opponents pass).  
+
+  ---
+
+  #### **3. Mirror Version (Shared Policy Checkpoint)**  
+  - **Setup**: Both players share weights \(\theta\). At inference, player \(i\) can **simulate** player \(j\)'s policy \(\pi_\theta\) exactly.  
+  - **Recursion as Computation**:  
+    - At state \(s_t\), player \(i\) computes:  
+      \[
+      \hat{V}_i(s_t) = \max_a \left[ R_i(s_t, a) + \gamma \cdot V_i(s') \right]
+      \]  
+      where \(s'\) is obtained by:  
+      - If \(a = \text{pass}\): \(s' = \pi_\theta(s_{t+1})\) (simulate opponent's turn via \(\pi_\theta\)).  
+    - **No hand-waving**: Player \(i\) computes \(V_i(s_{t+1})\) by directly evaluating \(\pi_\theta(s_{t+1})\) (which calls the same model).  
+  - **Paradox Outcome**:  
+    - If \(\pi_\theta\) is **converged to rationality** (via RL training), \(\pi_\theta(s_{t+1})\) outputs **grab** \(\forall t\), forcing player \(i\) to grab at \(s_t\).  
+    - **Training Dynamics**:  
+      During learning, if \(\pi_\theta\) initially passes (exploration), \(V_\theta\) may learn high values for passing, creating a **cooperative fixed point** that breaks backward induction.  
+
+  ---
+
+  ### Residue Report
+
+  #### **Bucket 1: What Carried Over Exactly**  
+  - **MDP formalism**: States, actions, Bellman backups map directly.  
+  - **Backward induction**: Equivalent to exact value iteration on the full tree.  
+  - **Terminal base case**: Directly mirrors RL finite-horizon recursion.  
+  - **CKR as opponent policy**: Known rational policy \(\equiv\) environment dynamics.  
+  - **Shared weights in mirror version**: Opponent simulation is literal forward pass.  
+
+  #### **Bucket 2: What Fit Only After Bending**  
+  - **\(k\)-step lookahead**:  
+    - Bootstrapping \(V_\theta\) introduces **approximation error** absent in classical BI.  
+    - BI assumes perfect knowledge of all nodes; RL relaxes this to partial search + learned value.  
+    - **Bent**: The paradox dissolves if \(V_\theta\) is inaccurate or biased by data.  
+  - **Self-play dynamics**:  
+    - Classical BI assumes fixed rationality; RL training may converge to non-BI policies (e.g., tit-for-tat).  
+    - **Bent**: Shared weights enable cooperative equilibria unseen in BI.  
+
+  #### **Bucket 3: No Expression in Vocabulary**  
+  - **Off-path beliefs**:  
+    Classical BI requires rationality at **all nodes**, even those never visited. RL only observes **on-path data**.  
+    - **Closest concept**: **Self-Confirming Equilibrium (SCE)**.  
+      - Beliefs need only be correct *along the path of play*.  
+      - Off-path deviations are unconstrained (e.g., player may believe opponent irrationally passes off-path).  
+    - **Does it dissolve the paradox?**:  
+      - **Yes**. SCE allows early passing if players believe opponents won't grab imminently.  
+      - BI survives only if CKR holds off-path (unverifiable without data).  
+  - **Real learned opponents**:  
+    Your intuition is **correct**. Against a learned opponent:  
+    - If the opponent's policy \(\pi_j\) has **not converged to rationality** (e.g., passes with probability >0), BI collapses.  
+    - RL agents **bootstrap from data**, not axioms: If historical play shows late grabs, \(V_\theta\) encourages passing.  
+    - **What’s missing**:  
+      - Rationality is **not fundamental** in RL; it’s a learned property from data.  
+      - BI paradox assumes **perfect rationality**; RL exposes this as a brittle prior.  
+
+  ---
+
+  ### Verdicts on Residue  
+  1. **Off-path beliefs (SCE)**:  
+     - **Missing in RL vocabulary**: Explicit off-path counterfactuals.  
+     - **Puzzle was never sharp**: BI implicitly assumes observers can test off-path behavior (unrealistic). SCE is the real-world counterpart.  
+     - **Resolution**: SCE dissolves the paradox by allowing BI-violating equilibria.  
+
+  2. **Learned opponents break BI**:  
+     - **Missing in vocabulary**: The **assumption of fixed rationality**. RL uses data-driven opponent models.  
+     - **Puzzle was never sharp**: BI’s conclusion relies on an idealized opponent; RL shows this is empirically falsifiable.  
+     - **Resolution**: Against real agents, BI only holds if training enforces rationality (e.g., via adversarial self-play).  
+
+  ### Conclusion  
+  The backward induction paradox is **sound** under its axioms (CKR, full knowledge) but **brittle** when:  
+  - Knowledge is partial (\(k\)-step lookahead).  
+  - Opponents are learned (data may support cooperation).  
+  - Beliefs are path-dependent (SCE).  
+  RL doesn’t "miss" anything; it **exposes** the paradox as a theoretical edge case. The collapse against learned agents isn’t a flaw—it’s a feature of moving from axioms to empiricism.

@@ -1,0 +1,276 @@
+id: prompt_155183
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_155183.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789943754-QdH72mbdOxO7e10ypiMs
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 558
+completion_tokens: 4597
+reasoning_tokens: 2956
+cost_usd: 0.010712
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T22:39:24+00:00'
+prompt: |-
+  i work in site reliability at a mid-size company and a lot of my week is incident reviews. Almost every postmortem we write ends up naming something nobody did as the root cause: nobody rotated a cert, nobody updated the runbook, nobody put an alert on that queue. I've also messed around with causal DAGs and the do() notation enough to be dangerous — I can read a graph, I know the difference between conditioning on X and intervening on X, but that's about where it stops.
+
+  I found out recently that philosophers argue about whether an omission — a thing that didn't happen — can be a cause at all, and that some of them say no, because causes are events and there's no event of not watering the plant. I'd like that whole debate restated as honestly as possible in the only vocabulary I'm fluent in: nodes, edges, do(), counterfactuals over a structural model, config defaults, alerts that fire and alerts that don't.
+
+  The cases I want you to run through it, because my team argues about them every week: (1) a missed step — the runbook says rotate the cert monthly, nobody did, cert expired, site down; (2) a default nobody chose — the load balancer timeout ships as 60s, no one ever set it, and that's why the retry storm cascaded; (3) an unsent signal — no alarm existed on queue depth, so nobody knew, so nothing got done; (4) the one that feels weirdest — the bad deploy didn't go out because the release manager was on a flight and couldn't approve it, so somebody's not-doing-something seems to be what saved us.
+
+  Then the residue report: which of these go into a DAG plus do() cleanly, which only go in if you cheat (inventing a node for something that didn't happen, or treating a shipping default as if someone had chosen it), and which won't go in at all. My hunch is that my framework can't even say "that's an omission" unless something outside the graph tells it what was supposed to happen, which is why we keep dragging runbooks into postmortems. If that's right — is it a bug in the toolkit, or is the philosophers' problem with omissions actually a problem about norms wearing a costume? Is there anything left over that the graph still can't say even after I bolt on a "what the runbook said" node? Also: our review template says only name causes the team could have acted on. That rule feels seperate from the causal question but I can't say why — where does it sit relative to what they're arguing about?
+reasoning: |-
+  We are going to interpret the incidents using causal directed acyclic graphs (DAGs) and the do-calculus framework. We will represent each scenario as a structural causal model (SCM) and then analyze counterfactuals. The key challenge is how to represent omissions (non-events) in the graph.
+
+  First, note that in the standard framework, nodes represent events or states. Omissions are the absence of an event or state change. We might represent them by introducing a node that captures the decision or the expected action, and then the absence is a value of that node (e.g., "not done"). Alternatively, we might represent the state that should have been changed (like the cert expiration date) and model the failure to update it.
+
+  We'll go through each case:
+
+  ### (1) Missed step: Runbook says rotate the cert monthly, nobody did, cert expired, site down.
+
+  We can model:
+  - `C`: Cert rotation (binary: rotated or not)
+  - `E`: Cert expired (binary: yes or no)
+  - `D`: Site down (binary: yes or no)
+
+  But note: the cert rotation is an action that should happen at a particular time. We can model time by considering the state of the cert at time t. Alternatively, we can think of the system over time and represent the rotation as an intervention.
+
+  Let's define:
+  - `C_t`: Whether the cert was rotated at time t (for each month t). For simplicity, consider one critical time t0 when it should have been rotated.
+  - `E_t1`: Expiration status at time t1 (after t0).
+  - `D_t1`: Site status at t1.
+
+  The causal chain: 
+    C_t0 (rotation at t0) → E_t1 (expiration at t1) → D_t1 (downtime)
+
+  If rotation is not done (C_t0 = false), then the cert expires (E_t1 = true), which causes downtime (D_t1 = true).
+
+  But note: the runbook says to rotate monthly. We can represent the runbook as an exogenous node that sets the expected value of C_t0 to true. However, the runbook itself is not a direct cause; it's a norm. We can include it as a node that influences the expected action, but the actual cause of the expiration is the non-rotation.
+
+  In the graph, we might have:
+
+  Runbook (R) → Expected Rotation (C_expected) ... but then how do we get to actual?
+
+  Alternatively, we can model the system without the runbook and just note that the actual rotation (C_t0) was set to false, which caused the expiration.
+
+  The omission is the value `C_t0 = false`. In the graph, we have a node for `C_t0` and we can set it to false. That is an event? Well, in the graph, we are representing the state of the rotation at t0. The node `C_t0` can take two values: rotated (true) or not (false). The event of not rotating is just the assignment `C_t0 = false`.
+
+  So we can represent it without inventing anything: the node exists, and we assign it the value that represents the omission.
+
+  Counterfactual: if we had done `do(C_t0=true)`, then the cert would not have expired (E_t1=false) and the site would not have gone down (D_t1=false).
+
+  So this fits cleanly.
+
+  ### (2) Default nobody chose: Load balancer timeout ships as 60s, no one ever set it, and that's why the retry storm cascaded.
+
+  We have:
+  - `T`: Timeout setting (a value, say 60s or 30s)
+  - `R`: Retry storm (binary: yes or no)
+  - `C`: Cascading failure (binary: yes or no)
+
+  The timeout setting `T` is set by default to 60s. The system was deployed without changing it. So the setting `T=60s` is a state of the system. We can represent `T` as a node. The omission is that no one changed it from 60s to (say) 30s.
+
+  But note: the node `T` exists and has a value. The cause of the cascading failure is the value `T=60s`. We don't need to represent the act of setting it? We can have:
+
+  T → R → C
+
+  The value T=60s is the cause. But is the omission of changing it the cause? Well, the cause is the state T=60s. The omission is the reason for that state.
+
+  However, we might want to model the decision to change it. Let:
+
+  - `D`: Decision to change timeout (true: change made, false: not)
+  - `T`: Timeout value, which is 60s if D=false, and (say) 30s if D=true.
+
+  Then the graph: D → T → R → C.
+
+  The omission is D=false, which leads to T=60s, which causes the retry storm and cascade.
+
+  Counterfactual: if we had set `do(D=true)`, then T would be 30s, and then R and C might not have happened (assuming 30s prevents the storm).
+
+  So we can represent the omission as D=false. Again, we have a node for the decision (or the action of changing) and the value false is the omission.
+
+  ### (3) Unsent signal: No alarm existed on queue depth, so nobody knew, so nothing got done.
+
+  We have:
+  - `A`: Alarm exists (binary: yes or no)
+  - `K`: Knowledge of the problem (binary: yes or no)
+  - `F`: Fix applied (binary: yes or no)
+  - `P`: Problem occurs (binary: yes or no) - the queue depth issue
+
+  But note: the problem P occurs regardless, but without the alarm, it isn't detected and fixed. So we have:
+
+  P → (K if A=true) → F
+
+  But K only happens if A=true. So we can model K as being caused by P and A: K = P and A.
+
+  Then F is caused by K: if K=true then F might happen (with some probability). But if K=false, then F=false.
+
+  Then the bad outcome is that P is true and F is false.
+
+  The omission is A=false (no alarm). So:
+
+  A=false → K=false → F=false, and with P=true, we have an incident.
+
+  Counterfactual: if we had set `do(A=true)`, then when P occurs, K would be true, and then F might be true (if the team acts), preventing the incident? But note: the incident might still occur if F fails, but at least there's a chance.
+
+  But in the scenario, the incident happened because nothing was done. So the absence of the alarm caused the lack of knowledge, which caused the lack of fix.
+
+  We can represent A as a node (alarm exists) and set it to false. That's the omission.
+
+  ### (4) The one that feels weirdest: The bad deploy didn't go out because the release manager was on a flight and couldn't approve it.
+
+  Here, the omission (not approving) prevented a bad outcome.
+
+  We have:
+  - `M`: Release manager approves (binary: yes or no)
+  - `D`: Deploy happens (binary: yes or no)
+  - `O`: Bad outcome (binary: yes or no)
+
+  But note: the deploy is bad, so if D=true then O=true, but if D=false then O=false.
+
+  The causal chain: M → D → O.
+
+  In this case, M=false (the manager did not approve) → D=false → O=false (no bad outcome).
+
+  The omission M=false is the cause of D=false, which in turn prevents O.
+
+  But note: we usually think of causes as leading to bad outcomes, but here the omission leads to a good outcome. However, in the causal structure, it's the same: M=false is a cause of O=false.
+
+  Counterfactual: if the manager had approved (do(M=true)), then D would be true and O would be true (the bad outcome happens). So M=false is indeed a cause of O=false.
+
+  But why does it feel weird? Because we don't usually credit non-actions for preventing bad outcomes? Or because we think the manager didn't do anything? But in the graph, we are just representing the state of approval.
+
+  We can model it cleanly.
+
+  ### Residue Report:
+
+  - All four cases can be represented in a DAG by including a node for the action/decision/state that was omitted and setting its value to the one representing the non-occurrence. We don't need to invent a new kind of node; we just use the existing framework by having the node take a value that corresponds to the omission.
+
+  - The representation does require that we include a node that captures the decision/action that was not taken. This node must be in the graph. In the real world, we might not have thought to include it until after the incident. But that's a modeling issue, not a fundamental limitation.
+
+  - The runbook (or the norm) is not directly in the causal graph. The runbook might be considered as part of the context that defines the expected value of a node. But the actual cause is the value of the node (e.g., the rotation not done). The runbook can be included as an exogenous node that sets the expected value, but it doesn't force the action. We might have:
+
+    Runbook (R) → Expected action (A_expected) 
+    Then we have an arrow from A_expected to the actual action (A_actual) but with noise (so A_actual might not equal A_expected). Then the cause of the incident is A_actual being false when it should have been true. But the runbook itself (R) is not the direct cause; it's the failure of A_actual to match A_expected.
+
+    However, in simple models, we can just model A_actual and note that the runbook defines the expected state.
+
+  - The philosophers' debate: they argue that causes must be events and that omissions are not events. In our DAG, we are representing states and events as nodes. The value assignment to a node (like A_actual=false) is an event in the sense of the model's semantics. So we are reifying the omission as an event (the event of not acting) by including it as a node. The philosophers might say we are cheating by turning a non-event into an event. But in practice, for engineering, this is a useful way to think.
+
+  - The rule in the review template: "only name causes the team could have acted on." This is about *actionability*. It is separate from the causal question. In causal terms, we might have many causes (including the absence of an alert, the default setting, etc.), but we want to focus on causes that the team can change to prevent future incidents. So this is a filter on the causes we report. For example:
+
+    - In (1): The team can act by rotating certs (or automating it).
+    - In (2): The team can change the default.
+    - In (3): The team can create the alert.
+    - In (4): The team might not want to change the approval process because it prevented a bad deploy, but they might consider making sure there's backup approval.
+
+    The causal model tells us what factors are causes, but the actionability rule tells us which of those causes we should focus on in the report. Note that some causes might not be actionable by the team (e.g., a third-party default that cannot be changed) but then we might look for a workaround.
+
+  - What the graph can't say: The graph doesn't know what the expected behavior is without the runbook (or the norm). We have to provide that as part of the model. So when we say "the cert should have been rotated", that's external knowledge. The graph can show that not rotating caused the outage, but it doesn't tell us that rotating was expected. That's where the runbook comes in. We can include the runbook as a node that sets the expected value, but then we are building the norm into the model.
+
+    Alternatively, we can define a "fault" node that is true when the system is in a state that violates the norm. For example:
+
+    - Fault = (C_t0 = false) and (Runbook says rotate at t0)
+
+    Then the fault causes the expiration? But note: the expiration is caused by the state of the cert, which is caused by the rotation. The fault is just a label.
+
+    So the graph alone doesn't encode the norm. We need an external specification of the desired state. This is why runbooks (and other policies) are dragged into postmortems: to establish what should have happened.
+
+  - Conclusion: The toolkit (DAGs and do-calculus) can handle omissions by representing the absent action or the default state as a node in the graph. The philosophers' problem is that they don't want to consider non-events as events, but in the model, we are representing the state of the world (which includes the absence of an action). The toolkit requires that we model the omission as a state or event node, which is practical for engineering. The residual issue is that the norm (what should have been done) is not part of the causal structure per se, but we can include it as a node if we wish. The actionability rule is a separate filter on the causes we report, based on what we can change.
+
+  Thus, the debate about omissions being causes is, in your framework, solved by representing the omission as a value of a node. The toolkit is adequate for your needs, but you must model the system carefully to include the relevant decisions and states. The norm (runbook) provides the expectation, which helps identify which values of the nodes are "faulty". Without the norm, the graph is just a description of what happened, not what should have happened.
+answer: |-
+  Let's break this down using your SRE toolkit—nodes, edges, `do()`-calculus, and counterfactuals—while addressing the philosopher's debate about omissions as causes. The core tension: **causes are typically modeled as events (nodes), but omissions are the *absence* of an event**. We'll tackle your four cases, then dissect the residue.
+
+  ---
+
+  ### **Causal Framework Refresher**
+  - **Nodes**: Events, states, or decisions (e.g., "cert rotated," "timeout set to 30s").
+  - **Edges**: Causal relationships (e.g., "cert expired → site down").
+  - **`do()`**: Intervention (e.g., `do(rotate_cert=true)`).
+  - **Counterfactuals**: "What if?" scenarios (e.g., "If we had rotated the cert, would the site be up?").
+  - **Default configs**: Represented as pre-set node values (e.g., `load_balancer_timeout=60s`).
+
+  Omissions enter the graph as **node values** (e.g., `cert_rotated=false`), not standalone nodes. Philosophers balk because there's no "event" of not-acting—but in your model, it's a state variable.
+
+  ---
+
+  ### **Case Analyses**
+  #### **1. Missed Step: Cert Rotation**
+  - **Graph**:  
+    `[Runbook: rotate monthly] → (expected: cert_rotated=true)`  
+    `cert_rotated=false → cert_expired=true → site_down=true`  
+  - **Omission as cause**: `cert_rotated=false` is a node value (state).  
+  - **Counterfactual**: `do(cert_rotated=true)` → `cert_expired=false` (usually).  
+  - **Fits cleanly?**  
+    ✅ **Yes**. The omission is a node value (`cert_rotated=false`). The runbook defines the expected state, but isn't a causal node itself.
+
+  #### **2. Default Nobody Chose: Load Balancer Timeout**
+  - **Graph**:  
+    `load_balancer_timeout=60s (default) → retry_storm=true → cascade=true`  
+  - **Omission as cause**: No explicit `set_timeout` node exists. The default is a pre-intervention state.  
+  - **Counterfactual**: `do(load_balancer_timeout=30s)` → `retry_storm=false` (likely).  
+  - **Fits cleanly?**  
+    ⚠️ **Requires "cheating"** (but justifiable). You must model the default as an *implicit choice*:  
+    - Add a node: `timeout_overridden` (default=`false`).  
+    - `timeout_overridden=false → load_balancer_timeout=60s`.  
+    Now the omission is `timeout_overridden=false`.
+
+  #### **3. Unsent Signal: No Queue Depth Alert**
+  - **Graph**:  
+    `alert_exists=false → engineers_unaware=true → no_action=true → queue_overload=true`  
+  - **Omission as cause**: `alert_exists=false` is a state.  
+  - **Counterfactual**: `do(alert_exists=true)` → likely `engineers_unaware=false` → `action_taken=true`.  
+  - **Fits cleanly?**  
+    ✅ **Yes**. Straightforward node for alert existence.
+
+  #### **4. Prevented Incident: Release Manager on Flight**
+  - **Graph**:  
+    `release_manager_available=false → approval_granted=false → deploy_stopped=true → outage_prevented=true`  
+  - **Omission as cause**: `release_manager_available=false` (or `approval_granted=false`) is a state.  
+  - **Counterfactual**: `do(release_manager_available=true)` → `approval_granted=true` → `bad_deploy=true`.  
+  - **Fits cleanly?**  
+    ✅ **Yes**, but feels weird because:  
+    - The omission *prevented* harm (unlike cases 1–3).  
+    - In causal terms, it's still a cause—just of a good outcome.  
+
+  ---
+
+  ### **Residue Report**
+  #### **What Fits Cleanly?**
+  - Cases **1, 3, and 4** work with standard DAGs. Omissions are **node states** (`cert_rotated=false`, `alert_exists=false`).  
+  - **No event needed**: The absence is the *value* of a node, not a node itself. Philosophers' objection ("no event!") is sidestepped.
+
+  #### **What Requires "Cheating"?**
+  - Case **2 (default configs)** requires:  
+    - Inventing a node for the *decision to override* (e.g., `timeout_overridden`).  
+    - Treating the default as the result of an implicit "non-choice" (`do(timeout_overridden=false)`).  
+  - **Why?** Defaults aren't active decisions—they're the absence of intervention. But the graph needs a node to intervene on.
+
+  #### **What the Framework Can't Say (Even with a Runbook Node)**
+  - **The framework cannot infer norms**. You must add:  
+    - A node for the *expected action* (e.g., `cert_rotation_expected=true` from runbook).  
+    - A comparator node (e.g., `deviation = (cert_rotated != cert_rotation_expected)`).  
+  - **But this doesn't make omissions "causes" magically**—it just flags deviations from norms. The *causal power* still comes from the state (`cert_rotated=false`).  
+  - **Philosophers' problem is about norms**: They argue omissions aren't causes because "should have happened" is normative, not physical. Your graph can **model norms as nodes**, but it doesn't resolve the debate—it just externalizes it.
+
+  #### **Why the Actionability Rule Feels Separate**
+  - **Causality vs. agency**:  
+    - **Causal question**: "Did `X` cause `Y`?" (e.g., `alert_exists=false` caused `outage=true`).  
+    - **Actionability rule**: "Could we have *changed* `X`?" (e.g., "We can add alerts, but we can't control solar flares").  
+  - **Where it sits**:  
+    - Philosophers care about metaphysical causality (e.g., "Is nothingness a cause?").  
+    - Your rule is **pragmatic**: Filter causes to those where `do(X=x)` is possible for the team.  
+    - **Example**: In case 4, `release_manager_available=false` caused a good outcome—but if it's not actionable (e.g., flights are unavoidable), you wouldn't list it in a blameless postmortem.  
+
+  ---
+
+  ### **Conclusion**
+  - **Your framework works** for omissions by treating them as **node states** (not events). Philosophers' objections are about semantics, not modeling.  
+  - **Norms (runbooks) are external**: Bolt them on as nodes to define expected states, but they don't change the causal structure.  
+  - **Actionability is orthogonal**: It's a filter on *which causes to report*, not what's causal.  
+  - **Residual gap**: Default configs require modeling non-choices as implicit decisions. This feels hacky but is pragmatically sound.  
+
+  **Practical takeaway**: Keep naming omissions as causes in postmortems—they’re counterfactually valid. But use norms (runbooks) to justify *why* the omission mattered, and actionability to focus on what to fix. The philosophers can keep debating—you’ve got incidents to resolve.

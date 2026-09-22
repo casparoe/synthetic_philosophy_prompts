@@ -1,0 +1,311 @@
+id: prompt_141938
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_141938.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789912356-ckWvoYW0bDHOClLQMuex
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 768
+completion_tokens: 7621
+reasoning_tokens: 4500
+cost_usd: 0.017678
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T13:58:42+00:00'
+prompt: |-
+  I work in an applied ML group, mostly on off-policy evaluation and causal inference for sequential decisions — doubly robust estimators, importance ratios, positivity/coverage assumptions, do-calculus at the level where I can actually use it — and I have no formal philosophy training beyond one graduate seminar. We recently spent a reading-group session on two Newcomb-style puzzles and I came away unable to tell whether my colleagues were disagreeing about something my toolkit already has a precise name for, or about something it cannot express at all. The first is the counterfactual mugging: a highly reliable predictor flips a fair coin in advance; if it comes up heads the predictor hands you $10,000 conditional on its having predicted that you would have paid $100 if it had come up tails; the coin in fact came up tails and you are now being asked for the $100. The second is XOR blackmail: some rare event (prior probability around 1%) would destroy your house, costing you roughly $1,000,000; a blackmailer who knows whether the event will occur sends you a demand for $1,000 if and only if exactly one of the following is true — the event will occur, or you will pay. You have received the letter. I know the standard verdicts (roughly: causal decision theory refuses to pay in both, evidential decision theory pays only in the second, functional decision theory pays in both), but I want to understand what is actually being contested rather than which labels attach where.
+
+  Could you restate both setups and all three prescriptions as faithfully as you can in the vocabulary I work in — policies, environments, logging versus target policy, trajectories, interventions versus conditioning, the assumption that transition dynamics do not depend on the agent's policy, model-based rollouts, off-policy value estimates, regret? Two wrinkles matter to me, because I suspect they are where the translation either earns its keep or quietly cheats. First, suppose the predictor is not a perfect simulator of me but a learned model fitted to logged behaviour of an earlier checkpoint of my policy, call it v1, with maybe 90% accuracy on the deployment distribution and no guarantee at all off it; I can edit myself into v2 at negligible cost before the prediction is made. Then the counterfactual query about what I would have done in the unreached branch is an off-policy query with thin overlap, and it is also unclear which function is supposed to be the one whose output I am evaluating. Second, the two puzzles differ structurally: in the mugging, the branch that carries the payoff is one in which I never act at all, whereas in the blackmail case my policy helps determine whether the letter exists. I want to know whether that asymmetry shows up as a difference in how hard each case is to express in my terms.
+
+  Please keep the translation honest: where my framework silently forces a choice that the philosophical debate leaves open, flag it as an imported assumption rather than presenting it as the content of the theories. Then give me the residue report — which claims map cleanly, which survive only with distortion, and which have no counterpart at all — and tell me what you think the residue means. My own two hypotheses, which I would like you to argue against if they are wrong, are that both puzzles just describe an environment that is not policy-independent (so a misspecified MDP, and the whole dispute is a fight about which assumption to relax), and that the notion of counterfactual dependence on the output of one's own decision function is doing work that no amount of statistical counterfactual machinery can replicate. I do not want pointers to the literature; I want the argument, in about 800 to 1,000 words.
+reasoning: |-
+  We are going to translate the two decision problems and the three decision theories (CDT, EDT, FDT) into the vocabulary of off-policy evaluation and causal inference for sequential decisions. We'll note where the translation is straightforward and where it requires making assumptions that might not be in the original philosophical debate.
+
+  First, let's restate the two puzzles in a more formal way using the vocabulary you provided.
+
+  **Counterfactual Mugging (CM):**
+
+  - **Environment setup:** 
+    - A coin is flipped (state `S0`). It is fair: `P(heads) = P(tails) = 0.5`.
+    - There is a predictor that, before the coin flip, simulates (or predicts) what you would do in the event of tails. Specifically, it outputs a prediction `A_pred` of your action in the tails scenario. The predictor is highly reliable (say 99% accurate) when the agent is using policy `v1` (the version at the time of prediction). 
+    - After the prediction, you may update your policy to `v2` at negligible cost. Then the coin is flipped and revealed to you.
+    - If the coin is heads, then you are given $10,000 only if the predictor predicted that you would pay $100 in the counterfactual tails scenario (i.e., `A_pred = pay`). 
+    - If the coin is tails, you are asked to pay $100. There is no direct payment in tails, but the predictor's past prediction (based on `v1`) and your current action (under `v2`) are compared. If you pay, you lose $100. If you don't pay, you get nothing. However, note that the payment in heads is contingent on the predictor's past prediction.
+
+  We can model this as a two-step decision process:
+
+  1. At time `t0`: The predictor observes policy `v1` and outputs `A_pred` (which is either `pay` or `not_pay`) for the tails scenario.
+  2. At time `t1`: The coin is flipped and revealed. If tails, the agent (now on policy `v2`) chooses an action `A` (pay or not_pay). If heads, no action is taken.
+
+  The reward:
+  - If heads and `A_pred == pay`, then reward = $10,000.
+  - If heads and `A_pred == not_pay`, then reward = $0.
+  - If tails and `A = pay`, then reward = -$100.
+  - If tails and `A = not_pay`, then reward = $0.
+
+  The key point: the predictor's prediction is based on `v1` (the policy at `t0`), but the action in tails is taken by `v2` (the policy at `t1`). The reliability of the predictor is based on `v1`. When you update to `v2`, the predictor's accuracy for `v2` might be unknown (especially if `v2` is very different from `v1`).
+
+  **XOR Blackmail (XOR):**
+
+  - **Environment setup:**
+    - There is a rare event `E` (with `P(E)=0.01`) that would destroy your house (costing you $1,000,000) if it occurs.
+    - A blackmailer knows whether `E` will occur or not. 
+    - The blackmailer sends you a letter demanding $1,000 if and only if the XOR condition holds: `(E occurs) XOR (you pay the blackmail)`. 
+      - That is, the letter is sent if either:
+          - `E` will occur and you do not pay, OR
+          - `E` will not occur and you do pay.
+    - You have received the letter (so the XOR condition is true at the time of sending). 
+    - Now you must decide whether to pay.
+
+  We can model this as:
+
+  1. The event `E` is determined (state `S0`).
+  2. The blackmailer, knowing `E`, sets a variable `Send` (whether to send the letter) based on the XOR condition. However, note that the XOR condition depends on your future payment decision. This creates a logical dependency.
+
+  But note: the blackmailer sends the letter at a time when your payment decision has not been made. Therefore, the blackmailer must predict your payment decision. Alternatively, we can think of the blackmailer's action as being determined by a logical condition that involves both `E` and your eventual payment. This leads to a circularity.
+
+  To break the circularity, we can assume the blackmailer uses a predictor of your payment (similar to the CM case). Let:
+
+  - The blackmailer uses a predictor (based on your policy `v1` at the time of sending) to predict your payment decision. The blackmailer then computes the XOR condition using the prediction and `E`, and sends the letter if the XOR condition holds.
+
+  Then, when you receive the letter, you update your policy to `v2` and decide whether to pay.
+
+  Reward:
+  - If `E` occurs, you lose $1,000,000 (unless you pay and the XOR condition is broken? But note: the event `E` is independent of your payment). Actually, the payment does not affect `E`; it only affects whether the blackmailer sends the letter and whether you pay the blackmail.
+  - Additionally, if you pay, you lose $1,000.
+
+  So the reward is:
+  - `-1,000,000 * I(E) - 1,000 * I(pay)`
+
+  But note: the blackmailer only sends the letter if the XOR condition (using the prediction of your payment) holds. And you only get to decide when you have received the letter (so the XOR condition held at the time of sending).
+
+  Now, we consider the three decision theories and how they would prescribe actions in these two scenarios.
+
+  **Causal Decision Theory (CDT):**
+
+  - CDT uses a causal model of the world and chooses actions that maximize expected utility given the causal effects of the action. It ignores any evidence that the action might provide about other parts of the world.
+
+  **Evidential Decision Theory (EDT):**
+
+  - EDT conditions on the action and chooses the action that maximizes expected utility given the evidence that taking that action provides.
+
+  **Functional Decision Theory (FDT):**
+
+  - FDT treats the decision as the output of a function and considers the logical (or counterfactual) consequences of that function output in all relevant situations, even those that do not occur.
+
+  Now, we translate these into the off-policy/causal inference framework.
+
+  **Translation for CM:**
+
+  - The environment is not policy-independent because the predictor's prediction depends on the agent's policy (both `v1` and, indirectly, `v2`). Specifically, the reward in the heads branch depends on the prediction of what the agent would do in the tails branch (under policy `v1`). The agent's update to `v2` might break the predictor's accuracy.
+
+  - The key counterfactual: "What would I have done in the tails scenario?" is an off-policy evaluation for policy `v1` (if we are using the predictor trained on `v1`). But note: the agent is now on `v2`. The predictor's model was trained on `v1` and we have no data for `v2`.
+
+  - CDT in CM: 
+    - In the tails branch (which is the actual branch), paying $100 causes a loss of $100 and has no causal effect on the heads branch (which didn't happen). So CDT would not pay.
+
+  - EDT in CM: 
+    - Conditioning on paying in the tails branch: we are in tails, so paying doesn't change the coin flip. However, paying is evidence that the predictor might have predicted payment (since the predictor is accurate for `v1`). But note: the agent is now on `v2`, and the predictor was trained on `v1`. If `v2` is very different, then the evidence might not hold. Moreover, the heads branch didn't happen, so conditioning on payment in tails doesn't directly provide evidence about the heads branch (which is counterfactual). EDT would typically not pay in CM because the payment in tails doesn't provide evidence about the predictor's past prediction? Actually, the predictor's prediction is already fixed. So EDT would also not pay? (This is a point of debate, but standardly EDT is said to not pay in CM.) 
+
+    However, let's reconsider: EDT conditions on the action. In the tails branch, if I pay, that might be evidence that I am the kind of person who pays, and therefore that the predictor (who predicted based on `v1`) would have predicted pay. But if `v1` and `v2` are different, then my current action might not be evidence about `v1`. Without a model linking `v1` and `v2`, EDT might not have a basis for updating. So if we assume that the agent's policy update is not random (so that conditioning on the action in tails doesn't provide evidence about `v1`), then EDT would not pay. 
+
+    But note: the standard verdict for EDT in CM is that it does not pay. So we'll go with that.
+
+  - FDT in CM: 
+    - FDT considers the output of the decision function in both branches. It would note that if it had been heads, then having the predictor predict "pay" would yield $10,000. Therefore, it would want the predictor to have predicted "pay". How can it achieve that? By having its policy (for both `v1` and `v2`) be such that it pays in the tails branch. So even in the actual tails branch, it pays, because that is the output of the function that would have led to the best outcome in the heads branch. 
+
+    In our setup: FDT would have updated from `v1` to `v2` in a way that the decision function for the tails branch remains "pay". Then the predictor (using `v1`) would have seen a policy that pays in tails and thus predicted "pay". In the actual tails, `v2` also pays.
+
+    So FDT pays.
+
+  **Translation for XOR Blackmail:**
+
+  - The environment is again not policy-independent: the blackmailer's decision to send the letter depends on a prediction of the agent's payment (based on `v1`).
+
+  - CDT in XOR: 
+    - The payment of $1,000 causes a direct loss. The event `E` is already determined and not affected by the payment. So paying does not causally prevent the house destruction. Therefore, CDT would not pay.
+
+  - EDT in XOR: 
+    - Conditioning on paying: we have received the letter. The letter was sent because of the XOR condition. If we pay, then the XOR condition (at the time of sending) was: `E XOR (prediction of pay)`. But note: the prediction was for `v1` and we are now `v2`. However, if we condition on paying, then that might be evidence that the predictor predicted pay (if we assume that the agent's policy doesn't change arbitrarily). Then the XOR condition becomes: `E XOR true = not E`. Therefore, conditioning on paying, we have evidence that the XOR condition was `not E`, meaning that the letter was sent because `E` was false. Therefore, by paying, we have evidence that `E` is false (so we avoid the $1,000,000 loss). The expected utility of paying is then: `-1000 - 0 = -1000` (since we condition on `E` being false). The expected utility of not paying: conditioning on not paying, the XOR condition was `E XOR false = E`, so we have evidence that `E` is true. Then the loss is $1,000,000. So EDT pays.
+
+  - FDT in XOR: 
+    - FDT considers the logical consequences of the decision function. It notes that the blackmailer uses the XOR condition based on the prediction of the decision function. If the decision function is such that it pays, then the blackmailer sends the letter only when `E` is false. Therefore, receiving the letter is evidence that `E` is false. Then paying $1000 is better than not paying (which leads to no loss if `E` is false). If the decision function is such that it does not pay, then the blackmailer sends the letter only when `E` is true. Then upon receiving the letter, the agent would know `E` is true and would not pay (but then the house is destroyed). However, by adopting a policy of paying, the agent ensures that the letter is only sent when `E` is false, so they avoid the $1,000,000 loss. Therefore, FDT pays.
+
+  Now, translating the prescriptions:
+
+  - CM: CDT and EDT do not pay; FDT pays.
+  - XOR: CDT does not pay; EDT and FDT pay.
+
+  **Addressing Your Wrinkles:**
+
+  1. **Predictor as a learned model with 90% accuracy and off-distribution concerns (for CM):**
+     - In CM, the predictor is trained on `v1`. If we update to `v2`, then the predictor's accuracy for `v2` in the tails branch is unknown. This complicates the off-policy evaluation. 
+     - For CDT: it doesn't care about the predictor in the tails branch because the heads branch didn't happen. So it still wouldn't pay.
+     - For EDT: without a model of how `v1` and `v2` relate, conditioning on the action in tails might not provide evidence about the predictor's prediction (which was based on `v1`). So EDT might not pay even if the predictor is not perfect.
+     - For FDT: it would want to have a policy that is consistent across versions so that the predictor (trained on `v1`) would have predicted correctly for `v2` in the tails branch. But if the update to `v2` is done after the prediction, then the predictor cannot have seen `v2`. So FDT would have to choose `v2` to be the same as `v1` in the tails branch? But note: FDT is defined in terms of the current decision function. It would choose the action in the actual tails branch to be the same as the one it would have chosen in the counterfactual tails branch (to ensure the predictor's prediction was correct). However, if the predictor is only 90% accurate, then there is a 10% chance that the prediction was wrong even if `v2` is the same as `v1`. But FDT would still pay because 90% of the time it would get the $10,000 in heads.
+
+  2. **Structural asymmetry between CM and XOR:**
+     - In CM, the agent only acts in the tails branch. The heads branch has no action. In XOR, the agent's policy (via the predictor) affects whether the letter is sent. This asymmetry shows up in the state space and the fact that in XOR the agent's decision function is part of the condition for the blackmailer's action. 
+     - In our translation, both environments are non-Markovian because they depend on the agent's policy. In CM, the reward in the heads branch depends on the policy that the agent had at the time of prediction (and the agent can update). In XOR, the state (whether the letter is sent) depends on the agent's policy (via the prediction). 
+     - The difference: in CM, the agent's action in the counterfactual branch (which is not taken) affects the reward in the actual branch. In XOR, the agent's action in the actual situation affects the condition for the blackmailer's action (which has already happened, but via a prediction). 
+
+  **Residue Report:**
+
+  - **Claims that map cleanly:**
+    - The idea that the environment is not policy-independent is central. This is a misspecified MDP if we assume policy independence. Both puzzles break the assumption that transition dynamics do not depend on the agent's policy. This is a clean mapping.
+
+    - The regret can be defined: for example, in CM, the regret of not paying in tails is the loss of the $10,000 in the heads branch that would have been obtained if the predictor had predicted pay. But note: the heads branch did not occur. So we are comparing counterfactuals. In off-policy evaluation, we usually evaluate on the same state distribution. Here, we are evaluating on a different branch.
+
+    - The off-policy evaluation in CM for the heads branch is about the policy `v1` (for the predictor) and the current policy `v2` (for the tails action). But the state (heads or tails) is not under the agent's control. The overlap is thin because we never observe the heads branch when we are in tails and vice versa.
+
+  - **Claims that survive with distortion:**
+    - The predictor's model being fitted to `v1` and then the agent updating to `v2` is a realistic scenario in ML. We can express the counterfactual mugging as an off-policy evaluation with a covariate shift (because the policy has changed). However, the standard off-policy evaluation methods assume that the state transition dynamics are the same. Here, the state (coin flip) is random, but the reward in heads depends on a prediction that was made using `v1`. So we have to model the predictor's accuracy for `v2` in the tails branch. This requires additional assumptions.
+
+    - The XOR blackmail can be seen as a problem of learning with missing data: we only observe the outcome (house destruction) if the letter was sent? Actually, we observe `E` only if the letter is sent? No, we don't observe `E` at all. This is a classic problem of confounding: the letter is sent based on `E` and the predicted payment. Then our payment decision might be confounded by the prediction. But note: the prediction is based on `v1` and we are `v2`. Without a model linking `v1` and `v2`, it's hard.
+
+  - **Claims with no counterpart:**
+    - The notion of logical counterfactuals (as in FDT) does not have a direct counterpart in standard off-policy evaluation or causal inference. We typically use statistical counterfactuals (potential outcomes) that are defined over the same unit (e.g., the same individual in different treatments). But FDT considers counterfactuals about the decision function itself, which might apply in multiple situations (even if they don't occur). This is more abstract.
+
+    - The circularity in XOR (where the blackmailer's action depends on the agent's action) is resolved by introducing a predictor. But in the philosophical puzzle, it might be a logical dependency without a temporal sequence. Our translation forces a temporal ordering and a predictor, which might not be in the original.
+
+  **Your Hypotheses:**
+
+  1. *Both puzzles just describe an environment that is not policy-independent (so a misspecified MDP, and the whole dispute is a fight about which assumption to relax).* 
+     - This is partially true. The non-policy-independence is central. However, the dispute is not just about relaxing an assumption but about how to model the dependence. CDT ignores the policy dependence (by only considering causal effects of actions in the current state). EDT conditions on the action to update beliefs about the past (policy dependence). FDT explicitly considers the decision function and its outputs in all relevant situations.
+
+  2. *The notion of counterfactual dependence on the output of one's own decision function is doing work that no amount of statistical counterfactual machinery can replicate.*
+     - This seems correct. The statistical counterfactual machinery (e.g., potential outcomes) is about what would have happened to *this* unit under a different treatment. But here, the counterfactual in CM is about what would have happened in a different branch (which is a different unit) and depends on the agent's decision function. Similarly, in XOR, the blackmailer's action depends on the agent's decision function. The decision function is a fixed object that produces actions in multiple situations. This is not captured by standard potential outcomes, which are situation-specific.
+
+  **Conclusion:**
+
+  The residue is primarily about the decision function as a global object that can be evaluated in multiple counterfactual scenarios. The off-policy evaluation framework is designed for statistical counterfactuals (what if I had taken a different action in this state?) but not for logical counterfactuals (what if my decision function had output a different action in a different state?). This is the key gap. The three decision theories are essentially different ways of handling these logical counterfactuals. CDT ignores them, EDT uses them evidentially (if there's a statistical link), and FDT embraces them as the primary object of optimization.
+
+  Thus, your toolkit (which is based on state-specific actions and policy-independent environments) cannot express the core of the dispute without introducing the decision function as a first-class entity. The asymmetry between the two puzzles (CM: counterfactual branch; XOR: the letter condition) is expressible in terms of the state and action structure, but the dependency on the decision function remains the central challenge.
+answer: |-
+  ### Restated Puzzles and Decision Theories in Applied ML Vocabulary
+
+  #### **Counterfactual Mugging (CM)**
+  - **Environment**: 
+    - **State space**: $S_0$ (coin flip: heads/tails). 
+    - **Action space**: $A_{\text{pay}}$ (pay $100$) or $A_{\neg\text{pay}}$ (don't pay).  
+    - **Dynamics**: 
+      - Coin flip $s_0 \sim \text{Bernoulli}(0.5)$. 
+      - **Predictor**: Pre-flip, simulates your policy $\pi_{\text{v1}}$ in the tails branch. Outputs $\hat{A} = f_{\text{pred}}(\pi_{\text{v1}})$, where $\hat{A}$ is the predicted action for tails. Predictor accuracy: 90% for $\pi_{\text{v1}}$ on the deployment distribution (no guarantees off-policy).  
+      - **Reward**: 
+        - If $s_0 = \text{heads}$: $R = 10,000$ if $\hat{A} = A_{\text{pay}}$, else $R = 0$. 
+        - If $s_0 = \text{tails}$: $R = -100$ if $A = A_{\text{pay}}$, else $R = 0$.  
+    - **Agent**: Before prediction, can update policy from $\pi_{\text{v1}}$ to $\pi_{\text{v2}}$ at near-zero cost.  
+  - **Query**: $s_0 = \text{tails}$ (actual state). Should $\pi_{\text{v2}}$ select $A_{\text{pay}}$?  
+  - **Key asymmetry**: No agent action in the heads branch. Reward depends on the **counterfactual prediction** of $\pi_{\text{v1}}$ in an unobserved state (tails).  
+
+  #### **XOR Blackmail (XOR)**
+  - **Environment**: 
+    - **State space**: $S_0$ (event $E$: house-destroying event, $P(E) = 0.01$).  
+    - **Action space**: $A_{\text{pay}}$ (pay $1,000$) or $A_{\neg\text{pay}}$ (don't pay).  
+    - **Dynamics**: 
+      - **Blackmailer**: Observes $E$, sends letter $L$ iff $E \oplus \hat{A} = \text{True}$, where $\hat{A} = f_{\text{pred}}(\pi_{\text{v1}})$ is the predicted action for your policy.  
+      - **Agent**: Receives $L$ (so $E \oplus \hat{A} = \text{True}$), then chooses action under $\pi_{\text{v2}}$.  
+      - **Reward**: $R = -1,000 \cdot I(A = A_{\text{pay}}) - 1,000,000 \cdot I(E)$.  
+  - **Query**: $L$ received. Should $\pi_{\text{v2}}$ select $A_{\text{pay}}$?  
+  - **Key asymmetry**: Agent's policy $\pi_{\text{v1}}$ **determines if $L$ exists** via $\hat{A}$, creating feedback between policy and state visibility.  
+
+  ---
+
+  ### **Decision Theories Translated**  
+  Assume predictor accuracy is 90% for $\pi_{\text{v1}}$, and $\pi_{\text{v2}}$ is chosen pre-decision.  
+
+  #### **Causal Decision Theory (CDT)**  
+  - **Framework**: Uses **interventional counterfactuals** (e.g., $do(A)$). Ignores non-causal correlations.  
+  - **CM**:  
+    - In actual state ($s_0 = \text{tails}$), $A_{\text{pay}}$ causes a loss of $100$.  
+    - Reward in heads branch ($s_0 = \text{heads}$) is **not causally affected** by $A$ in tails.  
+    - Ignoires predictor's reliance on $\pi_{\text{v1}}$ (treats $\hat{A}$ as fixed).  
+    - **Verdict**: $A_{\neg\text{pay}}$ (no pay).  
+  - **XOR**:  
+    - $A_{\text{pay}}$ causes a loss of $1,000$; $E$ is independent of $A$ (no causal effect).  
+    - **Verdict**: $A_{\neg\text{pay}}$ (no pay).  
+  - **Translation**: CDT reduces to **myopic policy optimization** under a misspecified MDP where $\hat{A}$ is part of the state, not a function of $\pi$.  
+
+  #### **Evidential Decision Theory (EDT)**  
+  - **Framework**: Uses **conditional expectations** ($E[R \mid A]$). Actions update beliefs via statistical evidence.  
+  - **CM**:  
+    - $E[R \mid A_{\text{pay}}, s_0=\text{tails}] \approx -100 + 0$ (no evidence about heads branch).  
+    - Predictor accuracy for $\pi_{\text{v2}}$ is unknown; no overlap between $\pi_{\text{v1}}$ and $\pi_{\text{v2}}$.  
+    - **Verdict**: $A_{\neg\text{pay}}$ (no pay).  
+  - **XOR**:  
+    - Condition on $L$: $E \oplus \hat{A} = \text{True}$.  
+    - $E[R \mid A_{\text{pay}}, L] = -1,000 - 1,000,000 \cdot P(E \mid A_{\text{pay}}, L)$.  
+    - $A_{\text{pay}}$ is evidence that $\hat{A} = A_{\text{pay}}$ (since predictor trained on $\pi_{\text{v1}}$, and $\pi_{\text{v2}}$ may correlate). Thus, $P(E \mid A_{\text{pay}}, L) \approx P(E \mid E \oplus \text{True} = \text{True}) = P(E \mid \neg E) = 0$.  
+    - **Verdict**: $A_{\text{pay}}$ (pay).  
+  - **Translation**: EDT is **off-policy evaluation with importance sampling**, but assumes $\pi_{\text{v2}}$’s action provides evidence about $\pi_{\text{v1}}$’s behavior (ignoring policy drift).  
+
+  #### **Functional Decision Theory (FDT)**  
+  - **Framework**: Treats the agent’s policy $\pi$ as a **function**. Maximizes utility across all inputs where $\pi$ is called, including counterfactuals.  
+  - **CM**:  
+    - Consider the **counterfactual rollout** of $\pi_{\text{v2}}$ in the tails branch (even though $s_0 = \text{heads}$ occurred).  
+    - If $\pi_{\text{v2}}$ outputs $A_{\text{pay}}$ in tails, predictor $\hat{A} = A_{\text{pay}}$ with 90% probability (if $\pi_{\text{v2}} \approx \pi_{\text{v1}}$), yielding $10,000 \times 0.9 = 9,000$ in heads.  
+    - Net expected utility of $A_{\text{pay}}$: $-100 + 9,000 = 8,900$.  
+    - **Verdict**: $A_{\text{pay}}$ (pay).  
+  - **XOR**:  
+    - $\pi_{\text{v2}}$ paying ensures $\hat{A} = A_{\text{pay}}$ (if policy consistent), so $L$ sent iff $\neg E$. Thus, $L$ implies $\neg E$, avoiding the $1,000,000$ loss.  
+    - $E[R \mid \pi_{\text{v2}} = \text{pay}] \approx -1,000 - 0 = -1,000$.  
+    - Not paying implies $L$ iff $E$, leading to $E[R] \approx -1,000,000$.  
+    - **Verdict**: $A_{\text{pay}}$ (pay).  
+  - **Translation**: FDT performs **model-based rollouts of $\pi$ in all relevant states**, including those not visited (e.g., heads in CM). Requires $\pi$ to be **explicitly represented as a function**.  
+
+  ---
+
+  ### **Translation Challenges and Imported Assumptions**  
+  1. **Predictor as Off-Policy Query (CM)**:  
+     - The query "what would I do in tails?" is an **off-policy evaluation** for $\pi_{\text{v1}}$ in an unobserved state.  
+     - **Thin overlap**: Low accuracy for $\pi_{\text{v2}} \neq \pi_{\text{v1}}$. CDT/EDT ignore this; FDT assumes $\pi_{\text{v2}}$ generalizes from $\pi_{\text{v1}}$.  
+     - **Imported assumption**: The predictor’s simulation of $\pi_{\text{v1}}$ is a **model-based counterfactual**, not a statistical one. ML tools (e.g., IPS) fail here due to covariate shift.  
+
+  2. **Policy-Dependent Dynamics**:  
+     - Both puzzles violate the **MDP assumption** that $P(s' \mid s, a)$ is policy-independent.  
+     - In CM, $P(\hat{A} \mid s_0)$ depends on $\pi_{\text{v1}}$; in XOR, $P(L \mid E)$ depends on $\pi_{\text{v1}}$.  
+     - **Imported assumption**: Decision theories disagree on whether to **treat $\pi$ as part of the environment** (CDT) or as an **optimizable function** (FDT).  
+
+  3. **Asymmetry Between Puzzles**:  
+     - **CM**: The payoff branch (heads) has **no agent action**. The counterfactual is purely *predictive* (what $\pi_{\text{v1}}$ *would* do).  
+     - **XOR**: The agent’s policy **affects observability** ($L$ exists iff $E \oplus \hat{A}$).  
+     - **Translation**:  
+       - CM maps to **off-policy evaluation with no overlap** (tails state unobserved in heads).  
+       - XOR maps to a **contextual bandit with partial observability** ($E$ unobserved unless $L$ sent).  
+     - Both are expressible, but XOR requires **factoring in policy-dependent state dynamics**, which ML tools avoid.  
+
+  ---
+
+  ### **Residue Report**  
+  #### **Clean Mappings**  
+  - **Policy-dependent dynamics**: Both puzzles are **non-Markovian** (rewards/states depend on $\pi$). This is a **misspecified MDP**, and the dispute is over how to relax stationarity.  
+  - **EDT in XOR**: Resembles **covariate shift adjustment**. Conditioning on $A_{\text{pay}}$ updates beliefs about $E$ given $L$, analogous to propensity scoring.  
+  - **Regret**: CDT minimizes regret in the **actual state**; FDT minimizes regret in **all possible states** where $\pi$ is evaluated.  
+
+  #### **Distorted Mappings**  
+  - **FDT’s counterfactuals**: Model-based rollouts of $\pi$ in unobserved states (e.g., heads in CM) are **not standard off-policy evaluation**. Off-policy methods (e.g., FQE) estimate $V(s)$ for a *fixed* policy in *observed* states. FDT evaluates $\pi$ in *logically possible* states, even if unreachable.  
+  - **Predictor accuracy**: The 90% accuracy is a **frequentist approximation**, but FDT treats it as a **logical probability** (e.g., "90% of similar functions output $A_{\text{pay}}$").  
+
+  #### **No Counterpart**  
+  - **Decision-function counterfactuals**: The core of FDT—evaluating $\pi$ as a function across **multiple environments**—has no ML equivalent. ML tools handle *statistical* counterfactuals (e.g., "what if $A=a$ in state $s$?"), not *logical* ones (e.g., "what if $\pi$ output $a$ in all states?").  
+  - **Policy as a global object**: CDT/EDT view actions as local choices; FDT views $\pi$ as a **causal node affecting multiple rewards**. ML lacks tools to model $\pi$ as a shared parameter across episodes.  
+
+  ### **Your Hypotheses: Assessment**  
+  1. **"Both puzzles describe policy-dependent environments (misspecified MDP)"**:  
+     - **Correct**, but incomplete. The dispute centers on **how to model $\pi$'s influence**:  
+       - CDT: Ignore it (treat $\hat{A}$ as noise).  
+       - EDT: Condition on it (treat $\hat{A}$ as a confounder).  
+       - FDT: Optimize it (treat $\pi$ as a lever).  
+     - ML tools (e.g., POMDPs) *can* model policy-dependent states, but they require $\pi$ to be **exogenous**, not something the agent designs.  
+
+  2. **"Counterfactual dependence on the decision function is irreplaceable"**:  
+     - **Correct**. Statistical counterfactuals (e.g., $do(A)$) cannot capture:  
+       - Why FDT pays in CM: It cares about the **function’s output in an unobserved branch**.  
+       - Why XOR’s $L$ depends on $\pi$: The blackmailer’s action is a **function of $\pi$ itself**, not just its outputs.  
+     - **No amount of off-policy evaluation** can replicate this without treating $\pi$ as a causal primitive.  
+
+  ---
+
+  ### **Conclusion**  
+  The residue lies in **functional counterfactuals**—evaluating a policy not just as a mapping from states to actions, but as a **uniﬁed function with logical consequences across all possible states**. ML tools (e.g., off-policy evaluation) excel at *statistical* counterfactuals under overlap but cannot handle the *logical* dependence of rewards on the agent’s decision function as a global entity. This is why FDT prescribes paying in both puzzles: it optimizes $\pi$ as a function, not just its outputs. The asymmetry between CM (counterfactual branch) and XOR (policy-dependent observability) is expressible in ML terms, but the core disagreement requires embracing $\pi$ as a causal force, not just a conditional distribution. To resolve these puzzles, you need a theory where the agent’s algorithm is part of the generative model—something beyond MDPs or potential outcomes.

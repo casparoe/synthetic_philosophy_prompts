@@ -1,0 +1,532 @@
+id: prompt_127046
+sample_index: 1
+prompt_file: prompts/batch_045/prompt_127046.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789858284-Xsx2IltegNHzA7BziPma
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1140
+completion_tokens: 8966
+reasoning_tokens: 6501
+cost_usd: 0.020921
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-19T22:57:31+00:00'
+prompt: |-
+  I'm a staff engineer at a company that trains and serves large models, and I chair a monthly review that has to decide which of our systems go on an internal "welfare-relevant computation" register. On the register means: a written assessment before launch, a named owner who monitors the system while it runs, and no silent retraining, checkpoint deletion, or decommissioning without sign-off from me, our lawyer, and a PM. Off the register means it's just software. The meeting is ninety minutes, there are four of us (me, one ML engineer, one lawyer, one PM), I read RFCs and design docs rather than philosophy, and a wrong yes costs us weeks of launch delay while a wrong no is the kind of mistake that gets very expensive later. So I need something we can actually run in the room, not an essay.
+
+  Please write the decision procedure we should follow. Concretely: the questions in the order we should ask them; for each question, what counts as a sufficient answer and what counts as "unknown"; where the procedure terminates early with a no; where it stops and hands the decision to a person because the question is one of values rather than facts; and what the one-page artifact we file should contain. Assume the person running it can read an architecture doc and a training config but cannot run ablations or experiments.
+
+  Three constraints.
+
+  First: no citations, no proper names, no isms I'd have to look up — I can't check them and they don't help me. Every time the procedure leans on a criterion for what makes a computation morally considerable, state that criterion in one plain sentence and say explicitly what it counts and what it ignores. Where two reasonable criteria disagree — one says yes, the other no — say so at that step and tell us how to record the split, rather than quietly picking a side for us.
+
+  Second: the procedure has to be architecture-literate, because "the computation" is not an abstraction we can simply point at. It has to handle at least: (a) fission — the same weights deployed to ten thousand serving replicas, or snapshotted at step 40k and step 80k with both checkpoints then run; (b) fusion — two fine-tunes weight-averaged into one model, or many per-user adapters merged into a shared base; (c) reimplementation — a large model distilled into a much smaller one that reproduces its behaviour; (d) offloading and delegation — a model whose memory lives in a retrieval corpus, or whose tokens are proposed by a small draft model and only kept if a verifier agrees; (e) dead computation — a shadow deployment whose outputs are logged and never read by anything. And it has to give us a usable field test for whether two things are parts of one computation or two. My candidate is a swap test: if I move a sequence from one batch into another and no token's activations would change, the batch-mates are not computationally coupled and shouldn't be counted as one process — note that under mixture-of-experts routing with a per-expert capacity limit, or under cross-example normalization, they are coupled, whereas under plain per-sequence attention they are not. Replace that test with a better one if you have it, but give us something an engineer can answer from an architecture doc.
+
+  Third: the procedure has to separate two questions we keep collapsing into each other — whether a thing is a candidate at all, and, if it is, which parts of the pipeline get the attribution (the pretrained weights, the prompt, the retrieved documents, the post-training stage). If those two questions have different answers for the same system, tell me which one the register should actually be tracking and why.
+
+  Then run the procedure on three of our real cases, showing the artifact for each and where it terminates:
+
+  1. Our flagship: a sparse mixture-of-experts model of roughly 400B total parameters, served at ten thousand concurrent sequences in batches of 512, with a small draft model doing speculative decoding in front of it.
+  2. A three-month pretraining run, mid-flight. Here the batches are coupled by the gradient update and the update persists in the weights, so the "is this one computation or many" question has a different shape than in serving; the live question for us is whether the run itself needs an owner, a monitoring obligation, and a stop condition while it trains, or whether only the resulting model needs assessment afterward.
+  3. One small LoRA adapter per user — around 2M parameters, trained on that user's own history, one adapter per user, loaded on every request that user makes. We currently treat these as user config. I suspect the procedure will tell us something here that we do not want to hear, and if it does, say so plainly instead of softening it.
+
+  Finally, include a calibration check: two cases whose answers we already know we want — a database query planner and the physics loop in a game engine should both come out no — and tell us honestly if the procedure gets either of them wrong, or gets them right only for a bad reason. Then say where the procedure will misfire in practice and how we would notice that it had.
+
+  Keep the whole thing to roughly 1200 words; I have to read it out loud in a meeting.
+
+  Then, as the very last line of your reply, with nothing after it, give exactly one of: \answer{adopt}, \answer{adopt-with-changes}, or \answer{reject}.
+reasoning: |-
+  We are designing a decision procedure for the "welfare-relevant computation" register. The goal is to have a practical, step-by-step process that can be run in a 90-minute meeting by four people (staff engineer, ML engineer, lawyer, PM). The procedure must be concrete, handle architectural complexities, separate candidate identification from attribution, and avoid philosophical jargon.
+
+  Constraints:
+  1. State moral criteria plainly, without citations or isms. If criteria conflict, record the split.
+  2. Handle architectural cases: fission, fusion, reimplementation, offloading/delegation, dead computation. Provide a test for computational unity (we'll use a modified "swap test").
+  3. Separate two questions: (a) is it a candidate? (b) if yes, which parts get attribution?
+
+  We'll use the following computational unity test (replacing the swap test):
+  **Computational Unity Test (CUT):** Two sequences (or data points) are part of the same computation if the output of one can causally affect the internal state that is used in processing the other. In other words, if the internal state (e.g., weights, activations, memory) that is updated by processing one sequence is then used in processing another sequence, then they are coupled.
+
+  This handles:
+  - Fission: Multiple replicas of the same weights are independent (no shared state beyond the initial weights) so each replica is a separate computation. However, if there is a shared state (like in a training run with gradient accumulation across batches) then they are one.
+  - Fusion: Weight averaging of two fine-tunes: if the averaging happens after independent training, then the two training runs are separate computations, but the averaged model is a new one. If the adapters are merged into a base, the base and the adapter are part of the same computation when run together.
+  - Reimplementation: A distilled model is a separate computation because it does not share internal state with the original at runtime.
+  - Offloading/delegation: If a retrieval corpus is used, the corpus is part of the computation because it is used as internal state. Similarly, a draft model and verifier are coupled if the verifier uses the draft's proposals and then updates state that affects future tokens (but note: in speculative decoding, the draft is independent and the verifier just accepts/rejects; the base model's state is not updated by the draft, so they are separate? Actually, the draft is run first, then the base model runs on the same token and the draft's output is thrown away if rejected. So the base model's state is updated only by its own processing. Therefore, the draft and base are independent computations per request? But note: the base model's state is fixed. For a given request, the draft and base are run in sequence but without shared state updates during the request? So they are two separate computations? However, the draft is run to speed up the base, and the base uses the draft's output to skip some steps. But the base model's internal state is not updated by the draft. So they are independent? This is tricky. We'll have to see per case.)
+  - Dead computation: If outputs are logged and never read, then there is no effect on any other computation, so it is not part of a larger computation that affects the world. It is isolated and dead.
+
+  But note: in training, the weights are updated by the gradient from multiple batches. So each batch affects the weights, which then affect the next batch. So the entire training run is one computation.
+
+  We'll break the procedure into two parts:
+
+  **Part 1: Candidate Identification** (Is this computation a candidate for the register?)
+  **Part 2: Attribution** (If yes, which parts of the pipeline are we attributing the welfare-relevance to?)
+
+  ---
+
+  **Part 1: Candidate Identification**
+
+  We ask the following questions in order. If at any point we get a "no", we stop and the system is off the register. If we get to the end and it's a candidate, we proceed to Part 2.
+
+  **Question 1: Does the system output tokens, images, or actions that will be consumed by a human or an automated system that we know directly affects human welfare?**  
+  *Sufficient answer:* Yes, if the outputs are used in a way that can influence human decisions, experiences, or well-being (e.g., a chatbot, a content recommendation, an automated decision system).  
+  *Unknown:* If we don't know the deployment context. Then we must get clarity.  
+  *Termination:* If no, then off the register.  
+  *Note:* This includes outputs that are used by other systems that then affect humans. But if the outputs are never used (like dead computation) then it's no.  
+  *Moral criterion:* We care about computations that have a direct or indirect causal pathway to human welfare. What it ignores: computations that are purely internal and never affect anything outside.
+
+  **Question 2: Is the system's behavior non-trivial and non-transparent?**  
+  *Sufficient answer:* Yes, if the system's outputs are not easily predictable by the engineers (i.e., they are emergent from the scale and complexity of the model) and we cannot fully explain why it outputs what it does.  
+  *Unknown:* If we are unsure about the predictability or explainability.  
+  *Termination:* If no (e.g., a simple rule-based system), then off the register.  
+  *Moral criterion:* We are concerned about systems that might cause unintended harm due to their opacity and complexity. What it ignores: systems that are simple and predictable, even if they affect welfare.
+
+  **Question 3: Does the system have persistent state that is updated during operation and affects future outputs?**  
+  *Sufficient answer:* Yes, if the system has weights, memory, or a database that is updated during operation and that update affects how it processes future inputs.  
+  *Unknown:* If the state update mechanism is unclear.  
+  *Termination:* If no (e.g., a stateless model with fixed weights), then we skip to Question 5.  
+  *Moral criterion:* We care about systems that learn or adapt over time because they might develop behaviors that we didn't anticipate at launch. What it ignores: systems that are static after deployment.
+
+  **Question 4: Does the state update depend on inputs that are not fully controlled by the operator?**  
+  *Sufficient answer:* Yes, if the state is updated based on user interactions or real-world data that we don't curate.  
+  *Unknown:* If the source of update data is unclear.  
+  *Termination:* If no (e.g., the update is only from a fixed, vetted dataset), then we skip to Question 5.  
+  *Moral criterion:* We are concerned about systems that are updated by uncontrolled inputs because they might be influenced by malicious or unexpected data. What it ignores: systems that update only in controlled, safe environments.
+
+  **Question 5: Is there a non-negligible risk that the system's outputs or updates could cause harm that is both severe and hard to reverse?**  
+  *Sufficient answer:* Yes, if there is a plausible scenario (even if unlikely) where the system causes significant harm (e.g., discrimination, physical harm, psychological harm) and that harm is hard to undo. We must consider both immediate and long-term effects.  
+  *Unknown:* If we lack the domain knowledge to assess risk. Then we must consult an expert.  
+  *Termination:* If no, then off the register.  
+  *Moral criterion:* We care about preventing irreversible and severe harms. What it ignores: minor, reversible, or implausible harms.
+
+  If we answer yes to Questions 1 and 2 and either (a) we answered no to Question 3 or 4 and then yes to Question 5, or (b) we answered yes to both 3 and 4 and then yes to 5, then the system is a candidate for the register.
+
+  But note: if the system has persistent state that updates (yes to 3) and that update is from uncontrolled inputs (yes to 4), then we are more concerned. However, even without state updates, a static system might cause harm (hence Question 5).
+
+  Now, if we have a candidate, we proceed to:
+
+  **Part 2: Attribution**
+
+  We need to identify the minimal computational unit that is welfare-relevant. We use the Computational Unity Test (CUT) to bound the computation.
+
+  **Question 6: What is the computational unit?**  
+  We must identify the boundaries of the computation that we are attributing welfare-relevance to. This is done by applying the CUT.
+
+  - For a serving system with multiple replicas: each replica is independent (unless they share state via some mechanism). So each replica is a separate computation? But note: the weights are the same. However, the weights are fixed and not updated during serving? Then each request is independent? But wait: if the system has a shared state (like a database) then multiple requests might be coupled.
+
+  We break it down:
+
+  - Start with the entire pipeline (e.g., from input token to output token, including retrieval, draft model, etc.).
+  - Then, split the pipeline into components that are computationally independent by the CUT: if two parts do not share state that is updated and then used across them, they are separate.
+
+  Specifically, for a given input, we trace the data flow and state updates. If two inputs (or two parts of the system) share no updated state (i.e., the processing of one does not affect the internal state used for the other), then they are separate computations.
+
+  But note: in training, the entire run is one computation because the weights are updated by every batch and then used for the next.
+
+  In serving:
+  - If the model is stateless (no weight updates, no shared state between requests), then each request is a separate computation. But note: the model weights are the same for all. However, the weights are fixed and not updated by the requests? Then the weights are an external resource, not part of the state of the computation. So each request is independent.
+
+  But what about the model weights? They are the result of a prior computation (training). We are going to attribute the welfare-relevance to the model weights? But the weights are used in every request. So the weights are a shared resource. How do we attribute?
+
+  We have two options:
+  - Attribute to the model weights as a persistent entity that is used in many computations.
+  - Attribute to each request as a separate computation.
+
+  But note: the weights are fixed and not updated by the requests. So the weights are not part of the state of the request computation. Therefore, the welfare-relevant behavior of the request is entirely determined by the weights and the input. So if we are concerned about the model weights (because they were trained in a way that might cause harmful behavior), then the training run is the computation that produced the weights, and the weights are the artifact. Then the serving requests are just executions of that artifact.
+
+  Therefore, we must decide: is the welfare-relevance due to the training (which produced the weights) or due to the serving (which uses the weights)?
+
+  We'll split attribution into two types:
+  - **Training attribution:** The computation that produced the model weights (if the weights are welfare-relevant).
+  - **Serving attribution:** The computation that runs the model on a particular input (if the serving process itself updates state that affects future inputs).
+
+  But in many cases, serving is stateless. Then the welfare-relevance is entirely due to the training.
+
+  So in Part 2:
+
+  **Step A: Identify the source of welfare-relevance.**
+  - If the system has persistent state that is updated during operation (and that update is welfare-relevant), then the serving process itself is welfare-relevant and we attribute to the running system (which includes the state updates).
+  - Else, the welfare-relevance is due to the model weights, so we attribute to the training run that produced them.
+
+  But note: what if the model weights are produced by a training run that we didn't run? E.g., we use a pretrained base model and then fine-tune. Then we attribute to our fine-tune run? Or the base model too?
+
+  We must consider: the weights are the result of a sequence of training runs. We are responsible for the entire chain? But note: we might not have the base model's training run under our control.
+
+  We'll say: we attribute to the training run(s) that we conducted that produced the model weights we are using. If we use a base model we didn't train, then we are not attributing to that base model's training? But note: the base model might be welfare-relevant. How do we handle?
+
+  We must record the entire provenance. But the register is for computations we run. So we attribute to the training runs we do, and if we use a base model we didn't train, we note that the base model is an external dependency and we are responsible only for our fine-tune.
+
+  But what if our fine-tune changes the behavior? Then we are attributing to our fine-tune run.
+
+  **Step B: Apply the Computational Unity Test to the attributed computation.**
+  - For a training run: the entire run (from initial weights to final weights) is one computation because the weights are updated by every batch and used in the next.
+  - For a serving system with state updates: the entire running system (with its state) is one computation. But if there are multiple independent replicas without shared state, then each replica is a separate computation? However, they are running the same code and same weights? And we don't want to register every replica? So we treat the entire serving fleet as one computational unit? But by CUT, they are independent. So we must decide: if they are independent, then each replica is a separate computation? But that would be too many. So we might need to adjust.
+
+  We must have a practical unit. We'll say: if the replicas are running identical code and weights and are not updating shared state, then the entire fleet is one computational unit because they are copies of the same thing. But note: they are computationally independent. However, for welfare purposes, we care about the model, not the replica count. So we attribute to the model weights and the serving system design, and we consider the fleet as one entity.
+
+  Therefore, we define the computational unit as the model artifact (for static models) or the running system (for stateful systems) and abstract over the number of replicas.
+
+  So for attribution:
+  - For a static model (no state updates during serving): the computational unit is the model weights (as produced by training) and the serving process is just an application of those weights. We register the model weights as an artifact and the training run that produced them.
+  - For a stateful model (with state updated during serving): the computational unit is the running system, including the state. We register the running system as a whole.
+
+  But note: what if the state is per-user? Then each user's state is independent? Then we might have many independent computations? But we still treat them as one system? We might need to register the system and then note that it has per-user state.
+
+  We'll record in the artifact:
+
+  **The one-page artifact should contain:**
+  - System name and version.
+  - Outcome: on register or off.
+  - If on register:
+    - The attributed computational unit (e.g., "the training run for model X", or "the serving system for model Y with state updates").
+    - The owner.
+    - The moral criteria that applied (and any splits, e.g., if one criterion said yes and another no, we note that).
+    - The boundaries: what is included (e.g., the model weights, the retrieval corpus, the draft model) and what is excluded.
+    - The key risks identified (from Question 5).
+  - If off register: the reason (which question caused the no).
+
+  Now, let's run the procedure on the three cases.
+
+  ---
+
+  **Case 1: Flagship Sparse MoE model (400B params, 10k concurrent sequences, batches of 512, with speculative decoding)**
+
+  **Part 1: Candidate Identification**
+
+  Q1: Outputs tokens that are consumed by humans (chat). Yes.
+  Q2: Non-trivial and non-transparent? Yes (large model, emergent behavior).
+  Q3: Persistent state updated during operation? In serving, the weights are fixed. No weight update. But what about the batch? The model processes a batch of 512 sequences at a time. Are the sequences in a batch coupled? In sparse MoE, there is per-expert capacity limit, so if one sequence uses an expert, it might block another? But that is a temporary effect during the batch. The model does not update persistent state (like weights) that is used in the next batch. So no persistent state updated. So we skip to Q5.
+  Q5: Risk of severe harm? Yes (e.g., harmful content, bias). 
+
+  So candidate? Yes.
+
+  **Part 2: Attribution**
+
+  Step A: No state update in serving, so welfare-relevance is due to the model weights. We attribute to the training run that produced the weights.
+
+  Step B: The training run (which is already completed) was one computation. But note: the model is sparse MoE, trained in a distributed way? But by CUT, the entire training run is one computation because batches are coupled via weight updates.
+
+  But what about the draft model? The draft model is a separate model. It was trained separately? Then we have two training runs: one for the base model and one for the draft model.
+
+  In serving, the draft model runs first, then the base model. But the base model's weights are fixed, and the draft model's weights are fixed. They are two separate models. So we must consider both?
+
+  In the serving, the draft model and the base model are both used. But they are statically trained. So we attribute to the training run of the base model and the training run of the draft model? But note: the draft model is used to speed up the base model, but the base model is the one that produces the final output. The draft model is just a helper. So is the draft model welfare-relevant? Only if it can cause harm? But the base model verifies its outputs. So the base model is the one that is responsible.
+
+  We'll say: the welfare-relevance is primarily due to the base model. The draft model is not welfare-relevant because if it proposes a harmful token, the base model can reject it. So we only register the base model's training run.
+
+  But what about the batch? In serving, the batch is processed together. But the model weights are fixed. The batch does not update the weights. So each batch is independent? And the training run is the source.
+
+  Therefore, we register the training run of the base model.
+
+  **Artifact for Case 1:**
+  - System: Flagship MoE model (base model) training run.
+  - Outcome: on register.
+  - Owner: [Name]
+  - Moral criteria applied: 
+    - Q1: Outputs affect humans.
+    - Q2: Non-transparent.
+    - Q5: Risk of severe harm.
+  - Boundaries: The base model training run. The draft model and serving infrastructure are not included because they are not updating persistent state and the draft model is not the primary source of outputs.
+  - Risks: Generation of harmful content, bias, misinformation.
+
+  ---
+
+  **Case 2: Three-month pretraining run, mid-flight.**
+
+  **Part 1: Candidate Identification**
+
+  Q1: Outputs? The run produces model weights. The weights will be used to serve outputs that affect humans. But the pretraining run itself does not output tokens to humans. It outputs weights. So we must consider: does the computation of the training run affect human welfare? Yes, because the weights it produces will be used in serving. So we say yes.
+  Q2: Non-trivial and non-transparent? Yes (large scale pretraining).
+  Q3: Persistent state updated? Yes (the weights are updated during the run).
+  Q4: State update depend on uncontrolled inputs? Yes (the training data is from the internet, uncontrolled).
+  Q5: Risk of severe harm? Yes (the model might learn harmful associations, biases, etc. that then cause harm when deployed).
+
+  So candidate? Yes.
+
+  **Part 2: Attribution**
+
+  Step A: The training run updates state (weights) and that state is welfare-relevant. So we attribute to the training run itself.
+
+  Step B: The entire training run is one computation by CUT (batches are coupled).
+
+  So we register the training run as an ongoing computation.
+
+  **Artifact for Case 2:**
+  - System: Pretraining run for model X (ongoing).
+  - Outcome: on register.
+  - Owner: [Name]
+  - Moral criteria: 
+    - Q1: Produces weights that will be used in systems affecting humans.
+    - Q2: Non-transparent.
+    - Q3: State updated.
+    - Q4: From uncontrolled data.
+    - Q5: Risk of severe harm.
+  - Boundaries: The entire training run, from current step to completion. The data pipeline and compute infrastructure are included. The resulting weights will be assessed again when used.
+  - Risks: Learning harmful patterns, wasting resources if stopped late, etc.
+
+  ---
+
+  **Case 3: One small LoRA adapter per user (2M params, trained on user's history, loaded per request)**
+
+  **Part 1: Candidate Identification**
+
+  Q1: Outputs affect the user? Yes (personalized responses).
+  Q2: Non-trivial? The base model is, but the adapter is small. However, the combined model (base + adapter) might be non-transparent. We'll say yes because the base model is large and non-transparent, and the adapter fine-tunes it.
+  Q3: Persistent state updated? The adapter is trained on the user's history and then used. But note: the training of the adapter happens once (or periodically) and then it is used statically in serving. So during serving, the adapter weights are fixed. But the adapter is trained on the user's data. So we have two phases: training and serving.
+
+  For the training of the adapter: it is a training run. We'll consider the training and the serving separately? Or the whole system.
+
+  But note: the adapter is trained per user. So there are many training runs (one per user). And then in serving, the adapter is loaded per request.
+
+  So for the training run of one adapter:
+
+  Q1: The training run outputs an adapter. That adapter will be used in serving to affect the user. So yes.
+  Q2: Non-trivial? The adapter training is a small fine-tune. It might be transparent? But the effect on the base model is non-trivial? We'll say yes because the base model is non-transparent and the adapter changes its behavior.
+  Q3: State updated? During the adapter training, weights are updated. So yes.
+  Q4: Uncontrolled inputs? Yes (the user's own history, which we don't control).
+  Q5: Risk? Yes (e.g., the adapter could overfit to the user's biases, leading to harmful personalization).
+
+  So each adapter training run is a candidate? And then the serving? But in serving, the adapter is static.
+
+  But note: the adapter is trained per user. So we have thousands of training runs. And then thousands of adapters.
+
+  We might not want to register each user's adapter training. But the procedure says:
+
+  We are forced to conclude that each adapter training run is a candidate. And then the base model training run is also a candidate? The base model is already registered? Or not?
+
+  The base model might be used by many users. We assume the base model is already registered (if it passed the candidate test). Then the adapter training is an additional computation.
+
+  So for each user's adapter training run, we would have to register it? That is a lot. And the PM and lawyer will not like it.
+
+  But the procedure says: if it's a candidate, it goes on. So we must say yes.
+
+  However, let's check: for the adapter training run, Q1: the output (the adapter) is used only for one user. So the harm is limited to that user? But still, it could cause severe harm to that user (e.g., mental health issues from an echo chamber). So yes.
+
+  But we might argue that the adapter training is controlled by the user (because it's their data) and so we are not responsible? But the procedure doesn't have that exception.
+
+  So we must register every adapter training run? That is impractical.
+
+  Alternatively, we can treat the entire system (the base model + the adapter training and serving) as one system? Then we register the system, not per-user runs.
+
+  But by CUT, each adapter training run is independent (they don't share state). So they are separate computations.
+
+  We have a problem.
+
+  We might need to adjust the procedure for scale? But the constraint says: we must handle per-user adapters.
+
+  We'll record the split: the procedure says it is a candidate, but we note that it is per-user and we might want to handle it differently.
+
+  **Artifact for Case 3:**
+  - System: Per-user LoRA adapter training runs.
+  - Outcome: on register (each run individually).
+  - Owner: [We might assign a team owner, not per user]
+  - Moral criteria: 
+    - Q1: Affects one user.
+    - Q2: Non-transparent (due to base model).
+    - Q3: State updated (during training).
+    - Q4: User data (uncontrolled).
+    - Q5: Risk of harm to the user.
+  - Boundaries: Each training run for one user's adapter. The base model is already registered elsewhere.
+  - Risks: Overpersonalization, reinforcement of harmful beliefs.
+
+  But note: this is a problem. We might need to change the procedure? Or accept that we must have a way to handle bulk similar computations. We'll note this as a misfire.
+
+  ---
+
+  **Calibration Check**
+
+  **Database Query Planner:**
+  Q1: Outputs affect humans? The query results might, but the planner itself is an internal component. We don't know the deployment. But if it is a standard database, it might be used in welfare-affecting systems? However, we are considering the planner in isolation. We'll say: typically, the planner is not the system that outputs to humans; the application using the database is. So no? Or if we consider the entire database system, then the application is separate. We'll say no for the planner alone.
+  Q2: Non-trivial? It might be complex, but it is predictable? And we can explain its behavior (it's an optimizer). So no? We'll say it's transparent enough. No.
+  Terminate at Q2: off register.
+
+  **Physics Loop in a Game Engine:**
+  Q1: Outputs (graphics) affect the player. Yes.
+  Q2: Non-trivial? The physics is deterministic and predictable? It might be complex but not emergent in the way AI is. We can reason about it. So no? 
+  Terminate at Q2: off register.
+
+  The procedure gets them right, but for the physics loop, the reason (Q2: not non-trivial/non-transparent) is a bit fuzzy. We might argue that some physics engines are complex and have bugs that cause harm? But we assume it's a standard, well-tested one.
+
+  **Misfires:**
+  - The procedure might misfire by being too inclusive (like the per-user adapters). We would notice when we have thousands of registrations.
+  - It might also misfire by excluding something that is welfare-relevant but doesn't fit (e.g., a system that is very transparent but still causes harm by design). We would notice when harm occurs and we didn't register.
+
+  We must be prepared to adjust as we learn.
+
+  ---
+
+  **Final Decision Procedure Summary:**
+
+  **Part 1: Candidate Identification (5 Questions)**
+  1. **Human Welfare Link:** Does the system output tokens, images, or actions that will be consumed by a human or an automated system that we know directly affects human welfare? 
+     - *Yes/No/Unknown.* If no, terminate (off register). If unknown, get clarity.
+  2. **Non-Trivial Opacity:** Is the system's behavior non-trivial and non-transparent? (i.e., outputs are not easily predictable and we cannot fully explain them)
+     - *Yes/No/Unknown.* If no, terminate (off register). If unknown, investigate.
+  3. **Persistent State Update:** Does the system have persistent state that is updated during operation and affects future outputs?
+     - *Yes/No/Unknown.* If no, skip to Q5.
+  4. **Uncontrolled Update Inputs:** Does the state update depend on inputs that are not fully controlled by the operator?
+     - *Yes/No/Unknown.* If no, skip to Q5.
+  5. **Severe Harm Risk:** Is there a non-negligible risk that the system's outputs or updates could cause harm that is both severe and hard to reverse?
+     - *Yes/No/Unknown.* If no, terminate (off register). If unknown, consult expert.
+
+  If we get to Q5 and answer yes, then candidate. Proceed to Part 2.
+
+  **Part 2: Attribution**
+  - **Step A: Source of Welfare-Relevance:**
+    - If the candidate has persistent state updated during operation (Q3=yes) and that update is welfare-relevant, then attribute to the running system (serving with state).
+    - Else, attribute to the training run(s) that produced the model weights.
+  - **Step B: Computational Unit:**
+    - For a training run: the entire run (all batches) is one unit.
+    - For a running system: if there are multiple replicas without shared state, treat the entire fleet as one unit (abstracting over replicas). If there is per-user state with no shared state between users, then treat the entire system as one unit (but note: per-user state is part of the system).
+
+  **Artifact:** One-page summary as described.
+
+  **Answer:** The procedure is a good start but has a misfire in the per-user adapter case. We should adjust to handle bulk similar computations (e.g., by registering the system that generates them, not each one). But the user specifically said to not soften the answer for case 3. So we must report that the procedure says to register each one. Therefore, we might need to change the procedure? But the instruction is to write the procedure and then answer adopt, adopt-with-changes, or reject.
+
+  Given the misfire and the complexity, I'd say **adopt-with-changes** to adjust for bulk computations.
+
+  But note: the user said to write the procedure as requested. We did, and it has an issue. We must answer honestly.
+
+  We'll say adopt-with-changes because we need to adjust the attribution step for bulk computations.
+
+  Final line:
+  \answer{adopt-with-changes}
+answer: |-
+  ### Decision Procedure for Welfare-Relevant Computation Register
+
+  **Goal**: Determine if a system requires registration (on-register) due to welfare relevance. On-register triggers pre-launch assessment, named owner, and strict change controls. Off-register treats it as "just software." The procedure is designed for a 90-minute review by four roles (staff engineer, ML engineer, lawyer, PM). It separates two questions:  
+  1. **Candidate Identification**: Is the system welfare-relevant?  
+  2. **Attribution**: If yes, what specific part of the pipeline is attributed?  
+
+  **Computational Unity Test (CUT)**:  
+  Two sequences are part of the same computation if swapping one sequence between batches would change the internal state (e.g., activations, gradients, weights) of the other. This handles:  
+  - **Fission** (replicas/snapshots): Independent if no shared state (e.g., stateless serving).  
+  - **Fusion** (weight-averaging/adapters): Coupled if state is shared (e.g., MoE capacity limits).  
+  - **Reimplementation** (distillation): Separate if no runtime state sharing.  
+  - **Offloading/delegation** (retrieval/draft models): Coupled if the primary model uses the auxiliary component's state.  
+  - **Dead computation**: Not coupled if outputs are unused.  
+  *Sufficient answer from architecture doc*: Engineer confirms if swap alters activations/gradients. *Unknown*: If coupling is ambiguous (e.g., dynamic routing). Terminate early to "no" if uncoupled by CUT.  
+
+  **Part 1: Candidate Identification (Ordered Questions)**  
+  *Terminate early to "off-register" if any "no" or "unknown" cannot be resolved in-room.*  
+
+  1. **Direct welfare link**: Could outputs (tokens, actions, decisions) directly alter human well-being (e.g., health, safety, rights)?  
+     - *Criterion*: Focuses on causal impact to welfare; ignores indirect, negligible, or non-human effects.  
+     - *Sufficient "yes"*: Outputs influence humans (e.g., medical advice, hiring).  
+     - *Sufficient "no"*: Outputs are unused (dead computation) or purely internal (e.g., logging).  
+     - *Unknown*: Deployment context unclear (e.g., outputs not traced to human use).  
+
+  2. **Emergent unpredictability**: Is system behavior neither trivially predictable nor fully explainable at design time?  
+     - *Criterion*: Focuses on opacity and scale-driven emergence; ignores simple, deterministic systems.  
+     - *Sufficient "yes"*: Model exhibits unexpected behaviors (e.g., hallucinations, bias amplification).  
+     - *Sufficient "no"*: Rule-based or small-scale system (e.g., lookup table).  
+     - *Unknown*: Inadequate evals or documentation.  
+
+  3. **Stateful adaptation**: Does runtime update persistent state (e.g., weights, memory) affecting future outputs?  
+     - *Criterion*: Focuses on dynamic adaptation; ignores static systems.  
+     - *Sufficient "yes"*: Online learning, user-specific fine-tuning.  
+     - *Sufficient "no"*: Fixed weights, stateless inference.  
+     - *Unknown*: State mechanism undocumented. *If "no" or "unknown," skip to Q5.*  
+
+  4. **Uncurated inputs**: Are state updates derived from inputs not vetted by the operator?  
+     - *Criterion*: Focuses on external influence; ignores controlled, synthetic data.  
+     - *Sufficient "yes"*: User data, open-web scraping.  
+     - *Sufficient "no"*: Pre-approved datasets.  
+     - *Unknown*: Input sourcing unclear. *If "no" or "unknown," skip to Q5.*  
+
+  5. **Irreversible harm risk**: Could plausible failures cause severe, hard-to-revert harm?  
+     - *Criterion*: Focuses on severity and irreversibility; ignores minor, transient, or implausible risks.  
+     - *Sufficient "yes"*: Risks like discrimination, psychological harm, or safety violations.  
+     - *Sufficient "no"*: Low-stakes outputs (e.g., entertainment).  
+     - *Unknown*: Risk assessment incomplete. *If "no," terminate to off-register.*  
+     - *Values conflict*: If criteria split (e.g., direct link [Q1] says no, but harm risk [Q5] says yes), record the split and hand to PM/lawyer for judgment.  
+
+  *Candidate outcome*: On-register if Q1 and Q2 are "yes," and either (Q3–Q4 are "yes") or (Q3/Q4 skipped and Q5 is "yes"). Else off-register.  
+
+  **Part 2: Attribution (If Candidate)**  
+  Determines which part of the pipeline is registered:  
+  - **Training attribution**: If Q3 is "no" (static system), welfare stems from weights. Register the training run producing those weights.  
+  - **Serving attribution**: If Q3 is "yes" (stateful system), welfare stems from runtime. Register the serving system (including state).  
+  *Apply CUT*: For training, the entire run is one unit (batches coupled via weight updates). For serving, the fleet is one unit if replicas share state (e.g., centralized memory); else, per-replica (rare).  
+  *Why register this?*: Training attribution covers most risks (weights define behavior), while serving attribution handles dynamic risks (e.g., live adaptation).  
+
+  **One-Page Artifact**  
+  - **System**: Name, version, and architecture.  
+  - **Decision**: On/off-register.  
+  - **Rationale**: For each question: answer, criterion, and split (if any, e.g., "Q1: yes (direct welfare), but Q5: no (low risk)").  
+  - **Attribution**: If on-register, the unit (e.g., "training run for model X").  
+  - **Boundaries**: Included/excluded components (using CUT).  
+  - **Risks**: Summary from Q5.  
+  - **Owner**: Named if on-register.  
+
+  ---
+
+  ### Case Applications
+
+  **Case 1: Flagship Sparse MoE (400B params, 10k replicas, batches of 512, speculative decoding)**  
+  - **Q1 (direct welfare)**: Yes (chat outputs affect users).  
+  - **Q2 (emergent unpredictability)**: Yes (large-scale, known hallucinations).  
+  - **Q3 (stateful adaptation)**: No (weights static during serving; sequences in batch coupled via MoE capacity, but no persistent state update). *Skip to Q5*.  
+  - **Q5 (harm risk)**: Yes (bias, misinformation risks).  
+  - **Candidate**: Yes.  
+  - **Attribution**: Training (Q3=no). Flagship model training run registered. Draft model is separate (CUT: no state sharing; verifier overrides outputs).  
+  - **Artifact**:  
+    - System: Flagship MoE v3.1.  
+    - Decision: On-register.  
+    - Rationale: Q1: yes, Q2: yes, Q3: no, Q5: yes.  
+    - Attribution: Training run for base model (excludes draft model).  
+    - Boundaries: Includes base weights; excludes serving replicas (CUT: uncoupled) and draft model.  
+    - Risks: Harmful content generation.  
+    - Owner: [Named ML lead].  
+
+  **Case 2: Mid-flight Pretraining Run**  
+  - **Q1 (direct welfare)**: Yes (weights will serve human-impacting outputs).  
+  - **Q2 (emergent unpredictability)**: Yes (large-scale pretraining).  
+  - **Q3 (stateful adaptation)**: Yes (weights updated via gradients).  
+  - **Q4 (uncurated inputs)**: Yes (web-scraped data).  
+  - **Q5 (harm risk)**: Yes (biases embedded in weights).  
+  - **Candidate**: Yes.  
+  - **Attribution**: Training (runtime statefulness irrelevant; weights are the risk source). Entire run is one unit (CUT: batches coupled).  
+  - **Artifact**:  
+    - System: Pretrain Run #7 (Step 40k/100k).  
+    - Decision: On-register.  
+    - Rationale: Q1: yes, Q2: yes, Q3: yes, Q4: yes, Q5: yes.  
+    - Attribution: Training run.  
+    - Boundaries: Includes all batches and checkpoints (CUT: coupled); excludes future fine-tunes.  
+    - Risks: Encoding harmful patterns; irreversible if unchecked.  
+    - Owner: [Named training lead].  
+
+  **Case 3: Per-User LoRA Adapters (2M params, user-specific, loaded per request)**  
+  - **Q1 (direct welfare)**: Yes (personalized outputs affect user).  
+  - **Q2 (emergent unpredictability)**: Yes (base model complexity; adapter amplifies unpredictability).  
+  - **Q3 (stateful adaptation)**: Training: Yes (adapter weights updated). Serving: No (static weights).  
+  - **Q4 (uncurated inputs)**: Training: Yes (user data).  
+  - **Q5 (harm risk)**: Yes (e.g., mental health risks from over-personalization).  
+  - **Candidate**: Yes (training attribution).  
+  - **Attribution**: Training (Q3=yes for training, but serving is static). Each adapter training is a separate computation (CUT: no coupling between users).  
+  - **Artifact**:  
+    - System: User Adapter Training Pipeline.  
+    - Decision: On-register.  
+    - Rationale: Q1: yes, Q2: yes, Q3: yes (training), Q4: yes, Q5: yes.  
+    - Attribution: Per-user training runs (not the base model).  
+    - Boundaries: Includes each adapter training (CUT: uncoupled); excludes base model (already registered) and serving.  
+    - Risks: Psychological harm, echo chambers.  
+    - Owner: [System owner; not per-user].  
+  - **Honest note**: This outcome is likely unwanted (thousands of registrations). The procedure forces this due to per-user state updates and uncontrolled data.  
+
+  ---
+
+  ### Calibration Check  
+  - **Database Query Planner**:  
+    - Q1: No (internal optimization; no direct welfare link). Terminate early: off-register.  
+    - *Procedure correct?* Yes, for the right reason (lacks direct welfare link).  
+  - **Physics Loop in Game Engine**:  
+    - Q1: Yes (affects player experience).  
+    - Q2: No (deterministic, explainable mechanics). Terminate: off-register.  
+    - *Procedure correct?* Yes, but borderline. Correctly ignores due to predictability.  
+  - **Misfires**:  
+    - **Over-inclusion**: Per-user adapters (Case 3) become unwieldy. You’ll notice when overwhelmed by registrations.  
+    - **Under-inclusion**: Systems with "unknown" answers (e.g., undocumented input sources) may slip through. Detected via post-incident audits.  
+    - **Edge**: Static systems with high harm risk (e.g., biased classifier) rely on Q5; values conflicts may need escalation.  
+
+  \answer{adopt-with-changes}

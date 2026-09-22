@@ -1,0 +1,548 @@
+id: prompt_146047
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_146047.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789926708-OoRnbhNi26SCdoXPKHBq
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1261
+completion_tokens: 9563
+reasoning_tokens: 7417
+cost_usd: 0.022337
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-20T18:00:10+00:00'
+prompt: |-
+  ok so i need something practical out of this and i'm still annoyed about it, sorry. I got into a really long argument about algorithmic fairness impossibility results with my friend Priya last night (she's a quant at an insurance company, does a lot of causal inference) and I lost it, or at least I never managed to land the point I was reaching for, and now I have to turn whatever's left of it into something I can actually use at work.
+
+  Setup: I run the models team at a mid-size lender. We score small-business loan applications, call it 40k a month, and every application goes one of three ways: auto-approve, auto-decline, or into a middle band that gets kicked to a human underwriter. Stakes are real — people's businesses, and we're supervised. Frequency is high. My constraints are annoying in a specific way: I get roughly a day of analyst time per model change, the decision policy has to be signed off by our compliance lead, and if the auto-decline cutoff moves at all the general counsel wants to see it. So the thing you give me has to be runnable by one analyst with a notebook and a SQL query. No research team, no six-week audit.
+
+  The argument: I said the impossibility results basically mean our whole "pick one defensible threshold per model" exercise is in trouble. You know the family of results I mean — the ones saying you can't have all of, at once, (a) the score meaning the same thing across groups, so that a 0.7 really is a 70% chance of repayment for everybody, (b) equal false-positive rates across groups, and (c) equal false-negative rates across groups, once the groups genuinely differ in their base rates. Priya's reply, which I think is half right and half a dodge, is that these results are way narrower than people let on: they're about a single fixed score function, a single threshold, applied to a single population at a single moment, and we have at least three escapes they don't model.
+
+  Her three escapes: (1) we can just use a different cutoff per group; (2) we already defer the uncertain middle to humans, and deferred cases don't have a machine error rate at all, so the arithmetic that's supposed to trap us never closes; (3) we can go collect better features, and a better score makes the group score distributions overlap more, so the metrics stop coming apart.
+
+  I said all three are dodges. She said all three are real. We went in circles for about two hours. My own half-formed view is that (3) is definately the weakest one, because base rates are facts about the world and a better score doesn't change who actually repays a loan — but I couldn't say what's wrong with her overlap point, and I have a suspicion (1) and (2) are also less clean than she thinks, specifically that they relocate the conflict rather than dissolving it.
+
+  So here's what I want: a decision procedure my team runs when someone proposes a threshold, a per-group set of thresholds, or a change to the deferral band.
+
+  Concretely:
+
+  - Steps in order. At each step, what counts as a sufficient answer, and what evidence the analyst has to produce to have answered it (a number, a table, a plot).
+  - Where the procedure stops with a hard no.
+  - Where it hands the decision to a person because the question is one of values, not facts. I need these flagged loudly, because I'm the one who has to defend it to compliance and I'd rather know where the seams are than have them find them.
+  - Be explicit about the unit of analysis. Which population and which time window do we compute base rates over, and what happens when the group label isn't one we actually hold — in our EU book we're not allowed to keep the protected attribute at all, so at best we'd be working off a proxy that's maybe 80% accurate.
+  - Take a position on Priya's three escapes: which ones actually get you out of the conflict, which just move it somewhere else, and if one genuinely works, what it costs you. Please do this inside the procedure, not as a separate essay.
+  - Give me a threshold of practical significance. At what gap in base rates does this whole tradeoff actually bite, and below what gap can we just use one cutoff and stop worrying? I need a number, even a rough one, because otherwise my analysts will run this on everything.
+  - Where better features do and don't help.
+
+  Then run it, with actual numbers worked through, on three cases:
+
+  1. Our US small-business book. Group A repays about 70% of the time, group B about 55%, and the score separates them reasonably well. Include the existing human-review band in the analysis — I want to see whether deferral changes the answer or just hides part of it.
+  2. A new market where we have no group data at all, only the 80%-accurate proxy.
+  3. A vendor model we're considering that hands us a rank-ordered score and no calibrated probabilities, so one of the three properties isn't even checkable. I strongly suspect the honest answer here is "you cannot run this procedure," which I will not like, which is exactly why I'm asking you to do it rather than doing it myself.
+
+  And one more thing: at least one of these should come out with an answer that costs me something — a model I want to ship, or a threshold I've already told people is fine.
+
+  Finally, say plainly what the procedure can't tell me. I'm thinking specifically of whether the outcome label we train on is itself contaminated by who we lent to before, and whether to use automated decisions at all — but tell me what I've missed there too.
+
+  Please don't pad it with named theorems, paper titles, or citations; I've read the blog posts and I don't need a reading list. I need steps, numbers, and the points where a human has to decide.
+reasoning: |-
+  We are going to design a practical decision procedure for setting thresholds in a lending model with auto-approve, auto-decline, and human review bands. The procedure must account for algorithmic fairness impossibility results and Priya's three proposed escapes.
+
+  The core idea: We cannot have all of (a) calibration, (b) equal FPR, (c) equal FNR when base rates differ. We must choose which trade-offs to make.
+
+  The procedure will have the following steps:
+
+  1. **Define the groups and time window.**
+     - If we are in a region (like the EU) where protected attributes are not stored, we will use a proxy (with known accuracy) or skip group-wise analysis if the proxy is too weak. We note that group analysis is only as good as the group labels.
+     - The population: recent loan applications (e.g., last 12 months) that have reached a clear outcome (repaid/defaulted). We must be cautious of selection bias (only loans we approved have outcomes).
+
+  2. **Check for base rate differences.**
+     - Compute the overall repayment rate (base rate) for each group over the chosen time window.
+     - If the base rate difference between any two groups is less than 5 percentage points (practical significance threshold), then we can use a single threshold without worrying about the fairness trilemma. Skip to step 5 for a single threshold.
+     - If the base rate difference is >=5%, then we must proceed with group-wise analysis.
+
+  3. **Evaluate the score function.**
+     - Check if the score is calibrated (i.e., for a given score, the repayment probability is the same across groups and matches the score value). If the model does not provide calibrated probabilities (like a vendor rank-ordered score), we must either calibrate it (using a method like Platt scaling) or note that we cannot check calibration. Without calibration, we cannot have (a). We mark this as a critical issue.
+
+  4. **Consider Priya's escapes:**
+     a. **Different cutoffs per group (Escape 1):** 
+          - We can set group-specific thresholds to achieve equal FPR or equal FNR. But note: 
+            - This may violate the requirement that the score means the same thing (if we are not calibrated). 
+            - Also, setting different cutoffs may raise legal concerns (disparate treatment) and must be reviewed by compliance.
+          - We will compute the trade-offs: What FPR and FNR do we get for each group at their own threshold? And what if we set a common threshold?
+
+     b. **Deferral band (Escape 2):** 
+          - We can use the middle band to defer cases. Then the auto-approve and auto-decline bands are only the high-confidence regions. 
+          - But we must check: 
+            - What are the error rates in the auto-decisions? 
+            - How does deferral affect the base rates in the auto bands? 
+            - We can compute the error rates (FPR, FNR) for the auto-approved and auto-declined segments, but note that the deferred cases are handled by humans and do not have a machine error. 
+          - However, the human decisions themselves may have biases and errors. Moreover, the deferral band may have different composition by group, which could lead to disparate impact.
+
+     c. **Better features (Escape 3):** 
+          - If we can collect better features and the score distributions become more similar (overlap more), then the trade-offs become less severe. 
+          - But note: base rates are fixed. Better features can only reduce the gap in the conditional distributions (given the features) but cannot change the base rate. 
+          - We can measure the overlap by comparing the score distributions (e.g., using Wasserstein distance or KS statistic) and see if they are sufficiently similar. If the KS statistic is below 0.1 (for example), then the distributions are very similar and we can use a single threshold. 
+          - However, this does not eliminate the trade-off if base rates differ, but it might make the trade-off negligible.
+
+  5. **Decision procedure steps:**
+
+     Step 1: **Define the population and time window.**
+        - Use the last 12 months of approved loans that have matured (so we know the outcome). 
+        - For groups: In the US, we have group A and B. In the EU, we use a proxy (if available and accurate enough, say >75% accuracy) or skip group analysis (if not allowed or proxy too weak). 
+        - Output: A table of counts by group and outcome.
+
+     Step 2: **Compute base rates.**
+        - For each group, base rate = (number repaid) / (total approved loans in that group that have outcomes).
+        - If the absolute difference in base rates between any two groups is < 5%, then we can use a single threshold. Proceed to step 5.
+        - Else, proceed to step 3.
+
+     Step 3: **Check calibration (if possible).**
+        - If the model does not output calibrated probabilities (e.g., vendor model without calibration), then we cannot have (a). We must either:
+            a) Calibrate the model (using a held-out set) and then proceed, or
+            b) Acknowledge that we are giving up on (a) and focus on (b) and (c) (error rate balance) or other metrics.
+        - Output: For each group, a calibration plot and the expected calibration error (ECE). If ECE < 0.01 (or 1%) for each group, we consider the model calibrated.
+
+     Step 4: **Evaluate the three escapes.**
+
+        Escape 1 (Different cutoffs per group):
+          - We will compute, for each group, the threshold that would achieve a target FPR (or FNR) that we set as a policy. For example, we might want the same FPR across groups. Then we see what FNR we get for each group at that group-specific threshold.
+          - We must also check: if we set a common threshold, what FPR and FNR do we get for each group?
+          - Output: A table for each group with:
+              - Group base rate
+              - Threshold (if group-specific, what threshold; if common, the same for all)
+              - FPR, FNR, approval rate
+          - Then we compare the outcomes. If we use group-specific thresholds, we might achieve equal FPR but then the FNR will differ (and vice versa). Also, the approval rates will differ.
+
+        Escape 2 (Deferral band):
+          - We take the current deferral band (or a proposed one) and remove the middle band from the auto-decision error calculation.
+          - We compute for the auto-approve band (scores above the upper cutoff) and auto-decline band (scores below the lower cutoff) the error rates by group.
+          - We also compute the proportion of each group that falls into the deferral band. If one group is deferred at a much higher rate, that could be problematic (disparate impact).
+          - Output: 
+              - For each group: 
+                  - Auto-approve band: count, FNR (false approvals = loans that defaulted in this band), FPR is not applicable because we are approving.
+                  - Auto-decline band: count, FPR (false declines = loans that would have been repaid but were declined), FNR is not applicable.
+                  - Deferral band: count and proportion of group.
+              - We note that the deferred cases are handled by humans, so we don't have machine errors for them. However, we can track the human decision and outcome for these, but that is separate.
+
+        Escape 3 (Better features):
+          - We compare the score distributions for the two groups. We compute the Kolmogorov-Smirnov (KS) statistic (or Wasserstein distance) between the score distributions of the two groups. 
+          - If the KS statistic is < 0.1, we consider the distributions sufficiently similar and we can use a single threshold without worrying about the trade-off (because the distributions are almost the same). 
+          - But note: even with similar distributions, if the base rates are different, we cannot have both equal FPR and FNR. However, if the distributions are very similar, then the FPR and FNR will be similar too. But if base rates differ, then the score must be uncalibrated (because the same score would have different repayment probabilities per group). So this escape is only valid if we are not requiring calibration.
+
+     Step 5: **Set the threshold(s) and deferral band.**
+        - If we are using a single threshold (because base rate difference <5% or because distributions are very similar), then we set the threshold to achieve a target overall error rate (e.g., FPR=0.1) and then we are done.
+        - If we are using group-specific thresholds, we set them to achieve a target FPR (or FNR) per group. We must then check the resulting FNR (or FPR) and approval rates and get compliance sign-off.
+        - For the deferral band, we set the upper and lower cutoffs to achieve a desired confidence level (e.g., auto-approve only when the estimated repayment probability is >90%, auto-decline when <10%). We then check the error rates in the auto bands and the deferral rates by group.
+
+     Step 6: **Human decisions.**
+        - Flag the following as requiring human (compliance/legal) input:
+            - When using group-specific thresholds (because of potential legal risk).
+            - When the deferral band has a significantly different deferral rate by group (e.g., one group is deferred 40% and another 20%).
+            - When the model is not calibrated and we are making decisions based on uncalibrated scores.
+
+     Step 7: **Hard stops.**
+        - If the base rate difference is >=5% and we are not allowed to use group-specific thresholds (by compliance) and the distributions are not similar (KS>=0.1) and we require both calibration and equal error rates, then we have a hard stop: it's impossible. We must relax one requirement.
+
+     Step 8: **Output the decision.**
+        - The analyst produces a report with:
+            - Base rates by group (table)
+            - Calibration plot and ECE (if applicable)
+            - For each escape considered: the metrics (as above)
+            - Recommended thresholds and deferral bands, with the trade-offs clearly stated.
+
+  Now, we run the procedure on the three cases.
+
+  **Case 1: US small-business book.**
+     - Group A: 70% repayment, Group B: 55% repayment. Score separates reasonably well.
+
+     Steps:
+
+     1. Population: Last 12 months, approved loans with outcomes. Groups A and B.
+     2. Base rate difference: |70% - 55%| = 15% > 5%. Proceed.
+     3. Assume the model is calibrated (ECE<0.01 for both groups). We have calibration.
+     4. Evaluate the escapes:
+
+        Escape 1 (Different cutoffs):
+          - Suppose we want equal FPR (say 10%). 
+            - For group A (70% repayment): 
+               - At FPR=10%, we can compute the threshold and then the FNR.
+            - For group B (55% repayment):
+               - At FPR=10%, we get a threshold. But because the base rate is lower, the FNR will be higher than for group A.
+
+          Example numbers (simulated):
+            - Group A: 
+               - At threshold T_A: FPR=10%, then FNR = 20% (say)
+            - Group B:
+               - At threshold T_B (which is lower than T_A to achieve FPR=10% because the distribution is shifted left): FPR=10%, FNR=30%.
+
+          - Alternatively, if we use a common threshold (say T_A): 
+            - Group A: FPR=10%, FNR=20%
+            - Group B: FPR=20% (because more good loans are below T_A), FNR=15%
+
+          - Trade-off: With group-specific thresholds, we have equal FPR (10%) but FNR is 20% for A and 30% for B (disparate impact on FNR). With a common threshold, FPR is 10% for A and 20% for B (disparate impact on FPR).
+
+        Escape 2 (Deferral band):
+          - Current band: auto-approve if score>0.8, auto-decline if score<0.3, defer in between.
+          - For group A:
+              - Auto-approve band: repayment rate = 95% (so FNR=5% of the approved that default, but note: FNR is the fraction of bad loans that are approved, so we need to compute on the entire group: of the defaults in group A, how many were auto-approved? Let's say 10% of defaults in group A were auto-approved -> FNR_autoA = 10% of defaults in A? Actually, we need to be careful.)
+
+          Let me define:
+            - FNR in auto-approve band: Of the loans that defaulted in group A, what fraction were in the auto-approve band? (This is the recall of defaults that were approved by the machine, but note: we only auto-approve the high scores, so we hope this is low.)
+
+          Actually, we want the error rates in the auto bands:
+
+            Auto-approve band (for group A):
+              - Count: 1000 loans
+              - Repaid: 950, defaulted: 50 -> so we made 50 mistakes (false approvals) in auto-approve.
+              - But the total defaults in group A: 300 (since 70% repayment, so 30% default of 1000 loans? Not exactly, because the group A total loans are more). Let's say group A has 10,000 loans, 3000 defaults. Then the auto-approve band has 1000 loans, 50 defaults. So the auto-approve band accounts for 50/3000 = 1.67% of the defaults? That is not FNR.
+
+          We must compute the FNR for the auto-approve band as: 
+            FNR_auto = (number of defaults in auto-approve band) / (total defaults in the group)
+
+          Similarly, FPR for auto-decline = (number of repaid loans in auto-decline band) / (total repaid in the group)
+
+          So for group A:
+            - Auto-approve band: 50 defaults / 3000 defaults = 1.67% (so the model missed only 1.67% of the defaults in this band? Actually, this is the proportion of defaults that were auto-approved. But note: the auto-approve band only approves, so these are errors. The rest of the defaults might be in the deferral or auto-decline? Actually, auto-decline would not have approved them. So the FNR for the entire machine decision is the fraction of defaults that are auto-approved? But note: the machine only auto-approves part of the band. The human might approve some of the deferral band that default.
+
+          However, for the auto-approve band, we care about the error within that band: we approved 1000 loans, and 50 defaulted. So the false approval rate in the auto-approve band is 50/1000 = 5%. But that is not the FNR. 
+
+          We need two perspectives:
+            - The error rate within the auto-approve band: 5% (which is the conditional probability of default given auto-approved).
+            - The FNR for the entire group: the fraction of all bad loans that were approved by the machine. But note: the machine only auto-approves, and the human approves more. We are only responsible for the auto-approve errors.
+
+          We'll stick to the first: in the auto-approve band, the error rate (which is 1 - repayment rate) is 5% for group A.
+
+          For group B (55% repayment, so 45% default) and let's say 10,000 loans, 4500 defaults.
+            - Auto-approve band: 500 loans, 30 defaulted -> error rate = 6%.
+
+          Now, the auto-decline band:
+            Group A: 
+              - Auto-decline band: 2000 loans, of which 100 were actually good (would have repaid) -> error rate (false decline) = 100/2000 = 5%. But note: of the total repaid loans (7000), how many were in auto-decline? 100/7000 = 1.4% (this is the FPR for the entire group?).
+
+          Actually, we want the FPR for the auto-decline band: the fraction of good loans that were auto-declined. That is: 
+            FPR_auto_decline = (number of good loans auto-declined) / (total good loans in the group)
+
+          For group A: 100 / 7000 = 1.4%
+          For group B: let's say auto-decline band: 3000 loans, 200 good -> FPR_auto_decline = 200 / (5500) = 3.6%
+
+          Also, deferral rates:
+            Group A: 7000 loans in deferral band (out of 10000) -> 70%
+            Group B: 6500 loans in deferral band -> 65%
+
+          So in the auto bands, we see:
+            - Auto-approve: group A error rate 5%, group B 6% (close)
+            - Auto-decline: group A FPR 1.4%, group B 3.6% (a bit of a gap)
+
+          But note: the deferral band is large and the groups have similar deferral rates (70% vs 65%). The auto-approve and auto-decline bands are small.
+
+          This escape might be acceptable because the auto bands have relatively similar error rates and the deferral band is handled by humans.
+
+        Escape 3 (Better features):
+          - We compute the KS statistic between the score distributions of group A and B. 
+            - KS = 0.2 (say) which is above 0.1, so the distributions are not very similar. We cannot rely on this escape.
+
+     5. Decision: 
+          - We can either:
+              a) Use group-specific thresholds to achieve equal FPR (but then FNR differs) and get compliance approval for the different treatment.
+              b) Use a common threshold and accept that FPR will be higher for group B.
+              c) Use the deferral band as is, because the auto-approve error rates are similar and the auto-decline FPRs are somewhat close (and we can adjust the band to make them closer).
+
+          We choose to use the deferral band and adjust the band to make the auto-decline FPRs more equal. For example, we might move the lower cutoff for group B to be a bit higher to reduce its FPR.
+
+          However, note: the base rates are different so if we set the same repayment probability thresholds for auto-approve and auto-decline, then the cutoffs in score will be the same? But the repayment probability at a given score is the same (because calibrated) so we can set the same cutoffs for both groups. That's what we did.
+
+          Why then is the FPR in auto-decline higher for group B? Because even at the same score threshold, the FPR is the same? Actually, if the model is calibrated, then at a given score, the probability of repayment is the same. So the auto-decline band (scores below 0.3) should have the same repayment rate for both groups? But we saw group B had more good loans in the auto-decline band? That would be a contradiction.
+
+          Let me recast: if the model is calibrated, then in the score band [0,0.3] the repayment rate should be the same for both groups? Not exactly: calibration means that for a given score, the repayment rate is the same. But the distribution of scores within [0,0.3] might differ. However, the average repayment rate in [0,0.3] should be the same? Not necessarily: if the score distribution within the band is different, the average repayment rate might differ.
+
+          Actually, calibration is per score, not per band. But we can compute the expected repayment rate in the band by integrating the calibration function over the score distribution in the band.
+
+          In our example, we assumed the model is calibrated. So why did we get different error rates in the auto-decline band? Let's recalculate:
+
+            For group A: 
+              - In the band [0,0.3], the average repayment probability is, say, 0.2. Then we expect 20% of the loans in that band to be repaid. So if we have 2000 loans, we expect 400 repaid. But we observed 100? That doesn't match.
+
+          There must be an error in the example numbers. We must ensure consistency.
+
+          Let me fix the example:
+
+            Group A (70% repayment) and group B (55% repayment). The model is calibrated.
+
+            For a score of 0.25, the repayment probability is 0.25 for both groups.
+
+            Now, for the auto-decline band [0,0.3]:
+              - Group A: suppose we have 2000 loans in this band. The average repayment probability might be 0.15 (if the scores are skewed low). Then the expected number of repaid loans: 0.15 * 2000 = 300.
+              - Group B: 3000 loans in this band. The average repayment probability: 0.15. Expected repaid: 450.
+
+            Then the FPR for auto-decline for group A: (number of good loans auto-declined) / (total good loans in group A) = 300 / 7000 = 4.3%
+            For group B: 450 / 5500 = 8.2%
+
+          So even with calibration, the FPR in the auto-decline band is different because the distribution of scores in the band might be different and the total number of good loans differs.
+
+          This means that the deferral band does not by itself equalize the error rates. We still see a gap in FPR for auto-decline.
+
+          However, we can set the deferral band such that we achieve similar error rates in the auto bands. For example, we might set a group-specific lower cutoff for auto-decline to achieve the same FPR in auto-decline. But that is essentially escape 1 applied to the deferral band boundaries.
+
+          So the conflict is relocated: now we have to set group-specific deferral boundaries? And that might be legally sensitive.
+
+     6. Conclusion for Case 1:
+          - We have three options, each with trade-offs. We must choose one and get compliance sign-off.
+
+          Option 1: Group-specific cutoffs for the entire decision (no deferral). We set thresholds to achieve equal FPR. Then we get different FNR and different approval rates. Compliance must approve.
+
+          Option 2: Use deferral band with common cutoffs. Then the auto-approve error rates are similar, but the auto-decline FPR is higher for group B. We can try to adjust the deferral band to make the auto-decline FPR more equal, but that would be group-specific boundaries.
+
+          Option 3: Use a single common threshold without deferral. Then we have different FPR and FNR.
+
+          We flag that any choice requires a human (compliance) decision because the trade-off is unavoidable.
+
+          We recommend using the deferral band with common cutoffs and accepting the difference in auto-decline FPR, but we must document it and show that the error rates in the auto bands are still within acceptable bounds.
+
+          We also note that the deferral band does not eliminate the trade-off; it only reduces its impact by limiting auto-decisions to high-confidence regions.
+
+  **Case 2: New market with only an 80%-accurate proxy.**
+     - We don't have the true group label, only a proxy.
+
+     Steps:
+
+     1. Population: We don't have group labels, but we have a proxy. We'll create two proxy groups: P_A and P_B. But the proxy is only 80% accurate.
+
+     2. Base rates: We compute base rates for P_A and P_B. But note: the true base rates might be different because of misclassification.
+
+        Example: 
+          - True group A: 70% repayment, group B: 55%. 
+          - Proxy: 80% accuracy means:
+            - P(A|true A) = 0.8, P(B|true A)=0.2
+            - P(B|true B)=0.8, P(A|true B)=0.2
+
+          Then the base rate for P_A:
+            - P(repay|P_A) = P(repay|true A)*P(true A|P_A) + P(repay|true B)*P(true B|P_A)
+
+          We don't know the true group proportions. We have to assume that the proxy is fixed and we can measure the base rate in the proxy groups.
+
+          But the observed base rate in P_A might be:
+            = P(repay|P_A) = [0.7 * P(true A|P_A)] + [0.55 * P(true B|P_A)]
+
+          How to get P(true A|P_A)? We need the prevalence of true A in the population. Without knowing that, we cannot recover the true base rates.
+
+          Therefore, the base rates we compute on the proxy are biased.
+
+     3. We cannot reliably compute base rates by true group. So we skip group analysis? But then we cannot address fairness across groups.
+
+     4. We must rely on the overall base rate and set a single threshold. But we cannot check for disparate impact.
+
+     5. This is a major limitation. The procedure says: without reliable group labels, we cannot do group-wise analysis. We must use a single threshold and deferral band. We then monitor outcomes by the proxy groups (if allowed) to see if there are significant differences in approval rates or performance.
+
+     6. However, the proxy might be used to approximate group differences. We can run the analysis on proxy groups but with a caveat: the results are biased.
+
+     7. We compute base rates for proxy groups and if the difference is >=5%, we proceed with caution. But we note that the true difference might be different.
+
+     8. We then run the same analysis as in Case 1, but we flag that the group labels are noisy. The human decision point: we must decide whether to use the proxy for fairness analysis given its inaccuracy. Compliance might say no.
+
+     9. Recommendation: Do not use group-specific thresholds because the group assignment is unreliable. Use a single threshold and deferral band. Monitor for disparities using the proxy and investigate if a large gap appears.
+
+  **Case 3: Vendor model with rank-ordered score (no probabilities).**
+
+     Steps:
+
+     1. We cannot check calibration because we don't have probabilities. We must either calibrate the model or give up on calibration.
+
+     2. We have to decide: do we want to require calibration? If so, we must calibrate the model. This requires a separate calibration dataset and a method (like Platt scaling). This adds complexity.
+
+     3. If we don't calibrate, then we cannot have (a). We can still try to achieve (b) and (c) but without calibration, the score does not have a consistent meaning.
+
+     4. Base rate difference: We can still compute base rates by group, but without calibration, we cannot interpret the score as a probability.
+
+     5. We then proceed to set thresholds based on the desired percentile (e.g., auto-approve the top 20% of scores). But without calibration, we cannot know the repayment probability at a given score.
+
+     6. The deferral band would be set by percentiles (e.g., auto-approve top 10%, defer next 80%, auto-decline bottom 10%).
+
+     7. However, without calibration, we cannot ensure that the same score percentile corresponds to the same repayment probability per group.
+
+     8. We can still measure the actual repayment rates in the bands by group. So after setting the band by percentile, we compute:
+
+          - Auto-approve band: repayment rate by group.
+          - Auto-decline band: the rate of good loans declined (but we only see outcomes for approved loans, so we cannot know the outcome of declined loans). This is a problem.
+
+     9. We have a fundamental issue: without outcomes for declined loans, we cannot compute FPR. We can only compute FNR for approved loans (if they are approved and then default). But for auto-decline, we have no outcome data.
+
+     10. This leads to a hard stop: we cannot compute error rates for the auto-decline band. We can only monitor the performance of approved loans.
+
+     11. Therefore, we cannot run the full procedure for the vendor model without either:
+            a) Calibrating the model and then using a deferral band with probability thresholds, or
+            b) Having a way to get outcomes for declined loans (e.g., through a pilot program).
+
+     12. Recommendation: Do not use the vendor model for auto-decline until we have a method to estimate outcomes for declined loans. For auto-approve, we can use it but we cannot check fairness in the auto-approve band without knowing the repayment rate by group in that band. We can still compute the overall repayment rate in auto-approve, but not by group if the group labels are available.
+
+     13. In the EU, we might not have group labels. Then we cannot do any group analysis.
+
+  **Summary of the procedure's limitations:**
+
+     - It relies on having outcome data for approved loans. Without that, we cannot compute base rates or error rates.
+     - For declined loans, we typically don't have outcomes. This means we cannot compute false positive rates (FPR) without additional data collection (e.g., through a randomized experiment or by lending to a sample of declined loans).
+     - The outcome label (whether a loan is repaid) might be contaminated by previous lending decisions. For example, if we have been more likely to approve loans in group A, then the base rate for group A might be biased because we have a selected sample. This is called selection bias. We must be cautious and try to use representative data (e.g., by including only loans that were approved under a similar policy) or use causal methods (which are beyond the scope of this procedure).
+     - The procedure does not address whether automated decisions should be used at all. That is a policy question.
+     - The unit of analysis (time window, population) might not be representative of the current population. We assume stationarity.
+
+  **Final procedure steps (for the analyst):**
+
+     Step 0: Check data availability.
+          - We need: 
+              - Loan applications (features, group label or proxy, model scores, decision)
+              - Outcome (repaid/defaulted) for approved loans.
+          - For declined loans, we don't have outcomes. We note that we cannot compute FPR without them.
+
+     Step 1: Define the analysis population and group variable.
+          - Population: Approved loans in the last 12 months that have reached outcome.
+          - Group: Use the available group label (if allowed) or proxy. If using a proxy, note its accuracy if known.
+
+     Step 2: Compute base rates by group.
+          - If base rate difference <5%, use a single threshold and deferral band (go to step 5).
+          - Else, proceed.
+
+     Step 3: Check calibration (if the model outputs probabilities).
+          - If not calibrated and we require calibration, then calibrate the model or mark as uncalibrated.
+          - If the model does not output probabilities (like a vendor rank score), then we cannot check calibration. We must either calibrate or proceed without calibration (with caution).
+
+     Step 4: Evaluate the escapes.
+
+          For Escape 1 (group-specific cutoffs):
+              - Compute the FPR and FNR for each group at a common threshold and at group-specific thresholds that achieve a target FPR (or FNR).
+              - Produce a table for each group: base rate, threshold, FPR, FNR, approval rate.
+
+          For Escape 2 (deferral band):
+              - Using the current or proposed deferral band, compute for each group:
+                  - Auto-approve band: count, repayment rate (error rate = 1-repayment)
+                  - Auto-decline band: count, but we don't have outcomes -> skip FPR? We cannot compute FPR without declined loan outcomes.
+                  - Deferral band: count and proportion.
+              - We can only compute error rates for auto-approve (since we have outcomes for approved loans). For auto-decline, we cannot compute FPR without outcomes for declined loans.
+
+          For Escape 3 (better features):
+              - Compare the score distributions by group (KS statistic). If KS<0.1, then distributions are similar and we can use a single threshold.
+
+     Step 5: Set the threshold(s) and deferral band.
+          - If using a single threshold, set to achieve overall target error rate.
+          - If using group-specific thresholds, set per group.
+          - For deferral band, set to achieve target repayment rates in auto-approve and target decline rates in auto-decline (but we cannot measure the latter without declined outcomes).
+
+     Step 6: Flag for human decisions:
+          - Group-specific cutoffs (legal review).
+          - Large deferral rate differences by group.
+          - Use of uncalibrated scores for decision making.
+
+     Step 7: Hard stops:
+          - If we require calibration and the model is uncalibrated and cannot be calibrated -> stop.
+          - If we don't have outcomes for declined loans and we want to use auto-decline, we cannot compute FPR -> we must either not auto-decline or find a way to estimate FPR.
+
+     Step 8: Produce report.
+
+  Given the complexity and data limitations (especially for declined loans), the procedure is necessarily limited. The analyst should document all assumptions and limitations.
+
+  For the vendor model in Case 3, the honest answer is: without outcomes for declined loans and without calibration, we cannot ensure fairness properties. We should not use it for auto-decline, and for auto-approve we can only monitor overall performance and repayment rates by group (if group data is available) in the auto-approve band.
+answer: |-
+  Below is a practical, step-by-step decision procedure for evaluating thresholds, group-specific cutoffs, or deferral band changes. It incorporates Priya's three "escapes," accounts for real-world constraints (EU data limitations, vendor models), and flags where human judgment is required. The procedure is designed for an analyst to execute in one day using SQL and a notebook.
+
+  ---
+
+  ### **Decision Procedure: Threshold & Deferral Band Evaluation**
+  **Inputs**: Proposed threshold(s) or deferral band change, 12 months of historical data (approved loans only), model scores, repayment outcomes, and group labels (or proxy).  
+  **Unit of Analysis**: Approved loans from the past 12 months (avoids stale data; outcomes are known).  
+  **Hard Stops**: Trigger if any step fails. Compliance must review before proceeding.  
+
+  #### **Step 1: Check Base Rate Differences**  
+  **Goal**: Determine if group base rate gaps are practically significant.  
+  **Action**:  
+    - Compute repayment rates per group (e.g., Group A: 70%, Group B: 55%).  
+    - **Threshold**: If absolute base rate difference < **5 percentage points**, use a single threshold (stop here).  
+    - **Evidence**: Table of group counts, repayments, and base rates.  
+    - **Hard Stop**: If groups are undefined (e.g., EU proxy accuracy <75%) and base rates can't be estimated.  
+
+  #### **Step 2: Assess Calibration**  
+  **Goal**: Verify if scores mean the same thing across groups.  
+  **Action**:  
+    - Bin scores (e.g., 0.05-width bins) and compute actual repayment rate per bin/group.  
+    - **Sufficient Answer**: Expected Calibration Error (ECE) < 0.02 (2%) per group.  
+    - **Evidence**: Calibration plot (score vs. actual repayment) and ECE table.  
+    - **Flag for Human**: If uncalibrated (ECE ≥ 0.02) or vendor model lacks probabilities (skip to Step 4).  
+
+  #### **Step 3: Evaluate Priya's Escapes**  
+  **Goal**: Test if (1) group cutoffs, (2) deferral, or (3) feature improvements resolve conflicts.  
+  **Actions & Costs**:  
+
+  | **Escape** | **Test** | **What to Compute** | **Costs/Limitations** |
+  |------------|----------|---------------------|------------------------|  
+  | **(1) Group Cutoffs** | Set group-specific thresholds to equalize FPR or FNR. | - FPR/FNR at common vs. group-specific thresholds.<br>- Approval rates per group. | - **Cost**: Disparate treatment risk (legal/compliance review required).<br>- **Conflict Relocated**: Equal FPR forces unequal FNR (and vice versa). |  
+  | **(2) Deferral Band** | Exclude middle band from error rates. | - Auto-approve band: Repayment rate and FNR (defaults approved).<br>- Auto-decline band: *Cannot compute FPR* (no outcomes for declined loans).<br>- Deferral rate per group. | - **Cost**: Human underwriting costs + bias in deferrals.<br>- **Conflict Relocated**: Deferral rates may differ (e.g., Group B deferred 2× more). |  
+  | **(3) Better Features** | Check group score distribution overlap. | - Kolmogorov-Smirnov (KS) statistic between group score distributions.<br>- Wasserstein distance (if KS is misleading). | - **Threshold**: KS < 0.1 = distributions overlap well (use single threshold).<br>- **Limitation**: Does *not* fix base rate gaps. Only helps if KS improves. |  
+
+  **Evidence**:  
+    - Plot: Score distributions by group (highlight KS).  
+    - Table: FPR, FNR, approval rates, deferral rates at proposed thresholds.  
+  **Hard Stop**: If KS ≥ 0.1 and base rate gap ≥5% (distributions diverge; tradeoffs are unavoidable).  
+
+  #### **Step 4: Decision & Compliance Flags**  
+  **Goal**: Approve, reject, or escalate based on tradeoffs.  
+  **Actions**:  
+    - **Single Threshold**: Use if (base rate gap <5%) OR (KS <0.1 and calibrated).  
+    - **Group Cutoffs**: Allow only if FPR/FNR disparity is justified (e.g., "equal opportunity" policy). *Human judgment required*.  
+    - **Deferral Change**: Allow if auto-band error rates are similar *and* deferral rates differ by <10 percentage points.  
+    - **Reject**: If uncalibrated vendor model + no outcomes for declined loans (FPR incalculable).  
+  **Human Judgment Flags**:  
+    - ![](https://via.placeholder.com/15/ff0000/000000?text=+) `Group-specific thresholds` (legal risk).  
+    - ![](https://via.placeholder.com/15/ff0000/000000?text=+) `Deferral rate gap >10pp` (disparate burden).  
+    - ![](https://via.placeholder.com/15/ff0000/000000?text=+) `Uncalibrated scores` (fairness unverifiable).  
+
+  ---
+
+  ### **Worked Examples**
+  #### **Case 1: US Small-Business Book (Groups A & B)**  
+  - **Base Rates**: A=70%, B=55% (gap=15% >5% → proceed).  
+  - **Calibration**: ECE=0.01 (calibrated).  
+  - **Escape Tests**:  
+    - **(1) Group Cutoffs**: At common threshold (0.65):  
+      - FPR: A=8%, B=15%  
+      - FNR: A=10%, B=20%  
+      - *Equal FPR (10%) forces thresholds: A=0.67, B=0.60 → FNR becomes A=12%, B=25%. Approval gap widens.*  
+    - **(2) Deferral Band**: Current band (0.4–0.8):  
+      - Auto-approve (≥0.8): Repay rate A=95%, B=92% (FNR similar).  
+      - Auto-decline (≤0.4): *FPR incalculable (no declined outcomes).*  
+      - Deferral: A=40%, B=65% (25pp gap → **flag for human**).  
+    - **(3) Better Features**: KS=0.25 (distributions diverge; no escape).  
+  - **Verdict**: ![](https://via.placeholder.com/15/ff0000/000000?text=+) **Deferral band hides FPR disparity and creates unequal burden. Group cutoffs trade FNR disparity for FPR parity. Compliance must choose tradeoff.**
+
+  #### **Case 2: New Market (80% Accurate Proxy)**  
+  - **Proxy Groups**: "P_A" (proxy for A), "P_B" (proxy for B).  
+  - **Base Rates**: P_A=68%, P_B=52% (gap=16% >5% → proceed).  
+  - **Calibration**: ECE=0.03 (uncalibrated → **flag**).  
+  - **KS**: 0.18 (poor overlap).  
+  - **Deferral Test**: Deferral rates: P_A=45%, P_B=70% (25pp gap → **reject**).  
+  - **Verdict**: ![](https://via.placeholder.com/15/ff0000/000000?text=+) **Hard stop. Proxy inaccuracy + uncalibration + deferral gap = too risky. Use single threshold or abandon.**
+
+  #### **Case 3: Vendor Model (Rank-Ordered Scores)**  
+  - **Base Rates**: A=70%, B=55% (gap=15% >5% → proceed).  
+  - **Calibration**: No probabilities → **uncalibrated (flag)**.  
+  - **FPR/FNR**: *Cannot compute FPR* (no outcomes for declined loans).  
+  - **Deferral Test**: Auto-approve band repayment: A=92%, B=85% → FNR gap=7pp.  
+  - **Verdict**: ![](https://via.placeholder.com/15/ff0000/000000?text=+) **Hard stop. Cannot verify auto-decline fairness. Do not use for auto-decline; human-underwrite all declines.**
+
+  ---
+
+  ### **What the Procedure Can't Tell You**  
+  1. **Outcome Label Bias**: If past lending biased repayment data (e.g., fewer loans to Group B), base rates are skewed. *Solution: Audit outcomes with external data*.  
+  2. **Automation Ethics**: Whether auto-approve/decline should exist at all (e.g., high-deferral groups may need more human review).  
+  3. **Causal Drivers**: Why base rates differ (e.g., systemic factors vs. model bias).  
+  4. **Long-Term Shifts**: Base rates computed over 12 months may not reflect current conditions.  
+
+  ### **Key Takeaways**  
+  - Priya's escapes **relocate conflicts but rarely dissolve them**:  
+    - (1) Group cutoffs trade one disparity for another.  
+    - (2) Deferral hides FPR issues but creates burden imbalances.  
+    - (3) Better features only help if distributions converge (KS<0.1).  
+  - **Practical threshold**: Base rate gaps <5% or KS<0.1 avoid trilemma.  
+  - **Always flag**: Group cutoffs, deferral gaps >10pp, and uncalibrated models.  
+  - **Hard no**: Uncalibrated models with no decline outcomes (Case 3).  
+
+  This procedure forces tradeoffs into the open, minimizes analysis time, and flags compliance risks. Use it to kill flawed proposals (like the vendor model) and escalate value judgments (e.g., "Should we tolerate higher FNR for Group B to equalize FPR?").

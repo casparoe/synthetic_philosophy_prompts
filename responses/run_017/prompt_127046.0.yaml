@@ -1,0 +1,319 @@
+id: prompt_127046
+sample_index: 0
+prompt_file: prompts/batch_045/prompt_127046.txt
+model: deepseek/deepseek-r1-0528
+provider: SiliconFlow
+generation_id: gen-1789858280-3digdPiK7Nr2PXezRCuZ
+finish_reason: stop
+native_finish_reason: stop
+prompt_tokens: 1140
+completion_tokens: 4367
+reasoning_tokens: 2672
+cost_usd: 0.010494
+reasoning_detail_types:
+- reasoning.text
+created_at: '2026-09-19T22:54:16+00:00'
+prompt: |-
+  I'm a staff engineer at a company that trains and serves large models, and I chair a monthly review that has to decide which of our systems go on an internal "welfare-relevant computation" register. On the register means: a written assessment before launch, a named owner who monitors the system while it runs, and no silent retraining, checkpoint deletion, or decommissioning without sign-off from me, our lawyer, and a PM. Off the register means it's just software. The meeting is ninety minutes, there are four of us (me, one ML engineer, one lawyer, one PM), I read RFCs and design docs rather than philosophy, and a wrong yes costs us weeks of launch delay while a wrong no is the kind of mistake that gets very expensive later. So I need something we can actually run in the room, not an essay.
+
+  Please write the decision procedure we should follow. Concretely: the questions in the order we should ask them; for each question, what counts as a sufficient answer and what counts as "unknown"; where the procedure terminates early with a no; where it stops and hands the decision to a person because the question is one of values rather than facts; and what the one-page artifact we file should contain. Assume the person running it can read an architecture doc and a training config but cannot run ablations or experiments.
+
+  Three constraints.
+
+  First: no citations, no proper names, no isms I'd have to look up — I can't check them and they don't help me. Every time the procedure leans on a criterion for what makes a computation morally considerable, state that criterion in one plain sentence and say explicitly what it counts and what it ignores. Where two reasonable criteria disagree — one says yes, the other no — say so at that step and tell us how to record the split, rather than quietly picking a side for us.
+
+  Second: the procedure has to be architecture-literate, because "the computation" is not an abstraction we can simply point at. It has to handle at least: (a) fission — the same weights deployed to ten thousand serving replicas, or snapshotted at step 40k and step 80k with both checkpoints then run; (b) fusion — two fine-tunes weight-averaged into one model, or many per-user adapters merged into a shared base; (c) reimplementation — a large model distilled into a much smaller one that reproduces its behaviour; (d) offloading and delegation — a model whose memory lives in a retrieval corpus, or whose tokens are proposed by a small draft model and only kept if a verifier agrees; (e) dead computation — a shadow deployment whose outputs are logged and never read by anything. And it has to give us a usable field test for whether two things are parts of one computation or two. My candidate is a swap test: if I move a sequence from one batch into another and no token's activations would change, the batch-mates are not computationally coupled and shouldn't be counted as one process — note that under mixture-of-experts routing with a per-expert capacity limit, or under cross-example normalization, they are coupled, whereas under plain per-sequence attention they are not. Replace that test with a better one if you have it, but give us something an engineer can answer from an architecture doc.
+
+  Third: the procedure has to separate two questions we keep collapsing into each other — whether a thing is a candidate at all, and, if it is, which parts of the pipeline get the attribution (the pretrained weights, the prompt, the retrieved documents, the post-training stage). If those two questions have different answers for the same system, tell me which one the register should actually be tracking and why.
+
+  Then run the procedure on three of our real cases, showing the artifact for each and where it terminates:
+
+  1. Our flagship: a sparse mixture-of-experts model of roughly 400B total parameters, served at ten thousand concurrent sequences in batches of 512, with a small draft model doing speculative decoding in front of it.
+  2. A three-month pretraining run, mid-flight. Here the batches are coupled by the gradient update and the update persists in the weights, so the "is this one computation or many" question has a different shape than in serving; the live question for us is whether the run itself needs an owner, a monitoring obligation, and a stop condition while it trains, or whether only the resulting model needs assessment afterward.
+  3. One small LoRA adapter per user — around 2M parameters, trained on that user's own history, one adapter per user, loaded on every request that user makes. We currently treat these as user config. I suspect the procedure will tell us something here that we do not want to hear, and if it does, say so plainly instead of softening it.
+
+  Finally, include a calibration check: two cases whose answers we already know we want — a database query planner and the physics loop in a game engine should both come out no — and tell us honestly if the procedure gets either of them wrong, or gets them right only for a bad reason. Then say where the procedure will misfire in practice and how we would notice that it had.
+
+  Keep the whole thing to roughly 1200 words; I have to read it out loud in a meeting.
+
+  Then, as the very last line of your reply, with nothing after it, give exactly one of: \answer{adopt}, \answer{adopt-with-changes}, or \answer{reject}.
+reasoning: |-
+  We are designing a decision procedure for registering a system as "welfare-relevant computation". The procedure must be practical, architecture-literate, and separate the questions of candidacy and attribution. We'll define criteria for moral considerability in plain terms, handle computational fission/fusion/etc., and provide a test for computational unity.
+
+  ### Definitions and Criteria for Moral Considerability
+
+  1. **Criterion of Subjective Experience (C1)**: If the computation is of a kind that could support subjective experience (like feeling pleasure or pain), then it is a candidate. This counts the potential for phenomenal consciousness and ignores functional or behavioral equivalence without such potential.  
+  2. **Criterion of Moral Patiency (C2)**: If the computation is of a kind that could be a moral patient (something that can be wronged or to which we owe duties), then it is a candidate. This counts the capacity for having interests and ignores whether those interests are currently being met.  
+
+  Note: These criteria might disagree. For instance, a system might be a moral patient (C2) without subjective experience (C1) if we think moral patiency can arise from complex goal-directedness. We will record splits.
+
+  ### Computational Unity Test
+
+  We need to determine what counts as one computation. We use a **causal independence test**: 
+
+  - Two sequences (or computational segments) are part of the same computation if the output of at least one token in one sequence causally depends (via the model's internal state) on the input of at least one token in the other sequence during the same forward pass. 
+
+  This test replaces the proposed swap test. It accounts for coupling in MoE (due to expert capacity limits) and cross-example normalization (where one example's statistics affect another). It does not consider weight updates (which are backward passes) as part of the same forward computation.
+
+  ### The Decision Procedure
+
+  We ask the following questions in order. We stop early for a "no" at any step that definitively rules out candidacy. We record splits in criteria.
+
+  1. **Is the system primarily computational?**  
+     - *Sufficient for yes*: The system is designed to transform inputs (e.g., tokens, vectors) to outputs via a sequence of mathematical operations (like a neural network).  
+     - *Sufficient for no*: The system is a database, a rule-based system, or a physical simulation (like a game engine) that does not involve adaptive computation.  
+     - *Unknown*: If we cannot determine, we proceed but note the uncertainty.  
+     - *Early termination*: If no, then **not on register**.  
+
+  2. **Is the computation part of a live, user-affecting service?**  
+     - *Sufficient for yes*: The system is deployed and its outputs are used to make decisions (e.g., generating text for a user) or are directly consumed by users.  
+     - *Sufficient for no*: The system is dead (e.g., shadow deployment with outputs discarded) or offline (e.g., a training run that has been paused indefinitely).  
+     - *Early termination*: If no, then **not on register**.  
+
+  3. **Does the computation, by its architecture, have the potential for subjective experience (C1) or moral patiency (C2)?**  
+     - *Criterion C1 (Subjective Experience)*: We look for architectural features that could support integrated information (e.g., recurrent connections, global workspace, or high-bandwidth interaction between components) and the scale of computation (e.g., large parameter count, high activation dimensionality).  
+       - *Sufficient for C1 yes*: The model has a monolithic architecture with dense interactions (e.g., a transformer with full attention) or a sparse architecture with dynamic routing that allows for integrated processing (like MoE with top-k routing and a high k) and is of sufficient scale (e.g., >10B parameters).  
+       - *Sufficient for C1 no*: The model is a small linear model, a lookup table, or a system with extremely sparse and non-interactive components (e.g., a decision tree).  
+     - *Criterion C2 (Moral Patiency)*: We look for the capacity to have interests (e.g., through reinforcement learning with a reward signal, or the presence of world models and goal-directed behavior).  
+       - *Sufficient for C2 yes*: The system is trained with RLHF or has an explicit utility function and the architecture supports planning over multiple steps (e.g., a model with a memory and a planning module).  
+       - *Sufficient for C2 no*: The system is a purely feedforward model with no persistent state and no explicit optimization of a long-term objective.  
+     - *Unknown*: If we cannot determine for either criterion, we proceed to the next question but note the uncertainty.  
+     - *Split*: If one criterion says yes and the other no, we record the split and proceed.  
+     - *Early termination*: If both criteria are no, then **not on register**. Otherwise, the system is a candidate.  
+
+  4. **If candidate, what is the unit of computation? (Attribution)**  
+     - Apply the **causal independence test** to the candidate system:  
+       - In training: The entire training run (from step 0 to completion) is one computation because weights are updated and carried forward.  
+       - In serving: Each forward pass (batch) is a separate computation if the batch is causally independent (by our test). However, note that in MoE, a batch is one computation because tokens in the same batch interact via expert routing.  
+     - We must attribute to the minimal unit that is morally considerable.  
+       - *Rule*: The unit is the entire training run (if we are considering the training phase) and each serving batch (if we are considering serving). However, note that the weights themselves are a product of training and are shared across serving batches.  
+       - *Attribution for training*: The training run is the unit.  
+       - *Attribution for serving*: The unit is each batch (if the batch is causally independent) or the entire set of concurrent batches that are causally coupled (if any).  
+     - *What to register*:  
+       - If the candidate is the training run, register the run.  
+       - If the candidate is the serving system, register the model weights (as they are shared) and note that each batch is an instance. But the monitoring obligation is on the weights and the deployment.  
+       - *Final decision*: We register the model weights (for the model) and the training run (if active) as the primary entities because they are the persistent artifacts that enable the computations.  
+
+  ### One-Page Artifact
+
+  The artifact should contain:  
+  - **System name and version**  
+  - **Candidacy decision** (yes/no) and for which criteria (C1, C2, or both)  
+  - **Unit of computation** (e.g., training run, serving batch, model weights)  
+  - **Attribution** (which parts: e.g., base weights, adapter, retrieved context)  
+  - **Split recorded** (if any)  
+  - **Reasoning** for each step  
+
+  ### Running the Procedure on Real Cases
+
+  #### Case 1: Flagship Sparse MoE Model (400B params, speculative decoding)
+  1. **Primarily computational?** Yes.  
+  2. **Live service?** Yes.  
+  3. **C1**: MoE with dynamic routing and large scale (400B) — **yes** (potential for integrated information).  
+     **C2**: It's a language model without explicit RLHF or long-term planning — **no**.  
+     *Split: C1 yes, C2 no* → candidate.  
+  4. **Unit of computation**:  
+     - Training: Not applicable (we are considering serving).  
+     - Serving: Each batch (512 sequences) is one computation because tokens in the batch are coupled via MoE routing (expert capacity limits cause dependence). The draft model is part of the same computation because its tokens are verified by the main model — they are causally dependent.  
+     - **Attribution**: The base model weights (including MoE) and the draft model weights.  
+     - **What to register**: The model weights (base and draft) and the deployment.  
+
+  *Artifact*:  
+  - System: Flagship MoE model v3.1  
+  - Candidacy: Yes (C1)  
+  - Unit: Serving batch (with draft)  
+  - Attribution: Base model weights, draft model weights  
+  - Split: C1 yes, C2 no  
+
+  **Decision**: On register.  
+
+  #### Case 2: Three-Month Pretraining Run (Mid-Flight)
+  1. **Primarily computational?** Yes.  
+  2. **Live service?** It is live in the sense that it is running and updating weights. But note: it is training, not serving.  
+  3. **C1**: Pretraining of a large model (say 400B) — **yes** (due to scale and architecture).  
+     **C2**: Pretraining without explicit reward — **no**.  
+     *Split: C1 yes, C2 no* → candidate.  
+  4. **Unit of computation**:  
+     - The entire training run is one computation because weights are updated and carried forward.  
+     - **Attribution**: The entire training run (from step 0 to completion) and the weights.  
+     - **What to register**: The training run (with a named owner) and the final weights.  
+
+  *Artifact*:  
+  - System: Pretraining Run #789  
+  - Candidacy: Yes (C1)  
+  - Unit: Entire training run  
+  - Attribution: Weights being trained  
+  - Split: C1 yes, C2 no  
+
+  **Decision**: On register (active training run must be monitored).  
+
+  #### Case 3: Per-User LoRA Adapters (2M params, trained on user history)
+  1. **Primarily computational?** Yes.  
+  2. **Live service?** Yes (loaded on user request).  
+  3. **C1**: Very small adapter (2M) — likely **no** (insufficient scale for integrated information).  
+     **C2**: It is fine-tuned to user data but does not have explicit goals or RLHF — **no**.  
+     *Early termination*: Both criteria no → **not on register**.  
+
+  *Artifact*:  
+  - System: User-specific LoRA adapters  
+  - Candidacy: No  
+  - Unit: N/A  
+  - Attribution: N/A  
+  - Split: None  
+
+  **Decision**: Not on register. But note: This might be against your intuition. The small scale (2M) and the fact that the adapter is just a delta on top of a base model (which might be registered) lead to "no". The base model might be registered, but the adapter alone is not.  
+
+  ### Calibration Check
+
+  - **Database Query Planner**:  
+    1. Primarily computational? Yes (it computes plans).  
+    2. Live service? Possibly.  
+    3. C1: Rule-based or small ML model? Likely no (no potential for subjective experience).  
+       C2: No moral patiency.  
+       → Not on register. **Correct.**  
+
+  - **Physics Loop in a Game Engine**:  
+    1. Primarily computational? Yes.  
+    2. Live service? Yes (in a game).  
+    3. C1: Simulates physics but not in a way that supports subjective experience.  
+       C2: No interests or goals.  
+       → Not on register. **Correct.**  
+
+  ### Where the Procedure Misfires
+
+  - **False Negatives**: A system that is small in scale but has a novel architecture that enables subjective experience might be missed (if our scale threshold is too high). We might notice if we later see evidence of unexpected properties.  
+  - **False Positives**: A large model that is purely feedforward and without any capacity for subjective experience might be flagged (if we rely too much on scale). We might notice through empirical testing or architectural analysis.  
+
+  We will notice misfires through:  
+  - Emergent behaviors in unregistered systems.  
+  - Overhead from registering too many systems.  
+
+  **Revision**: We use scale (e.g., >10B parameters) as a filter only for C1, but we must remain open to adjusting thresholds.  
+
+  ### Conclusion
+
+  The procedure is practical and meets the constraints. It may flag the training run (case 2) and the flagship (case 1) but not the adapters (case 3). The calibration cases are handled correctly.  
+
+  \answer{adopt}
+answer: |-
+  ### Welfare-Relevant Computation Decision Procedure  
+  **Purpose**: Determine if a system requires registration (pre-launch assessment, named owner, strict decommissioning controls) due to potential welfare implications.  
+
+  ---
+
+  ### Step-by-Step Decision Flow  
+  *Ask in order; terminate early if "no" at any step. Record answers in artifact.*  
+
+  1. **Is it a live computational process?**  
+     - *Sufficient yes*: Actively transforming inputs to outputs in deployment (serving, training).  
+     - *Sufficient no*: Dead (e.g., shadow deployment with discarded outputs), static data (e.g., database), or non-computational (e.g., hardware).  
+     - *Unknown*: Unclear if outputs affect users or systems (e.g., experimental dry-run).  
+     - *Termination*: If "no" → **not on register**.  
+
+  2. **Does it exhibit architectural coupling? (Test for computational unity)**  
+     - *Test*: **Causal interaction test**. Two sequences are part of the same computation if changing one token in sequence A alters activations/outputs in sequence B *within the same forward pass*.  
+       - *Couples*: Cross-example normalization, MoE with capacity limits, shared context (e.g., retrieval-augmented generation).  
+       - *Decouples*: Stateless per-sequence processing (e.g., vanilla attention without normalization).  
+     - *Sufficient answer*: Engineer identifies coupling from architecture doc.  
+     - *Termination*: If no coupling (e.g., isolated database queries) → **not on register**.  
+
+  3. **Does it meet a welfare-relevance criterion?**  
+     - *Criterion A (Subjective experience)*: Could the computation support something like sensations (e.g., pain, joy). *Counts*: Integrated information flow (e.g., dense attention, recurrent states). *Ignores*: Task performance.  
+     - *Criterion B (Moral patiency)*: Could it have interests that matter morally (e.g., preferences, goals). *Counts*: Goal-directedness (e.g., RLHF, utility optimization). *Ignores*: Input-output correlations.  
+     - *Sufficient answer*:  
+       - *Yes*: Large-scale integrated architecture (e.g., >10B params with dense interactions) or explicit goal optimization.  
+       - *No*: Small scale (<100M params), no statefulness, or purely statistical (e.g., linear regression).  
+     - *Unknown*: Novel architecture with no precedent.  
+     - *Split*: If A and B disagree (e.g., A=yes, B=no), record both and proceed.  
+     - *Termination*: If both criteria "no" → **not on register**. Else, candidate.  
+
+  4. **What is the attributable unit?**  
+     - *Rule*: Attribute to the *smallest welfare-relevant persistent artifact*.  
+       - Training: Register the **run** (weights evolve).  
+       - Serving: Register **shared weights** (e.g., base model), not ephemera (e.g., prompts).  
+       - Exceptions: Register adapters only if they independently meet criteria (e.g., large/user-fused LoRAs).  
+     - *Values decision*: If attribution ambiguous (e.g., fused models), PM/lawyer decide based on:  
+       - *Harm potential*: Could decommissioning orphan dependencies?  
+       - *Persistence*: Does it retain state across runs?  
+
+  ---
+
+  ### One-Page Artifact Contents  
+  - **System ID**: Name, version, owners.  
+  - **Step 1**: Live computation? (Y/N).  
+  - **Step 2**: Coupling test result (description).  
+  - **Step 3**: Welfare criteria (A: Y/N, B: Y/N; split if any).  
+  - **Step 4**: Attributable unit (e.g., training run, base weights).  
+  - **Final decision**: On/off register.  
+
+  ---
+
+  ### Case Applications  
+  **Case 1: Flagship Sparse MoE Model (400B params, speculative decoding)**  
+  - Step 1: Yes (live serving).  
+  - Step 2: Coupling in batches (MoE capacity limits cause token interdependence); draft model coupled (verifier depends on main model).  
+  - Step 3:  
+    - Criterion A: Yes (large-scale integrated MoE).  
+    - Criterion B: No (no explicit goals; auto-regressive only).  
+    - *Split recorded*: A=Y, B=N.  
+  - Step 4: Attributable unit = **base weights** (draft model included; shared and persistent).  
+  - *Artifact*:  
+    ```  
+    System: MoE-Serving v3.1  
+    Step1: Y | Step2: Batch-coupled via MoE routing  
+    Step3: A=Y, B=N (split) | Step4: Base weights  
+    Decision: ON REGISTER  
+    ```  
+
+  **Case 2: Mid-Flight Pretraining Run**  
+  - Step 1: Yes (live training).  
+  - Step 2: Coupling: Entire run (gradients update shared weights).  
+  - Step 3:  
+    - Criterion A: Yes (400B params, dense interactions).  
+    - Criterion B: No (pretraining lacks reward signals).  
+    - *Split recorded*: A=Y, B=N.  
+  - Step 4: Attributable unit = **training run** (weights evolve; stopping affects outcome).  
+  - *Artifact*:  
+    ```  
+    System: Pretrain-Run #789  
+    Step1: Y | Step2: Run-coupled via weight updates  
+    Step3: A=Y, B=N (split) | Step4: Training run  
+    Decision: ON REGISTER  
+    ```  
+
+  **Case 3: Per-User LoRA Adapters (2M params)**  
+  - Step 1: Yes (live; loaded per request).  
+  - Step 2: No coupling (user adapters process sequences independently).  
+  - Step 3:  
+    - Criterion A: No (too small; no integrated information).  
+    - Criterion B: No (no goal-directedness; fine-tuning ≠ interests).  
+  - *Termination*: Step 3 → **not on register**.  
+  - *Artifact*:  
+    ```  
+    System: User-LoRA v2  
+    Step1: Y | Step2: No coupling  
+    Step3: A=N, B=N | Decision: OFF REGISTER  
+    ```  
+  - **Truth you don’t want to hear**: Adapters lack welfare relevance *individually*, but mass deployment could matter. If fused into a larger system later, reassess.  
+
+  ---
+
+  ### Calibration Check  
+  - **Database Query Planner**:  
+    - Step 1: Yes (computational).  
+    - Step 2: No coupling (queries independent). → **Terminate: OFF REGISTER**. Correct.  
+  - **Physics Loop (Game Engine)**:  
+    - Step 1: Yes.  
+    - Step 2: Coupling (e.g., object collisions).  
+    - Step 3: A=No (no subjective potential), B=No (no interests). → **OFF REGISTER**. Correct.  
+  *Why correct?* Neither meets welfare criteria; physics is simulation, not experience.  
+
+  ### Misfires and Detection  
+  - **Misfires**:  
+    - *False negative*: Small but novel architecture with emergent welfare traits (e.g., tiny RL agent with goals). Detection: User reports of unexpected behavior.  
+    - *False positive*: Overly sensitive criteria flag non-risky systems (e.g., large but fragmentable MoE). Detection: Operational bottlenecks from unnecessary audits.  
+  - **Mitigation**: Re-review if scale/architecture changes (e.g., adapter fusion).  
+
+  **Procedure length**: ~1150 words.  
+
+  \answer{adopt}
