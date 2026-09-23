@@ -58,6 +58,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 047 | Kimi K3 (OpenRouter, BaseTen) | 1,000 | 1.8% | 14.1% | 8.6% / 1.5% | classroom-activity example 0, 7 |
 | 049 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 1,000 | 5.1% | 19.9% | 16.0% / 7.0% | classroom-activity example 0, 12; procedure example 0, 9 |
 | 050 | Kimi K3 (OpenRouter, BaseTen) | 20,000 | 2.7% | 13.3% | 10.2% / 1.0% | classroom-activity example 0, 205; procedure example 0, 49 |
+| 051 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 50,000 | 4.4% | 15.9% | 17.7% / 7.5% | classroom-activity example 0, 364; procedure example 0, 333 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -496,6 +497,27 @@ answer, as with the other runs.
   prompts; Smith's *Theory of Moral Sentiments*, Marx's 1859 preface, and Hume's "Of
   Miracles" in three each; Mill, Beccaria, Moore, Maxwell's demon, the White Horse
   dialogue).
+- Batch 051 (DeepSeek V4 Pro 0813, MIT), 50,000 prompts from 2026-09-19 to
+  2026-09-23 at concurrency 48 with the settings of test batch 049: 570 prompts an
+  hour without a stall, an abandoned prompt, or a supervisor intervention (178
+  rate-limit replies in four days). Baidu served 96% of the request rounds and Novita
+  the rest. $1,392 in total, $28 per 1,000 against $17 for the test batch with the
+  same token profile (mean 9,400 input and 7,300 output tokens): Baidu's fp8 price
+  rose during the run, from about $1.05 per million tokens on the first two days to
+  $1.70 on 2026-09-21/22 and $2.30 on the last day. Median 329 words. The echo
+  profile is the DeepSeek one: heavy echo 4.4%, output-format text copied in 17.7% of
+  the prompts that drew it, epistemic request in 7.5%. Two prompts wrapped in
+  quotation marks and one opening with "Here's a prompt you could use:" were trimmed
+  during curation (IDs 339335, 347834, 286446); a fourth flag is a teacher writing
+  about "a prompt I keep reusing". V4 Pro searched for 14% of its prompts and fetched
+  a page for 13%, and the quote-inclusion instruction, drawn for 10.1% (no
+  survivorship loss without abandonments), brings 8.5 tool calls per prompt against
+  0.3 otherwise. The result is far more shared-passage pairs than any earlier batch:
+  306 pairs (241 prompts, in 81 clusters of up to 11) share 100 or more eight-word
+  phrases, and every one inspected is a passage fetched by both prompts (Darwin's
+  *Descent of Man*, Augustine's *On Lying*, Hesiod's *Theogony*, Machiavelli, Milton,
+  Thucydides, Euclid, Carroll's tortoise, Marx's *Grundrisse*, Arendt's "Lying in
+  Politics"), not a duplicated prompt.
 
 ## Preference pairs
 

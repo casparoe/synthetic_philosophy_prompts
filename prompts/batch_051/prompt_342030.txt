@@ -1,0 +1,21 @@
+You are an expert on inference to the best explanation, with practical knowledge of how production software systems fail and how engineering postmortems are actually written. Think carefully before you answer: begin by working through the case in a few paragraphs of brainstorming, noting where your first instincts may be unreliable, and only then commit to a position.
+
+I am a backend engineer without formal philosophy training, and I have been trying to understand when a conclusion I reach in an incident review really counts as "inference to the best explanation." Here is the criterion set I have cobbled together from my reading. A good explanation is often said to be one that:
+
+- has explanatory scope: it accounts for more of the observed data, including awkward details;
+- is simple or parsimonious: it introduces fewer independent assumptions, special cases, or entities;
+- has causal specificity: it names a concrete mechanism rather than gesturing at a vague interaction;
+- fits background knowledge: it coheres with what we already know about this kind of system;
+- has predictive novelty or unifying power: it would explain or predict facts that were not used in building it in the first place.
+
+Now here is the borderline case.
+
+A small company runs a stateless web service behind a load balancer. On Wednesday at 14:02 the service begins returning intermittent 5xx errors and high tail latency. The errors stop at 14:16, immediately after an automatic rollback of a deploy that went out at 13:58. The new version added a feature that opens a connection to a database cache on certain request paths. The on-call logs show repeated "connection pool exhausted" errors beginning at 14:02, and the rollback restores the old code, after which the errors vanish.
+
+Candidate A, the connection-leak explanation: the new code path opens database connections and fails to return them in one rarely hit branch, so the pool drains and requests queue up and time out. This explains the timing and the pool-exhausted errors. But nobody can find the leak in code review; the affected branch is never confirmed to have executed; the connection-count telemetry is sampled too coarsely to prove the pool actually drained; and a set of trace IDs that produced errors during the window includes only requests that never touched the new endpoint.
+
+Candidate B, the interaction explanation: the deploy increased baseline connection churn enough to make the pool fragile, but the actual failure required an overlap with a cache-rebuild job that started early at 14:01 plus a race condition in the pool's idle-connection reaper that had been dormant for years. This accounts for the trace IDs not touching the new endpoint, the narrow timing, and the pool-exhausted errors. But it postulates three independent things (the early job, the race condition, the elevated churn) instead of one, and the race cannot be reproduced or directly observed in the logs. Both candidates are compatible with the rollback stopping the incident: A because the leak went away, B because reduced churn moved the system back below the threshold.
+
+The engineering manager writes the postmortem and names Candidate A as the root cause, with a one-line note that more elaborate accounts were considered but simplicity matters.
+
+Go through the criteria one by one and say honestly whether Candidate A or Candidate B scores better on each. Then address the following: is the team's choice of A over B an instance of inference to the best explanation, or is it closer to something else, such as betting on the simpler story because it is easier to act on, avoiding an explanation that looks overfit to noise, or making a hidden cost-benefit decision? Where the criteria underdetermine the choice, say whether that shows the criteria themselves need refinement. In particular, should simplicity be allowed to outweigh worse fit with some of the data, or should simplicity only break ties after explanatory scope and causal specificity have done their work? Finally, give a clear verdict: does this case qualify as inference to the best explanation, and if so, what did "best" mean here in practice? Do not cite external sources; evaluate the case directly from the details given.

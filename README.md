@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 280,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 330,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -110,6 +110,7 @@ fetching available for fact-checking and verbatim quotation.
 | 047 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host; the model is trained in MXFP4); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 14 prompts abandoned under rate limiting and regenerated with `--continue-batch`; client-executed web tools (DuckDuckGo search + page fetch) |
 | 049 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 1,000-prompt test batch; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; client-executed web tools (DuckDuckGo search + page fetch) |
 | 050 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host); 20,000 prompts; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 778 prompts abandoned under rate limiting and regenerated with `--continue-batch` in three passes; client-executed web tools (DuckDuckGo search + page fetch) |
+| 051 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 50,000 prompts; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; no prompt abandoned in four days; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -338,8 +339,8 @@ proprietary Meta model accessed through the standard tier of the
 [Meta Model API](https://developer.meta.com/ai/products/meta-model-api/) via
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
-032–033 with DeepSeek V4 Pro, batch 049 with DeepSeek V4 Pro 0813, and batches 039 and
-041 with DeepSeek V4.1 Flash, open-weights models released under the MIT license, batches 042, 044, and 046 with Thinking
+032–033 with DeepSeek V4 Pro, batches 049 and 051 with DeepSeek V4 Pro 0813, and batches
+039 and 041 with DeepSeek V4.1 Flash, open-weights models released under the MIT license, batches 042, 044, and 046 with Thinking
 Machines' Inkling and batches 043 and 045 with Tencent's HY4 preview, both open-weights
 models released under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
