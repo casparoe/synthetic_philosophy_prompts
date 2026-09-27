@@ -82,18 +82,42 @@ def next_output_path(batch_dir, first_id=1):
     is being generated on another machine at the same time). Generators on
     the same machine, even into different batches, are serialized by a lock
     file, and the claimed file is created empty here, so no two of them can
-    take the same number; the caller writes the text right after."""
+    take the same number; the caller writes the text right after.
+
+    The next free ID is cached in prompts/.next_id: listing the hundreds of
+    thousands of prompt files took seconds per claim under the lock, which
+    capped all generators on the machine together at a few hundred prompts
+    an hour. The cache is rebuilt from a full listing when it is missing or
+    unreadable; a number it proposes is checked against every batch directory
+    (a stat per directory, immune to the enumeration gaps that once let two
+    generators take the same number), and taken numbers are skipped."""
+    counter = PROMPTS_DIR / ".next_id"
     with open(PROMPTS_DIR / ".numbering.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        indices = [
-            int(m.group(1))
-            for p in PROMPTS_DIR.glob("**/prompt_*.txt")
-            if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
-        ]
-        path = batch_dir / f"prompt_{max(max(indices, default=0) + 1, first_id):05d}.txt"
+        try:
+            candidate = int(counter.read_text().strip())
+        except (OSError, ValueError):
+            candidate = _scan_next_id()
+        batch_dirs = list(PROMPTS_DIR.glob("batch_*"))
+        chosen = max(candidate, first_id)
+        while any((d / f"prompt_{chosen:05d}.txt").exists() for d in batch_dirs):
+            chosen += 1  # the counter had fallen behind: walk up to a free number
+        path = batch_dir / f"prompt_{chosen:05d}.txt"
         path.touch(exist_ok=False)
+        counter.write_text(f"{chosen + 1}\n")
         fcntl.flock(lock, fcntl.LOCK_UN)
     return path
+
+
+def _scan_next_id():
+    """One past the highest prompt ID anywhere under prompts/, by listing
+    every prompt file (slow; used only to seed or repair the cached counter)."""
+    indices = [
+        int(m.group(1))
+        for p in PROMPTS_DIR.glob("**/prompt_*.txt")
+        if (m := re.fullmatch(r"prompt_(\d+)\.txt", p.name))
+    ]
+    return max(indices, default=0) + 1
 
 
 def extract_output(assistant_blocks):
