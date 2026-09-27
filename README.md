@@ -1,11 +1,11 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 330,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 380,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of sixty-six genres
+retired physicist, a novelist, a committee member, ...) in one of sixty-eight genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 rankings, ...).
@@ -16,6 +16,17 @@ without web access. Alongside the prompts, `responses/` collects responses to
 subsets of them from open-weight models, each with the model's full chain of
 thought (see [Responses](#responses)), and `preferences/` collects pairwise judgments
 of such responses by a strong model (see [Preference pairs](#preference-pairs)).
+
+**Where the data lives.** Since 2026-09-26 the dataset is published on the Hugging Face Hub as
+[casparoe/synthetic_philosophy_prompts](https://huggingface.co/datasets/casparoe/synthetic_philosophy_prompts):
+one Parquet shard per prompt batch, response run, and preference run, with the same fields as
+the files described below (the dataset card gives the mapping). New batches and runs are added
+there only. This repository keeps the code, the meta-prompt, and this documentation up to date,
+and holds the data in its one-file-per-prompt form as of September 2026 (prompts through batch
+050, responses through run 019, preference runs 000 and 001); the tables and notes here and in
+`QUALITY_NOTES.md` describe the whole dataset, including the batches and runs that exist only on
+the Hub. `tools/export_hf.py` builds the shards from this layout, `tools/make_hf_card.py` the
+dataset card, and `tools/upload_hf.py` uploads them.
 
 ## Layout
 
@@ -41,8 +52,8 @@ preferences/
 meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
-  domains.txt             1,674 philosophical domains sampled from
-  task_types.yaml         66 prompt genres, with examples and notes
+  domains.txt             1,766 philosophical domains sampled from
+  task_types.yaml         68 prompt genres, with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
                           mutually exclusive groups, each drawn with a set probability
@@ -108,9 +119,11 @@ fetching available for fact-checking and verbatim quotation.
 | 045 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 20,000 prompts, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
 | 046 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded); 100,000 prompts over five days at concurrency 48; 590 prompts abandoned under rate limiting and regenerated with `--continue-batch`; the first whole batch run with the example subsetting described below; client-executed web tools (DuckDuckGo search + page fetch) |
 | 047 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host; the model is trained in MXFP4); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 14 prompts abandoned under rate limiting and regenerated with `--continue-batch`; client-executed web tools (DuckDuckGo search + page fetch) |
+| 048 | Qwen3.8 2.4T-A95B | OpenRouter, fp8 provider only (SiliconFlow); 50,000 prompts over seven days at concurrency 48 with the settings of batch 038; two prompts abandoned and replaced; the first Qwen 2.4T batch with the quote-inclusion instruction; client-executed web tools (DuckDuckGo search + page fetch) |
 | 049 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 1,000-prompt test batch; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; client-executed web tools (DuckDuckGo search + page fetch) |
 | 050 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host); 20,000 prompts; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 778 prompts abandoned under rate limiting and regenerated with `--continue-batch` in three passes; client-executed web tools (DuckDuckGo search + page fetch) |
 | 051 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 50,000 prompts; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; no prompt abandoned in four days; client-executed web tools (DuckDuckGo search + page fetch) |
+| 053 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers load-balanced (Xiaomi, DeepInfra; the model is released in FP8); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 from the model card, reasoning effort high; client-executed web tools (DuckDuckGo search + page fetch) |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -183,9 +196,12 @@ Runs so far:
 | run_013 | DeepSeek R1 0528 (MIT) | `batch_041` | 39,944 | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; 1 truncated |
 | run_014 | DeepSeek R1 0528 (MIT) | `r1_gap` | 14,298 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
 | run_015 | Qwen3.5-397B-A17B (Apache 2.0) | `qwen397b_gap` | 98,298 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 57 truncated |
+| run_016 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_046` | 200,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: AtlasCloud, DeepInfra, GMICloud, Parasail; two independent samples per prompt; 141 truncated |
 | run_017 | DeepSeek R1 0528 (MIT) | `batch_045` | 40,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
 | run_018 | DeepSeek R1 0528 (MIT) | `batches_042-044_047_049` | 48,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
 | run_019 | Qwen3.5-397B-A17B (Apache 2.0) | `batches_047_049` | 4,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, Parasail, GMICloud; two independent samples per prompt; 7 truncated |
+| run_023 | DeepSeek R1 0528 (MIT) | `batch_053` | 2,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt |
+| run_024 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_053` | 2,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -219,6 +235,13 @@ run 000 response) have two.
 Set `batches_047_049` lists the 2,000 prompts of the test batches 047 and 049; run 019
 answered them twice with Qwen3.5-397B-A17B, so the same holds for batches 000–045, 047,
 and 049.
+Set `batch_046` lists the 100,000 prompts of batch 046; run 016 answered them twice with
+Qwen3.5-397B-A17B while the batch was still being generated (the queue refreshed the set
+as prompts arrived), so every prompt of batches 000–047 and 049 has a Qwen3.5-397B-A17B
+response, and all but the prompts of batches 033, 035, 038, and 041 and the `open_1k`
+prompts have two.
+Set `batch_053` lists the 1,000 prompts of the MiMo-V2.6-Pro test batch; runs 023 and 024
+answered them twice each with R1 and with Qwen3.5-397B-A17B.
 
 **Imported runs.** The two runs whose directory names end in `_imported` were not
 produced by `generate_responses.py`. They are the teacher-data collections of the
@@ -340,12 +363,13 @@ proprietary Meta model accessed through the standard tier of the
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
 032–033 with DeepSeek V4 Pro, batches 049 and 051 with DeepSeek V4 Pro 0813, and batches
-039 and 041 with DeepSeek V4.1 Flash, open-weights models released under the MIT license, batches 042, 044, and 046 with Thinking
+039 and 041 with DeepSeek V4.1 Flash, and batch 053 with Xiaomi's MiMo-V2.6-Pro, open-weights
+models released under the MIT license, batches 042, 044, and 046 with Thinking
 Machines' Inkling and batches 043 and 045 with Tencent's HY4 preview, both open-weights
 models released under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
 above $10 billion in annual revenue; it places no restrictions on the use of
-outputs). Batches 036 and 038 were generated with Qwen3.8 2.4T-A95B, an open-weights model
+outputs). Batches 036, 038, and 048 were generated with Qwen3.8 2.4T-A95B, an open-weights model
 released under the Qwen3.8-Max License (MIT terms plus an attribution requirement
 for products above 100 million monthly users or $20 million in monthly revenue, and
 a separate-license requirement for model-as-a-service businesses above $50 million
