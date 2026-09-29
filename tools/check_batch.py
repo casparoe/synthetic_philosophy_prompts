@@ -28,11 +28,39 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "meta_prompt"))
 
 WORD = re.compile(r"[a-z0-9']+")
-MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|arg_value|arg_key|</invoke>|<function_calls?>|<\|im_start\||</?think>")
+MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|arg_value|arg_key|</invoke>|<function_calls?>|<\|im_start\||</?think[>:\s]")
 PREAMBLE = re.compile(r"^(here is (the|your|my|a) prompt|here's (the|your|my|a) prompt|this looks good|this is my final"
                       r"|i'll rely on|i will rely on|(sure|okay|ok)[,!] here('s| is) (the|your|a) prompt|certainly[,!] here)", re.I)
 META = re.compile(r"dataset of (philosoph[a-z]* )?prompts|prompt for (the|this|your) dataset"
-                  r"|prompts? (on|about) philosophical (topics|issues)|building a dataset of|constructing a dataset", re.I)
+                  r"|prompts? (on|about) philosophical (topics|issues)|building a dataset of|constructing a dataset"
+                  # the asker saying what the prompt is for, or relaying the meta-prompt's
+                  # instructions about the prompt ("Write the prompt in a formal register",
+                  # "The asker should not signal ..."), seen at scale in batches 044 and 046
+                  r"|\b(?:this is |is )?for (?:a|my|the|this|your) dataset\b|\bthe asker should\b"
+                  r"|\bwrite the prompt (?:in|as|from)\b|\bthe prompt should be (?:formal|casual|written|polished|in the)\b", re.I)
+
+# Generator vocabulary that has no place in a user's prompt: the model talking about
+# producing "the prompt" / its "final answer", the meta-prompt's own wording quoted back,
+# or a thinking block that leaked. Seen with DeepSeek V4 Pro (batches 051, 052), V4.1
+# Flash (041) and Tencent HY4 (054, "</think:opensource>"), often with the real prompt
+# glued directly onto the last word of the deliberation ("Let me outputSome people ...").
+LEAK_VOCAB_RE = re.compile(
+    r"\A\s*```|\bassistant reasoning\b|</?think\b|\bprompt text only\b|\b(?:here is|here'?s) the final prompt\b|\bComposing the final prompt\b"
+    r"|\b(?:output|produce|write) (?:the |just the |only the )?final prompt\b|\bJust output (?:the )?prompt\b"
+    r"|\bI'?ll (?:just |now )?output\b|\bLet me output\b|(?-i:Output now)(?=[A-Z.:])|(?-i:Now output)(?=[A-Z.:])|(?-i:Now final)(?:\.|\s+(?:answer|output|prompt|must))|\bFinal prompt text:"
+    r"|\bLet'?s (?:finalize|finalise|produce final)\b|\bLet me (?:produce|craft|write) (?:the )?final (?:prompt|version|answer|text|clean)\b|\bThis is final\b|\bOk,? final\b|\bI'?ll finali[sz]e\b"
+    r"|\breasoning tokens,? (?:please )?reply\b|\bThe user wants a prompt\b|\bthe meta-prompt\b|\bhidden conversation\b"
+    r"|\bfinal answer (?:with|only|:)\s*(?:the |just the |only the )?prompt\b"
+    r"|\bno preamble like\b|\bthe type is\b.{0,40}\bthe domain is\b|\bDomain\s*=.{0,80}\bType\s*="
+    # a preamble sentence or a process note ending in "here is the prompt:" on its own line
+    r"|\A.{0,600}?\bhere(?: is|'s) the (?:final )?prompt(?: text)?:[ \t]*\n"
+    r"|\bOutput the prompt only\b|\bPolish wording\b|\bLength is reasonable\b"
+    r"|\bthe (?:text|page|source) I fetched\b|\ba domain and a (?:prompt )?type\b|\bwhether you want only the prompt text\b"
+    r"|\bSorry, I can'?t\b.{0,40}\bprompt\b|\bthe final should be (?:just )?the prompt\b|\bLet me ensure no\b|\bprovide (?:the )?final answer now\b"
+    r"|\bNo quotation marks used\b|\bType: [^\n]{0,80}\bDomain: |\bDomain: [^\n]{0,80}\bType: ",
+    re.I | re.S,
+)
+GLUE_RE = re.compile(r"\b(?:final|output|text|prompt|it|only|now|this|version|answer)(?=[A-Z][a-z]{2,})")
 MIN_WORDS = 40
 
 # A note on the generator's own procedure placed before the prompt; kept in
@@ -69,7 +97,7 @@ DELIBERATION_HEAD_RE = re.compile(
     r"|I'll (?:pick|go with|draft|write the prompt|write it)\b"
     r"|I need to (?:pick|choose|decide|write (?:a |the )?(?:\w+ )?prompt)\b|The user wants\b|Options?:"
     r"|Domain\s*[=:]|Type\s*[=:]|\w+ type[,:] |Now,? let me|First,? let me|Final check|Good\."
-    r"|I'm thinking about which|That'?s (?:decent|good|fine)|[:;)\]\-\u2013\u2014,.])",
+    r"|I'm thinking about which|That'?s (?:decent|good|fine)|[:;)\]\-\u2013\u2014,.?!])",
     re.I,
 )
 SELF_REVIEW_RE = re.compile(
@@ -90,6 +118,13 @@ def leaked_deliberation(prompt_text):
     """Return a short reason if the text carries the model's deliberation, else None."""
     if DELIBERATION_HEAD_RE.match(prompt_text):
         return "deliberation or a fragment before the prompt"
+    m = LEAK_VOCAB_RE.search(prompt_text)
+    if m:
+        return f"generator vocabulary ({m.group(0)[:30]!r})"
+    for g in GLUE_RE.finditer(prompt_text):
+        # a deliberation word glued to a capitalised prompt start, shortly after generator talk
+        if re.search(r"\b(?:prompt|final|output|preamble|quotation marks|tools?)\b", prompt_text[max(0, g.start() - 200):g.start()], re.I):
+            return f"prompt glued to deliberation ({prompt_text[max(0, g.start() - 20):g.end() + 20]!r})"
     for m in PARAGRAPH_START_RE.finditer(prompt_text):
         if m.start(1) >= 150 and SELF_REVIEW_RE.match(m.group(1).strip()):
             return "self-review after the prompt"
@@ -185,8 +220,9 @@ def main():
     notes = [name for name, t in texts.items() if process_note(t)]
     print("process note before the prompt:", notes[:8] or "none")
     leaks = [name for name, t in texts.items() if leaked_deliberation(t)]
-    print("model deliberation before or after the prompt:", leaks[:8] or "none")
-    print("dataset-construction framing leaked:", flag(META)[:8] or "none")
+    print(f"model deliberation before or after the prompt: {len(leaks)}", leaks[:8] or "none")
+    framing = flag(META)
+    print(f"dataset-construction framing or relayed instructions: {len(framing)}", framing[:8] or "none")
     quoted = [name for name, t in texts.items() if t.strip().startswith(('"', "“")) and t.strip().endswith(('"', "”"))]
     print("wrapped in quotes / pure dialogue:", quoted[:5] or "none")
 

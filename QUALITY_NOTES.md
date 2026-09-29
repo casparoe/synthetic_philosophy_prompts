@@ -49,7 +49,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 038 | Qwen3.8 2.4T-A95B (OpenRouter) | 19,997 | 1.7% | 10.5% | 2.8% / 2.1% | classroom-activity example 0, 125; procedure example 0, 88 |
 | 039 | DeepSeek V4.1 Flash (OpenRouter) | 488 | 4.7% | 15.6% | 8.2% / 5.2% | classroom-activity example 0, 6; procedure example 0, 4 |
 | 040 | Qwen3.8-27B (local) | 442 | 10.4% | 32.4% | 9.8% / 11.3% | classroom-activity example 0, 7; procedure and adversarial-collaboration examples 0, 5 each |
-| 041 | DeepSeek V4.1 Flash (OpenRouter) | 39,944 | 4.4% | 16.7% | 7.6% / 5.2% | classroom-activity example 0, 377; procedure example 0, 350 |
+| 041 | DeepSeek V4.1 Flash (OpenRouter) | 39,942 | 4.4% | 16.7% | 7.6% / 5.2% | classroom-activity example 0, 377; procedure example 0, 350 |
 | 042 | Inkling (OpenRouter, BaseTen) | 1,000 | 2.5% | 11.2% | 14.1% / 3.0% | exam-question example 0, 3; what-would-count-against example 0, 3 |
 | 043 | HY4 preview (OpenRouter, Tencent) | 1,000 | 3.0% | 17.3% | 2.5% / 2.1% | procedure example 0, 10 |
 | 044 | Inkling (OpenRouter, BaseTen) | 20,000 | 1.6% | 9.8% | 10.6% / 3.1% | classroom-activity example 0, 43; exam-question example 0, 28 |
@@ -60,7 +60,9 @@ re-render from the batch's snapshot; those should simply be zero.
 | 049 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 1,000 | 5.1% | 19.9% | 16.0% / 7.0% | classroom-activity example 0, 12; procedure example 0, 9 |
 | 050 | Kimi K3 (OpenRouter, BaseTen) | 20,000 | 2.7% | 13.3% | 10.2% / 1.0% | classroom-activity example 0, 205; procedure example 0, 49 |
 | 051 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 50,000 | 4.4% | 15.9% | 17.7% / 7.5% | classroom-activity example 0, 364; procedure example 0, 333 |
+| 052 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 50,000 | 4.4% | 15.5% | 18.5% / 7.7% | classroom-activity example 0, 358; procedure example 0, 352 |
 | 053 | MiMo-V2.6-Pro (OpenRouter, Xiaomi and DeepInfra) | 1,000 | 4.8% | 18.9% | 6.8% / 7.7% | classroom-activity example 0, 10; procedure example 0, 7 |
+| 054 | HY4 preview (OpenRouter, Tencent) | 50,000 | 1.3% | 9.0% | 7.0% / 2.8% | classroom-activity example 0, 107; procedure example 0, 91 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -250,6 +252,67 @@ what here".
   rather than prompts (the earlier fixed one-minute pause lost 24 prompts of
   batch 041 in one twelve-minute outage).
 
+- Batch 054 (Tencent HY4 preview, Apache 2.0), 50,000 prompts from 2026-09-24 15:26
+  to 2026-09-29 02:24 PDT at concurrency 72 with a 64,000-token budget (Tencent and
+  Novita cap output there; a 65,536 budget had routed everything to the four times
+  slower SiliconFlow endpoint): about 470 prompts an hour on average, Tencent serving
+  97%, Novita most of the rest, SiliconFlow and DeepInfra a few hundred. It cost
+  $1,567.80, $31.36 per 1,000 (mean $0.031, median $0.020), the dearest generator so
+  far: 15,500 input and 8,100 output tokens per prompt at a blended $1.33 per million,
+  the input inflated by 1.25 searches and 1.03 fetches per prompt (34% of prompts
+  searched). The supervisor continued the batch three times after stalls (twice on
+  the first evening, once on 09-26) and once at the end to replace a removed file.
+  The generator retried 1,595 generations, none for rate limits and none abandoned:
+  347 read timeouts, 235 empty error finishes (152 from Tencent at no cost), 147
+  dropped connections, about 230 connect errors, 71 gateway timeouts, 29 empty or
+  truncated thinking, 13 content-filter finishes, and 9 over the budget. The
+  prompts are the longest of any batch with batch 048 (median 652 words, p90 986,
+  maximum 2,375 after curation) and include the first 50,000-prompt sample from the 1,674-domain
+  list. Example echo is low (heavy 1.3%, any 9.0%); the output-format instruction is
+  copied verbatim into 7.0% of prompts ("lead with your bottom line in the first
+  sentence" in 726) and the epistemic request into 2.8%. HY4 quotes fetched
+  public-domain passages readily: 368 pairs share 100 or more eight-word phrases
+  (Adam Smith's Theory of Moral Sentiments, Kant's second Critique on freedom, Mill on
+  the internal sanction of duty). Curation: the leak sweep of 09-28 trimmed nine
+  prompts whose HY4 thinking block had leaked before the prompt behind a
+  `</think:opensource>` tag and removed one file in which the model asked for the
+  domain and type it had not been shown (402053); the check at completion found two
+  more leaked thinking blocks (512155, 516267), one "OK, here's the prompt:" preamble
+  (517266), and one prompt with the generator's "Domain: ... Type: ..." labels inside
+  the asker's text (426562, sentence removed). Sixteen prompts frame themselves as
+  "another one for the dataset" and were left as they are.
+- Leak sweep (2026-09-28). A full-text scan of every prompt (batches 000-055, the
+  last two still generating) for the generator's own vocabulary ("prompt text only",
+  "Now final", "Let me output", "Here is the final prompt:", a `</think:opensource>`
+  tag, a code fence at the start) found 49 prompts that tools/check_batch.py had
+  passed. In most, the generator's planning ran straight into the real prompt, often
+  glued to its first word ("Now final answer should be prompt text only. Let me
+  outputSome people I know..."); in batch 054 a Tencent HY4 thinking block had leaked
+  before the prompt (9 prompts); in batches 008, 019, 041, 050, and 055 a chat preamble
+  or a process note ("Composing the final prompt now.") preceded it. 46 prompts were
+  trimmed to the real prompt (008: 1, 019: 3, 021: 2, 041: 5, 050: 1, 051: 12, 052: 10,
+  054: 9, 055: 3; the originals are kept outside the repository) and three files that
+  held no prompt at all were removed: 041/112510 (the model's deliberation only) and
+  041/114464 (the model asking which domain to use), whose run_012 and run_013
+  records and lines in `responses/sets/batch_041.txt` were removed too, so batch 041
+  and those two runs now count 39,942, and 054/402053 (the model asking for the
+  domain and type it had not been shown). The detectors in check_batch.py now
+  look for that vocabulary anywhere in the text and for the glue pattern (a
+  deliberation word followed directly by a capitalised prompt start), and they
+  report counts rather than only the first names. The same scan also counted the
+  meta-prompt's framing bleeding into the asker's own words, which the earlier
+  dataset-framing filter did not cover: "this is for a dataset" / "prompts for a
+  dataset on philosophical concepts" in about 500 prompts of batch 046 and 95 of
+  batch 044 (0.5% each; 13 in 051, 17 in 052, a handful elsewhere), "a typo or two is
+  fine" or "leave a typo or two" in about 4,100 prompts of batch 046 and 850 of batch
+  044 (many are in-world apologies for typing on a phone), "paraphrase without
+  quotation marks" relayed as an instruction to the answering model in 271 prompts of
+  046 and 70 of 044, and "the asker should not signal ..." (task-type wording) in a few
+  dozen. Those are left in place for now: removing them would also remove their
+  response records in the runs that cover these batches, and the wording is a
+  stylistic tell rather than a false claim about the world. check_batch.py's META
+  pattern now flags them so the count is visible per batch.
+
 ## Responses
 
 Response runs (`responses/run_NNN/`) are checked with
@@ -309,16 +372,19 @@ parameters and 8-bit-or-better endpoints only.
 | run_009 | DeepSeek R1 0528 | 19,998 (batch 035) | 0 | 0 | 0 | 2,790 / 3,967 | 38% | $127.37 |
 | run_010 | DeepSeek R1 0528 | 19,997 (batch 038) | 0 | 0 | 0 | 3,065 / 5,030 | 41% | $141.57 |
 | run_011 | Qwen3.5-397B-A17B | 19,997 (batch 038) | 13 | 0 | 12 (truncated ones) | 5,363 / 7,738 | 66% | $371.74 |
-| run_012 | Qwen3.5-397B-A17B | 39,944 (batch 041) | 22 | 0 | 19 (truncated ones) | 4,907 / 7,247 | 66% | $677.77 |
-| run_013 | DeepSeek R1 0528 | 39,944 (batch 041) | 1 | 0 | 0 | 2,845 / 4,409 | 40% | $259.13 |
+| run_012 | Qwen3.5-397B-A17B | 39,942 (batch 041) | 22 | 0 | 19 (truncated ones) | 4,907 / 7,247 | 66% | $677.77 |
+| run_013 | DeepSeek R1 0528 | 39,942 (batch 041) | 1 | 0 | 0 | 2,845 / 4,409 | 40% | $259.13 |
 | run_014 | DeepSeek R1 0528 | 7,149 x 2 (`r1_gap`) | 0 | 0 | 0 | 2,687 / 3,938 | 38% | $87.33 |
 | run_015 | Qwen3.5-397B-A17B | 49,149 x 2 (`qwen397b_gap`) | 57 | 0 | 54 (truncated ones) | 4,789 / 7,126 | 67% | $1,678.67 |
 | run_016 | Qwen3.5-397B-A17B | 100,000 x 2 (`batch_046`) | 141 | 0 | 137 (truncated ones) | 4,313 / 6,307 | 67% | $3,070.99 |
 | run_017 | DeepSeek R1 0528 | 20,000 x 2 (`batch_045`) | 0 | 0 | 0 | 3,147 / 5,730 | 44% | $302.27 |
 | run_018 | DeepSeek R1 0528 | 24,000 x 2 (`batches_042-044_047_049`) | 0 | 0 | 0 | 2,267 / 3,149 | 37% | $256.35 |
 | run_019 | Qwen3.5-397B-A17B | 2,000 x 2 (`batches_047_049`) | 7 | 0 | 7 (the truncated ones) | 4,751 / 7,207 | 66% | $67.21 |
+| run_020 | DeepSeek R1 0528 | 100,000 x 2 (`batch_046`) | 6 | 0 | 0 | 2,189 / 2,994 | 36% | $1,029.72 |
+| run_022 | Qwen3.5-397B-A17B | 70,000 x 2 (`batches_050_051`) | 68 | 0 | 68 (truncated ones) | 4,635 / 6,854 | 65% | $2,312.40 |
 | run_023 | DeepSeek R1 0528 | 1,000 x 2 (`batch_053`) | 0 | 0 | 0 | 3,148 / 5,647 | 45% | $14.96 |
 | run_024 | Qwen3.5-397B-A17B | 1,000 x 2 (`batch_053`) | 0 | 0 | 0 | 5,215 / 7,733 | 65% | $37.24 |
+| run_026 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_048`) | 65 | 0 | 62 (truncated ones) | 5,335 / 7,719 | 66% | $1,907.64 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -400,6 +466,28 @@ are refrains and table rows in responses that finished normally. DeepInfra serve
 36% of the responses, AtlasCloud 29%, Parasail 20%, and GMICloud 15%, at about 1,100
 responses an hour with 24 concurrent requests.
 
+Run 020 (2026-09-22 to 2026-09-28, $1,030; two R1 samples for the 100,000 Inkling prompts
+of batch 046) is the largest run so far and among the cleanest: 6 truncations (0.003%),
+each with a partial answer, all six stopping near 16,800 completion tokens rather than at
+the 65,536-token budget; refusal-phrase flags (0.1%) that are quoted AI disclaimers in
+answers about AI failure modes and quoted speech ("I can't help it"); three answers under
+40 words that are the jokes their prompts asked for; and repeated-phrase flags (0.4%) that
+are refrains, rubric rows, and the null fields of a JSON decision tree. The Inkling prompts
+are short (mean 356 prompt tokens) and draw short R1 answers (mean 2,189 completion tokens,
+36% reasoning; $5.15 per 1,000, the cheapest R1 run per response so far). SiliconFlow
+served all 200,000 at 48 concurrent requests, about 1,500 responses an hour for five and a
+half days in a single pass; no request drew a rate-limit reply or exhausted its attempts.
+
+Run 022 (2026-09-23 to 2026-09-26, $2,312; two Qwen samples for the 70,000 prompts of
+batches 050 and 051) shows the usual pattern at scale: 68 truncations (0.05%), all without
+an answer, three stray `<think>` tags, refusal-phrase flags (0.3%) that are analytic "as
+an AI" openings and quoted disclaimers, twelve answers under 40 words in the one-sentence
+forms their prompts asked for, and repeated-phrase flags (0.4%) that are refrains and table
+rows. DeepInfra served 33% of the responses, AtlasCloud 25%, GMICloud 21%, and Parasail
+21%, at about 1,000 responses an hour during the day the run shared the hosts at 24
+concurrent requests and about 2,300 an hour at 48 afterwards; no request drew a rate-limit
+reply or exhausted its attempts.
+
 Run 023 (2026-09-25, $15; two R1 samples for the 1,000 MiMo-V2.6-Pro prompts of test
 batch 053) is clean: no truncations, two refusal-phrase flags that are quoted speech
 ("I can't help it") and an "as an AI design principle", and repeated-phrase flags
@@ -417,6 +505,22 @@ prompt tokens) and draw the longest Qwen answers (mean 5,215 completion tokens, 
 reasoning; $18.62 per 1,000 against $15--17 for earlier batches). DeepInfra served 33%
 of the responses, AtlasCloud 33%, GMICloud 19%, and Parasail 15%, at about 490
 responses an hour with 12 concurrent requests beside run 022.
+
+Run 026 (2026-09-26 to 2026-09-28, $1,908; two Qwen samples for the 50,000 Qwen 2.4T
+prompts of batch 048) shows the usual pattern at scale: 65 truncations (0.07%), 62 of them
+without an answer, one answer that opens with the tail of its reasoning and a closing
+`</think>` tag, refusal-phrase flags (0.2%) that are the analytic "As an AI, I do not hold
+beliefs" opening on credence prompts, "As an AI, I cannot verify" hedges, and quoted speech
+in dialogues, eight answers under 40 words that are the two-line dialogues, jokes, and
+one-liners their prompts asked for, and repeated-phrase flags (0.7%) that are table rows,
+refrains in procedures, and the state labels of worked examples. The batch 048 prompts,
+with their fetched quotations, are the longest set answered so far (mean 839 prompt
+tokens) and draw the longest Qwen answers (mean 5,335 completion tokens, 66% reasoning;
+$19.08 per 1,000 against $18.62 for the MiMo test batch and $15--17 for earlier batches).
+DeepInfra served 36% of the responses, AtlasCloud 25%, GMICloud 22%, and Parasail 17%, at
+about 1,350 responses an hour during the first five hours at 24 concurrent requests and
+about 3,800 an hour at 96 afterwards; no request drew a rate-limit reply or exhausted its
+attempts.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers
@@ -554,8 +658,8 @@ answer, as with the other runs.
   dialogue).
 - Batch 051 (DeepSeek V4 Pro 0813, MIT), 50,000 prompts from 2026-09-19 to
   2026-09-23 at concurrency 48 with the settings of test batch 049: 570 prompts an
-  hour without a stall, an abandoned prompt, or a supervisor intervention (178
-  rate-limit replies in four days). Baidu served 96% of the request rounds and Novita
+  hour without a stall, an abandoned prompt, or a supervisor intervention (and no
+  rate-limit reply in four days). Baidu served 96% of the request rounds and Novita
   the rest. $1,392 in total, $28 per 1,000 against $17 for the test batch with the
   same token profile (mean 9,400 input and 7,300 output tokens): Baidu's fp8 price
   rose during the run, from about $1.05 per million tokens on the first two days to
@@ -573,6 +677,28 @@ answer, as with the other runs.
   *Descent of Man*, Augustine's *On Lying*, Hesiod's *Theogony*, Machiavelli, Milton,
   Thucydides, Euclid, Carroll's tortoise, Marx's *Grundrisse*, Arendt's "Lying in
   Politics"), not a duplicated prompt.
+- Batch 052 (DeepSeek V4 Pro 0813, MIT), 50,000 prompts from 2026-09-24 to
+  2026-09-28 at concurrency 48 with the settings of batch 051: 577 prompts an hour
+  without a stall or an abandoned prompt; the one supervisor intervention was a
+  deliberate restart on 2026-09-26, continued from the batch's own snapshot, to pick
+  up the prompt-numbering fix. No rate-limit replies; 268 transport errors, 29 empty
+  and 25 malformed responses, and 7 cut-offs were retried, and the generator's own
+  filters rejected and regenerated 56 defective generations (self-review after the
+  prompt, deliberation before it, dataset framing, tool-call markup). Baidu served
+  99.3% of the request rounds and Novita the rest. $712 in total, $14 per 1,000, with
+  the same token profile throughout (mean 10,200 input and 7,600 output tokens) but
+  three price regimes: Baidu's fp8 price was about $0.65 per million tokens (blended)
+  on the first two days ($11--12 per 1,000 prompts), $0.43 on 2026-09-26 and most of
+  the 27th ($8 per 1,000), and $2.20 (the list price of $1.32 in / $3.96 out) from the
+  afternoon of 2026-09-27, so the last 5,000 prompts cost $40 per 1,000. Median 335
+  words. The echo profile is the DeepSeek one: heavy echo 4.4%, output-format text
+  copied in 18.5% of the prompts that drew it, epistemic request in 7.7%. One prompt
+  wrapped in quotation marks and one opening with "Here is a prompt I would like you to
+  answer." were trimmed during curation (IDs 379119, 441186). V4 Pro searched for 16%
+  of its prompts and fetched a page for 14% (0.8 searches and 0.4 fetches per prompt);
+  the quote-inclusion instruction was drawn for 10.1%, and the shared-passage pairs are
+  again fetched quotations: 189 pairs (165 prompts) share 100 or more eight-word
+  phrases, led by Carroll's "What the Tortoise Said to Achilles".
 - Test batch 053 (Xiaomi MiMo-V2.6-Pro, MIT), 1,000 prompts on 2026-09-24 at reasoning
   effort high with the web tools, the model card's temperature 1.0 and top-p 0.95, fp8
   endpoints only (Xiaomi served 86% of the request rounds and DeepInfra the rest; the
