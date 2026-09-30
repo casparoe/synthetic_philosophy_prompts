@@ -37,6 +37,7 @@ prompts/batch_NNN/
   prompt_XXXXX.meta.yaml  per-prompt metadata (see below)
   batch.yaml              batch-level settings (model, API, sampling parameters)
   inputs/                 snapshot of the meta-prompt components used for this batch
+                          (the task types joined into one task_types.yaml)
 responses/
   sets/NAME.txt           a prompt set: the IDs of the prompts a response run answers
   run_NNN/                a response run (run_NNN_imported/ if converted from the sister repo, see below)
@@ -53,7 +54,8 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
   domains.txt             1,766 philosophical domains sampled from
-  task_types.yaml         70 prompt genres, with examples and notes
+  task_types/             70 prompt genres, one file per genre (NNN_name.yaml, read in
+                          name order), each with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
                           mutually exclusive groups, each drawn with a set probability

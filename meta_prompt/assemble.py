@@ -5,8 +5,8 @@ The meta-prompt is prompt.j2 rendered with components drawn from the other
 files in this directory:
 
     domains.txt                   philosophical domains; a handful are offered
-    task_types.yaml               prompt genres with examples and notes; a few
-                                  are offered
+    task_types/                   prompt genres with examples and notes, one
+                                  file per genre; a few are offered
     additional_instructions.yaml  extra instructions (length, persona, writing
                                   style, ...) in mutually exclusive groups; each
                                   group contributes at most one option, with a
@@ -24,6 +24,13 @@ existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
 before 029 predate additional_instructions.yaml; rebuild those with the code at
 commit 515faeef.)
 
+A task type is a file NNN_name.yaml in task_types/: a mapping with the genre's
+name under type and, optionally, notes (a string) and examples (a list of
+strings). The files are read in name order, so a new genre gets the next
+number. A batch's inputs/ snapshot holds the same genres joined into one list,
+task_types.yaml (also the source's layout before 2026-09-29); load() reads
+either layout.
+
 The generators in generators/ import this module. Run it directly to print one
 assembled meta-prompt:
 
@@ -36,6 +43,7 @@ assembled meta-prompt:
 """
 
 import argparse
+import collections
 import random
 import shutil
 import sys
@@ -49,12 +57,15 @@ COMPONENTS_DIR = Path(__file__).resolve().parent
 TEMPLATE_FILE = "prompt.j2"
 INSTRUCTIONS_FILE = "additional_instructions.yaml"
 
-# Everything the meta-prompt is built from. The generators copy these into
-# each batch's inputs/ directory for provenance.
-COMPONENT_FILES = [
+TASK_TYPES_DIR = "task_types"  # the source: one file per task type
+TASK_TYPES_FILE = "task_types.yaml"  # a snapshot: all task types in one list
+
+# Everything the meta-prompt is built from goes into each batch's inputs/
+# directory for provenance: these files copied as they are, plus the task
+# types joined into one TASK_TYPES_FILE (see Components.snapshot).
+COPIED_FILES = [
     TEMPLATE_FILE,
     "domains.txt",
-    "task_types.yaml",
     INSTRUCTIONS_FILE,
 ]
 
@@ -151,13 +162,118 @@ def _load_instruction_groups(path):
     return groups
 
 
+TASK_TYPE_KEYS = {"type", "notes", "examples"}
+
+
+def _load_yaml(path):
+    try:
+        return yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: {e}") from None
+
+
+def _check_task_type(data, where):
+    """One task type: a mapping with the genre's name under type and,
+    optionally, notes (a string) and examples (a list of strings)."""
+    if not isinstance(data, dict):
+        hint = " (a list: the one-file layout?)" if isinstance(data, list) else ""
+        raise ValueError(f"{where}: expected a mapping with type, notes, examples{hint}")
+    if unknown := set(data) - TASK_TYPE_KEYS:
+        raise ValueError(f"{where}: unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    if not isinstance(data.get("type"), str) or not data["type"].strip():
+        raise ValueError(f"{where}: type must be a non-empty string")
+    notes, examples = data.get("notes"), data.get("examples")
+    if notes is not None and not isinstance(notes, str):
+        raise ValueError(f"{where}: notes must be a string")
+    if examples is not None and not (
+        isinstance(examples, list) and all(isinstance(e, str) for e in examples)
+    ):
+        raise ValueError(f"{where}: examples must be a list of strings")
+    return data
+
+
+def _task_type_files(folder):
+    """The per-type files of a TASK_TYPES_DIR, in name order."""
+    return sorted(
+        p
+        for p in folder.iterdir()
+        if p.is_file() and p.suffix in (".yaml", ".yml") and not p.name.startswith(".")
+    )
+
+
+def load_task_types(directory):
+    """Read the task types of a components directory: the files of its
+    TASK_TYPES_DIR in name order, or else the single list in its
+    TASK_TYPES_FILE (the layout of snapshots). Either way a list of mappings
+    with type, notes, and examples, checked and free of repeated names."""
+    directory = Path(directory)
+    folder, single = directory / TASK_TYPES_DIR, directory / TASK_TYPES_FILE
+    if folder.is_dir() and single.exists():
+        raise ValueError(
+            f"{directory} has both {TASK_TYPES_DIR}/ and {TASK_TYPES_FILE}; "
+            "the directory is the source, remove the file"
+        )
+    if folder.is_dir():
+        files = _task_type_files(folder)
+        if not files:
+            raise ValueError(f"{folder}: no task type files (*.yaml)")
+        types = [_check_task_type(_load_yaml(f), f) for f in files]
+    elif single.exists():
+        data = _load_yaml(single)
+        if not isinstance(data, list) or not data:
+            raise ValueError(f"{single}: expected a list of task types")
+        types = [_check_task_type(t, f"{single}, item {i + 1}") for i, t in enumerate(data)]
+    else:
+        raise FileNotFoundError(
+            f"{directory}: no {TASK_TYPES_DIR}/ directory and no {TASK_TYPES_FILE}"
+        )
+    counts = collections.Counter(t["type"] for t in types)
+    if repeated := sorted(name for name, n in counts.items() if n > 1):
+        raise ValueError(
+            f"{directory}: task types defined more than once: {', '.join(repeated)}"
+        )
+    return types
+
+
+def join_task_types(directory):
+    """The task types of a components directory as the text of one YAML list,
+    for a snapshot: the per-type files one after another, each indented into
+    a list item the way the one-file layout wrote them (a space and a dash,
+    keys at three spaces), so that snapshots diff cleanly across batches. A
+    directory that already holds the single file gets that file's text."""
+    directory = Path(directory)
+    types = load_task_types(directory)
+    folder = directory / TASK_TYPES_DIR
+    if not folder.is_dir():
+        return (directory / TASK_TYPES_FILE).read_text()
+    items = []
+    for path in _task_type_files(folder):
+        lines = path.read_text().splitlines()
+        # YAML's optional document markers would not survive the indentation
+        if lines and lines[0].rstrip() == "---":
+            lines = lines[1:]
+        if lines and lines[-1].rstrip() == "...":
+            lines = lines[:-1]
+        items.append(
+            f" - {lines[0]}\n"
+            + "".join(f"   {line}\n" if line else "\n" for line in lines[1:])
+        )
+    text = "".join(items)
+    if yaml.safe_load(text) != types:
+        raise ValueError(
+            f"{folder}: the files do not join into one list unchanged "
+            "(a document marker or unusual indentation in one of them?)"
+        )
+    return text
+
+
 @dataclass
 class Components:
     """The component files of one directory, read once, plus the template."""
 
     source: Path
     domains: list
-    task_types: list  # dicts with "type" and optional "examples"/"notes"
+    task_types: list  # dicts with "type" and optional "examples"/"notes", in file order
     instruction_groups: dict  # group name -> InstructionGroup, in file order
     template: object  # jinja2.Template
 
@@ -245,11 +361,13 @@ class Components:
         return f"{preamble}\n  {text}" if preamble else text
 
     def snapshot(self, dest_dir):
-        """Copy the component files into dest_dir (a batch's inputs/)."""
+        """Write the components into dest_dir (a batch's inputs/): the files
+        in COPIED_FILES as they are, the task types joined into one file."""
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
-        for name in COMPONENT_FILES:
+        for name in COPIED_FILES:
             shutil.copy2(self.source / name, dest_dir / name)
+        (dest_dir / TASK_TYPES_FILE).write_text(join_task_types(self.source))
 
 
 def load(directory=COMPONENTS_DIR):
@@ -262,7 +380,7 @@ def load(directory=COMPONENTS_DIR):
     return Components(
         source=directory,
         domains=_load_lines(directory / "domains.txt"),
-        task_types=yaml.safe_load((directory / "task_types.yaml").read_text()),
+        task_types=load_task_types(directory),
         instruction_groups=_load_instruction_groups(directory / INSTRUCTIONS_FILE),
         template=env.get_template(TEMPLATE_FILE),
     )

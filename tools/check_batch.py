@@ -26,6 +26,7 @@ import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "meta_prompt"))
+import assemble  # noqa: E402
 
 WORD = re.compile(r"[a-z0-9']+")
 MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|arg_value|arg_key|</invoke>|<function_calls?>|<\|im_start\||</?think[>:\s]")
@@ -152,12 +153,12 @@ def grams(text, n=8):
 
 def load_examples(batch):
     """8-gram -> (task type, example index) for the examples this batch was shown."""
-    path = batch / "inputs" / "task_types.yaml"
-    note = "snapshot"
-    if not path.exists():
-        path, note = REPO / "meta_prompt" / "task_types.yaml", "CURRENT components (no snapshot in this batch)"
+    try:
+        types, note = assemble.load_task_types(batch / "inputs"), "snapshot"
+    except FileNotFoundError:
+        types, note = assemble.load_task_types(assemble.COMPONENTS_DIR), "CURRENT components (no snapshot in this batch)"
     index = {}
-    for t in yaml.safe_load(path.read_text()):
+    for t in types:
         for i, e in enumerate(t.get("examples") or []):
             for g in grams(e):
                 index.setdefault(g, (t["type"], i))
@@ -290,7 +291,6 @@ def main():
 
     # -- sidecars re-render ---------------------------------------------------------------------
     try:
-        import assemble
         comp = assemble.load(b / "inputs")
         bad = 0
         for m in metas.values():
