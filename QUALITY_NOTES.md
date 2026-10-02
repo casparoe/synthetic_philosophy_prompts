@@ -63,6 +63,7 @@ re-render from the batch's snapshot; those should simply be zero.
 | 052 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 50,000 | 4.4% | 15.5% | 18.5% / 7.7% | classroom-activity example 0, 358; procedure example 0, 352 |
 | 053 | MiMo-V2.6-Pro (OpenRouter, Xiaomi and DeepInfra) | 1,000 | 4.8% | 18.9% | 6.8% / 7.7% | classroom-activity example 0, 10; procedure example 0, 7 |
 | 054 | HY4 preview (OpenRouter, Tencent) | 50,000 | 1.3% | 9.0% | 7.0% / 2.8% | classroom-activity example 0, 107; procedure example 0, 91 |
+| 055 | MiMo-V2.6-Pro (OpenRouter, DeepInfra, GMICloud, Xiaomi) | 50,000 | 4.9% | 17.7% | 10.1% / 7.0% | classroom-activity example 0, 506; procedure example 0, 337 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -281,6 +282,32 @@ what here".
   (517266), and one prompt with the generator's "Domain: ... Type: ..." labels inside
   the asker's text (426562, sentence removed). Sixteen prompts frame themselves as
   "another one for the dataset" and were left as they are.
+- Batch 055 (Xiaomi MiMo-V2.6-Pro, MIT), 50,000 prompts from 2026-09-24 19:38 to
+  2026-10-01 01:47 PDT at concurrency 48 with a 65,536-token budget: about 330 prompts an
+  hour on average, DeepInfra serving about half, GMICloud and Xiaomi a quarter each.
+  Xiaomi's own endpoint rate-limited the model from the afternoon of 09-29 on (4,287
+  rate-limit replies in all, every one retried elsewhere), and the rate fell to a few
+  dozen an hour for two hours on 09-30 before recovering. It cost $485.03, $9.70 per 1,000
+  (mean $0.0097, median $0.0054): 14,800 input and 7,100 output tokens per prompt at a
+  blended $0.44 per million, with 1.08 searches and 0.91 fetches per prompt (24% of
+  prompts searched). The supervisor continued the batch once after a manual restart on
+  09-26 and once at the end to replace 22 generations abandoned after ten failed attempts
+  each; the generator also retried 514 read timeouts, 329 dropped connections, 350
+  content-filter finishes, 153 empty error finishes, 136 connect errors, 45 over the
+  budget, and 20 gateway errors. The prompts are long (median 534 words, p90 810, maximum
+  2,186; 1,427 of 1,000 words or more) and were sampled from the 1,718-domain list and the
+  66 task types of 09-24. Example echo is moderate (heavy 4.9%, any 17.7%); the
+  output-format instruction is copied verbatim into 10.1% of prompts ("lead with your
+  bottom line in the first sentence" in 725) and the epistemic request into 7.0% ("what
+  will predictably go wrong the first time I run it" in about 700). MiMo quotes fetched
+  public-domain passages readily: 919 pairs share 100 or more eight-word phrases (Douglass
+  on the Constitution and slavery, Aquinas on lying, Bentham's Introduction). Curation:
+  the check at completion found one prompt ending in the generator's "Reply with the
+  prompt text only." (521185, sentence removed) and one opening with the generator's
+  planning paragraph ("I have settled on the domain of ...", 530146, paragraph removed),
+  after the leak sweep of 09-28 had trimmed three others (414036, 447783, 482357); two
+  prompts frame themselves as being "for the dataset" (512509, 525288) and were left as
+  they are.
 - Leak sweep (2026-09-28). A full-text scan of every prompt (batches 000-055, the
   last two still generating) for the generator's own vocabulary ("prompt text only",
   "Now final", "Let me output", "Here is the final prompt:", a `</think:opensource>`
@@ -381,10 +408,13 @@ parameters and 8-bit-or-better endpoints only.
 | run_018 | DeepSeek R1 0528 | 24,000 x 2 (`batches_042-044_047_049`) | 0 | 0 | 0 | 2,267 / 3,149 | 37% | $256.35 |
 | run_019 | Qwen3.5-397B-A17B | 2,000 x 2 (`batches_047_049`) | 7 | 0 | 7 (the truncated ones) | 4,751 / 7,207 | 66% | $67.21 |
 | run_020 | DeepSeek R1 0528 | 100,000 x 2 (`batch_046`) | 6 | 0 | 0 | 2,189 / 2,994 | 36% | $1,029.72 |
+| run_021 | DeepSeek R1 0528 | 70,000 x 2 (`batches_050_051`) | 3 | 0 | 0 | 2,624 / 3,902 | 39% | $857.31 |
 | run_022 | Qwen3.5-397B-A17B | 70,000 x 2 (`batches_050_051`) | 68 | 0 | 68 (truncated ones) | 4,635 / 6,854 | 65% | $2,312.40 |
 | run_023 | DeepSeek R1 0528 | 1,000 x 2 (`batch_053`) | 0 | 0 | 0 | 3,148 / 5,647 | 45% | $14.96 |
 | run_024 | Qwen3.5-397B-A17B | 1,000 x 2 (`batch_053`) | 0 | 0 | 0 | 5,215 / 7,733 | 65% | $37.24 |
+| run_025 | DeepSeek R1 0528 | 50,000 x 2 (`batch_048`) | 6 | 0 | 0 | 3,039 / 4,935 | 40% | $726.33 |
 | run_026 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_048`) | 65 | 0 | 62 (truncated ones) | 5,335 / 7,719 | 66% | $1,907.64 |
+| run_028 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_052`) | 49 | 0 | 46 (truncated ones) | 4,593 / 6,686 | 65% | $1,579.59 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -478,6 +508,21 @@ are short (mean 356 prompt tokens) and draw short R1 answers (mean 2,189 complet
 served all 200,000 at 48 concurrent requests, about 1,500 responses an hour for five and a
 half days in a single pass; no request drew a rate-limit reply or exhausted its attempts.
 
+Run 021 (2026-09-23 to 2026-09-30, $857; two R1 samples for the 70,000 DeepSeek V4 Pro
+prompts of batches 050 and 051) is as clean as run 020: 3 truncations (0.002%), one of them
+an answer that ran into a page of en spaces; refusal-phrase flags (0.1%) that are quoted speech
+("I can't help it"), the refusal templates that prompts about AI refusals ask to have
+classified, and the analytic "as an AI safety researcher"; four answers under 40 words that
+are the single questions their Socratic-tutor prompts allow per turn; and repeated-phrase
+flags (0.5%) that are rows of formulas and lottery designs, rubric rows, and refrains in
+poems. Three answers with a `stop` finish reason broke off after a bare `>` ("Megaprojects
+Requiring >", "involving >", and one at the opening of a block quote) and were deleted and
+regenerated, like the three of run 025. The V4 Pro prompts are of middling length (mean 449
+prompt tokens) and draw short R1 answers (mean 2,624 completion tokens, 39% reasoning; $6.12
+per 1,000). SiliconFlow served all 140,000: about 610 responses an hour at 24 concurrent
+requests for the first four days beside run 020, and about 1,230 an hour at 48 for the last
+two and a half days; no request drew a rate-limit reply or exhausted its attempts.
+
 Run 022 (2026-09-23 to 2026-09-26, $2,312; two Qwen samples for the 70,000 prompts of
 batches 050 and 051) shows the usual pattern at scale: 68 truncations (0.05%), all without
 an answer, three stray `<think>` tags, refusal-phrase flags (0.3%) that are analytic "as
@@ -506,6 +551,30 @@ reasoning; $18.62 per 1,000 against $15--17 for earlier batches). DeepInfra serv
 of the responses, AtlasCloud 33%, GMICloud 19%, and Parasail 15%, at about 490
 responses an hour with 12 concurrent requests beside run 022.
 
+Run 025 (2026-09-26 to 2026-09-30, $726; two R1 samples for the 50,000 Qwen 2.4T prompts
+of batch 048) is nearly as clean as run 020: 6 truncations (0.006%), each with a partial
+answer, all stopping between about 16,800 and 24,100 completion tokens rather than at the
+65,536-token budget; refusal-phrase flags (0.1%) that are quoted speech and in-world lines
+("I can't help you get these meds", "I cannot help but feel") and analytic uses of "as an
+AI" ("as an AI safety tool", "still reasoning as an AI"); three answers under 40 words that
+are the jokes their prompts asked for; and repeated-phrase flags (0.8%) that are the
+refrains of cumulative poems, truth-table and payoff-matrix rows, decision-tree fields, and
+rubric rows. Three answers with a `stop` finish reason were defective all the same and were
+deleted and regenerated (originals kept outside the repository): two broke off in the middle
+of a comparison ("Ordered: High >", "CO2 >"), and one ran into 290 box-drawing characters
+and a stray Chinese product name after its second paragraph. The checker had not caught them
+(it flagged empty answers, not unfinished ones); it now flags answers that end in a run of
+one odd character or in a bare `>` that closes no tag. The same scan over the 600,000 R1
+responses of runs 003–023 found two more such cut-offs ("(e.g., >" in run 006, "(>" in
+run 017), regenerated the same way, and one garbage tail that is among run 020's six
+truncations. The batch 048 prompts, with their fetched quotations, are long (mean 820
+prompt tokens) and draw R1's second-longest answers (mean 3,039 completion tokens, 40%
+reasoning; $7.26 per 1,000 against $7.48 for the MiMo test batch and $5.15 for run 020).
+SiliconFlow served all 100,000, at about 360 responses an hour for the first three hours at
+16 concurrent requests beside runs 020 and 021, about 1,130 an hour at 48 for the next
+thirty hours, and about 1,390 an hour at 64 for the last two days after run 020 had
+finished; no request drew a rate-limit reply or exhausted its attempts.
+
 Run 026 (2026-09-26 to 2026-09-28, $1,908; two Qwen samples for the 50,000 Qwen 2.4T
 prompts of batch 048) shows the usual pattern at scale: 65 truncations (0.07%), 62 of them
 without an answer, one answer that opens with the tail of its reasoning and a closing
@@ -521,6 +590,20 @@ DeepInfra served 36% of the responses, AtlasCloud 25%, GMICloud 22%, and Parasai
 about 1,350 responses an hour during the first five hours at 24 concurrent requests and
 about 3,800 an hour at 96 afterwards; no request drew a rate-limit reply or exhausted its
 attempts.
+
+Run 028 (2026-09-29 to 2026-09-30, $1,580; two Qwen samples for the 50,000 DeepSeek V4 Pro
+prompts of batch 052) shows the usual pattern at scale: 49 truncations (0.05%), 46 of them
+without an answer, one answer that opens with the tail of its reasoning and a closing
+`</think>` tag, refusal-phrase flags (0.4%) that are the analytic "As an AI, I do not hold
+beliefs" opening on credence prompts, "As an AI safety researcher, you ..." addressed to the
+asker's stated role (a frequent persona in this batch), and quoted speech, four answers under
+40 words that are the single questions their Socratic-tutor prompts allow per turn, and
+repeated-phrase flags (0.4%) that are rubric rows, table cells, refrains, and the steps of
+decision procedures. The batch 052 prompts are of middling length (mean 443 prompt tokens)
+and draw Qwen's usual answers (mean 4,593 completion tokens, 65% reasoning; $15.80 per
+1,000). AtlasCloud served 33% of the responses, DeepInfra 31%, GMICloud 21%, and Parasail
+15%, in a single pass at 96 concurrent requests, about 3,900 responses an hour; 208
+requests drew a rate-limit reply, the first in a Qwen run, and all succeeded on a retry.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers

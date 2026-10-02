@@ -3,8 +3,8 @@
 
 Coverage against the run's prompt set, finish reasons, missing chains of
 thought or answers, <think> tags and tool-call markup left in answers,
-refusal phrases, repeated phrases, reasoning and answer lengths, cost, and
-the provider mix. Findings are tracked in QUALITY_NOTES.md.
+refusal phrases, repeated phrases, garbage tails and answers cut off after a
+bare '>', reasoning and answer lengths, cost, and the provider mix. Findings are tracked in QUALITY_NOTES.md.
 
     tools/check_run.py responses/run_000 [--top 5]
 """
@@ -34,6 +34,25 @@ SHORT_WORDS = 40
 
 def words(text):
     return len(WORD.findall((text or "").lower()))
+
+
+def odd_tail(text, window=300):
+    """The answer ends in a run of one non-alphanumeric character that is not a
+    rule, bullet, or table border: the model has run into garbage (run 025,
+    290 box-drawing characters after the second paragraph)."""
+    tail = (text or "").rstrip().rstrip("*_ \n")[-window:]
+    if len(tail) < 100:
+        return False
+    ch = max(set(tail), key=tail.count)
+    return tail.count(ch) > 0.5 * len(tail) and not ch.isalnum() and ch not in " -=_.#*|\n"
+
+
+def bare_gt(text):
+    """The answer ends in a '>' that closes no tag-like <...>, '-->' or '>>':
+    a comparison cut off at the host ("CO2 >", "(e.g., >") with a stop finish
+    reason (eight cases in 740,000 R1 responses, all at SiliconFlow)."""
+    t = (text or "").rstrip().rstrip("*_ \n")
+    return t.endswith(">") and not re.search(r"(?:<[^<>\n]{0,120}>|-->|>>)\s*$", t)
 
 
 def pct(k, n):
@@ -107,6 +126,8 @@ def main():
     flag("refusal phrase in answer", [r for r in records if REFUSAL.search(r.get("answer") or "")])
     flag(f"answer under {SHORT_WORDS} words", [r for r in records if r.get("answer") and words(r["answer"]) < SHORT_WORDS])
     flag("answer repeats a 12-word phrase 3+ times", [r for r in records if repeats(r.get("answer") or "")])
+    flag("answer ends in a run of one odd character", [r for r in records if odd_tail(r.get("answer") or "")])
+    flag("answer ends in a bare '>' (cut off at the host?)", [r for r in records if bare_gt(r.get("answer") or "")])
 
     print("\n-- lengths")
     comp = [r["completion_tokens"] for r in records if r.get("completion_tokens") is not None]
