@@ -4,7 +4,10 @@
 The meta-prompt is prompt.j2 rendered with components drawn from the other
 files in this directory:
 
-    domains.txt                   philosophical domains; a handful are offered
+    domains/                      philosophical domains in thematic files, each
+                                  optionally with URLs of pages about it; a
+                                  handful of domains are offered, each with a
+                                  random few of its URLs
     task_types/                   prompt genres with examples and notes, one
                                   file per genre; a few are offered
     additional_instructions.yaml  extra instructions (length, persona, writing
@@ -17,8 +20,11 @@ files in this directory:
 One draw is recorded as a *sample*: which domains and task types were offered,
 which of each type's examples were shown and in which order (one to five of
 them, drawn at random; samples from before batch 046, except the second half of
-batch 044, lack this key and showed every example in file order), and which additional instruction each group
-contributed. Samples use the same keys as the per-prompt .meta.yaml sidecars
+batch 044, lack this key and showed every example in file order), which additional instruction each group
+contributed, and which URLs were drawn for each offered domain (each of a
+domain's URLs with probability URL_PROBABILITY, in file order; samples from
+before 2026-10-03 lack this key). The URLs are shown only when the generator
+has web tools. Samples use the same keys as the per-prompt .meta.yaml sidecars
 and the samples.yaml files under prompts/, so the meta-prompt behind any
 existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
 before 029 predate additional_instructions.yaml; rebuild those with the code at
@@ -30,6 +36,13 @@ strings). The files are read in name order, so a new genre gets the next
 number. A batch's inputs/ snapshot holds the same genres joined into one list,
 task_types.yaml (also the source's layout before 2026-09-29); load() reads
 either layout.
+
+The domains live in domains/, one YAML file per theme (decision_theory.yaml,
+fiction_film_and_games.yaml, ...), read in name order. Each file is a list of
+mappings with the domain's text under domain and, optionally, a list of URLs
+under urls. A snapshot joins the files into one list, domains.yaml. Snapshots
+of batches before 2026-10-03 hold domains.txt instead, one domain per line and
+no URLs; load() reads all three layouts.
 
 The generators in generators/ import this module. Run it directly to print one
 assembled meta-prompt:
@@ -60,12 +73,18 @@ INSTRUCTIONS_FILE = "additional_instructions.yaml"
 TASK_TYPES_DIR = "task_types"  # the source: one file per task type
 TASK_TYPES_FILE = "task_types.yaml"  # a snapshot: all task types in one list
 
+DOMAINS_DIR = "domains"  # the source: one file per theme
+DOMAINS_FILE = "domains.yaml"  # a snapshot: all domains in one list
+LEGACY_DOMAINS_FILE = "domains.txt"  # snapshots before 2026-10-03: one per line
+# Each URL of an offered domain is shown with this probability, independently.
+URL_PROBABILITY = 0.05
+
 # Everything the meta-prompt is built from goes into each batch's inputs/
 # directory for provenance: these files copied as they are, plus the task
-# types joined into one TASK_TYPES_FILE (see Components.snapshot).
+# types joined into one TASK_TYPES_FILE and the domains into one DOMAINS_FILE
+# (see Components.snapshot).
 COPIED_FILES = [
     TEMPLATE_FILE,
-    "domains.txt",
     INSTRUCTIONS_FILE,
 ]
 
@@ -75,10 +94,12 @@ SAMPLE_KEYS = [
     "task_type_examples",
     "additional_instructions",
     "domains_offered",
+    "domain_urls",
 ]
 # Keys a sample may lack (older sidecars); render() then falls back to the
-# behaviour of the time: every example of a task type, in file order.
-OPTIONAL_SAMPLE_KEYS = {"task_type_examples"}
+# behaviour of the time: every example of a task type, in file order, and no
+# URLs.
+OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls"}
 # For each offered task type, how many of its examples are shown: a number
 # from 1 to this drawn uniformly, capped by how many examples the type has.
 MAX_EXAMPLES_SHOWN = 5
@@ -267,22 +288,137 @@ def join_task_types(directory):
     return text
 
 
+DOMAIN_KEYS = {"domain", "urls"}
+
+
+def _check_domain(data, where):
+    """One domain: a mapping with its text under domain and, optionally, a
+    list of distinct http(s) URLs under urls."""
+    if not isinstance(data, dict):
+        raise ValueError(f"{where}: expected a mapping with domain and optionally urls")
+    if unknown := set(data) - DOMAIN_KEYS:
+        raise ValueError(f"{where}: unknown keys: {', '.join(sorted(map(str, unknown)))}")
+    text = data.get("domain")
+    if not isinstance(text, str) or not text.strip() or text != text.strip() or "\n" in text:
+        raise ValueError(f"{where}: domain must be a non-empty one-line string without surrounding spaces")
+    urls = data.get("urls")
+    if urls is None:
+        urls = []
+    if not isinstance(urls, list) or not all(
+        isinstance(u, str) and u.startswith(("http://", "https://")) and not any(c.isspace() for c in u)
+        for u in urls
+    ):
+        raise ValueError(f"{where}: urls must be a list of http(s) URLs")
+    if len(set(urls)) != len(urls):
+        raise ValueError(f"{where}: a URL is listed twice")
+    return {"domain": text, "urls": urls}
+
+
+def _domain_files(folder):
+    """The theme files of a DOMAINS_DIR, in name order."""
+    return sorted(
+        p
+        for p in folder.iterdir()
+        if p.is_file() and p.suffix in (".yaml", ".yml") and not p.name.startswith(".")
+    )
+
+
+def load_domains(directory):
+    """Read the domains of a components directory: the files of its
+    DOMAINS_DIR in name order, else the single list in its DOMAINS_FILE (the
+    layout of snapshots), else the lines of LEGACY_DOMAINS_FILE (snapshots
+    before 2026-10-03). Either way a list of mappings with domain and urls,
+    checked and free of repeated domains."""
+    directory = Path(directory)
+    folder, single = directory / DOMAINS_DIR, directory / DOMAINS_FILE
+    legacy = directory / LEGACY_DOMAINS_FILE
+    present = [p.name for p in (folder, single, legacy) if p.exists()]
+    if len(present) > 1:
+        raise ValueError(
+            f"{directory} has {' and '.join(present)}; keep only one "
+            f"({DOMAINS_DIR}/ is the source, {DOMAINS_FILE} a snapshot)"
+        )
+    if folder.is_dir():
+        domains = []
+        files = _domain_files(folder)
+        if not files:
+            raise ValueError(f"{folder}: no domain files (*.yaml)")
+        for f in files:
+            data = _load_yaml(f)
+            if not isinstance(data, list) or not data:
+                raise ValueError(f"{f}: expected a non-empty list of domains")
+            domains += [_check_domain(d, f"{f}, item {i + 1}") for i, d in enumerate(data)]
+    elif single.exists():
+        data = _load_yaml(single)
+        if not isinstance(data, list) or not data:
+            raise ValueError(f"{single}: expected a list of domains")
+        domains = [_check_domain(d, f"{single}, item {i + 1}") for i, d in enumerate(data)]
+    elif legacy.exists():
+        domains = [{"domain": line, "urls": []} for line in _load_lines(legacy)]
+    else:
+        raise FileNotFoundError(
+            f"{directory}: no {DOMAINS_DIR}/ directory, {DOMAINS_FILE}, or {LEGACY_DOMAINS_FILE}"
+        )
+    counts = collections.Counter(d["domain"] for d in domains)
+    if repeated := sorted(text for text, n in counts.items() if n > 1):
+        raise ValueError(f"{directory}: domains listed more than once: {repeated[:5]}")
+    return domains
+
+
+def snapshot_domains(directory, dest_dir):
+    """Write the domains of a components directory into dest_dir: the theme
+    files joined into one DOMAINS_FILE (each file's text after a comment
+    naming it, so snapshots diff cleanly), or an existing single file or
+    legacy file copied as it is."""
+    directory, dest_dir = Path(directory), Path(dest_dir)
+    domains = load_domains(directory)
+    folder = directory / DOMAINS_DIR
+    if not folder.is_dir():
+        for name in (DOMAINS_FILE, LEGACY_DOMAINS_FILE):
+            if (directory / name).exists():
+                shutil.copy2(directory / name, dest_dir / name)
+                return
+    parts = []
+    for path in _domain_files(folder):
+        lines = path.read_text().splitlines()
+        if any(line.rstrip() in ("---", "...") for line in lines):
+            raise ValueError(f"{path}: document markers would not survive joining")
+        parts.append(f"# {DOMAINS_DIR}/{path.name}\n" + "\n".join(lines).rstrip("\n") + "\n")
+    text = "\n".join(parts)
+    joined = [_check_domain(d, DOMAINS_FILE) for d in yaml.safe_load(text)]
+    if joined != domains:
+        raise ValueError(f"{folder}: the files do not join into one list unchanged")
+    (dest_dir / DOMAINS_FILE).write_text(text)
+
+
 @dataclass
 class Components:
     """The component files of one directory, read once, plus the template."""
 
     source: Path
-    domains: list
+    domains: list  # the domains' texts, in file order
+    domain_urls: dict  # domain text -> its URLs, in file order (often empty)
     task_types: list  # dicts with "type" and optional "examples"/"notes", in file order
     instruction_groups: dict  # group name -> InstructionGroup, in file order
     template: object  # jinja2.Template
 
-    def sample(self, num_domains=5, num_task_types=3, rng=random, max_examples=MAX_EXAMPLES_SHOWN):
+    def sample(
+        self,
+        num_domains=5,
+        num_task_types=3,
+        rng=random,
+        max_examples=MAX_EXAMPLES_SHOWN,
+        url_probability=URL_PROBABILITY,
+    ):
         """Draw the parameters for one prompt. Pass a seeded random.Random as
         rng for a reproducible draw. For every offered task type, a number of
         examples from 1 to max_examples is drawn, then that many of the type's
         examples (fewer if it has fewer), in random order; task_type_examples
-        records their indices into the type's example list."""
+        records their indices into the type's example list. For every offered
+        domain, each of its URLs is drawn with probability url_probability;
+        domain_urls lists the drawn URLs per offered domain, in the order of
+        domains_offered. (The URL draws come last, so the rest of a seeded
+        draw is what it was before domains had URLs.)"""
         offered = rng.sample(self.task_types, k=min(num_task_types, len(self.task_types)))
         shown = {}
         for t in offered:
@@ -297,9 +433,13 @@ class Components:
                 for name, group in self.instruction_groups.items()
                 if rng.random() < group.probability
             },
-            "domains_offered": rng.sample(
-                self.domains, k=min(num_domains, len(self.domains))
+            "domains_offered": (
+                domains := rng.sample(self.domains, k=min(num_domains, len(self.domains)))
             ),
+            "domain_urls": [
+                [url for url in self.domain_urls.get(d, []) if rng.random() < url_probability]
+                for d in domains
+            ],
         }
 
     def render(self, sample, web_tools=False, strict_quotes=False):
@@ -320,6 +460,7 @@ class Components:
             )
         return self.template.render(
             domains=sample["domains_offered"],
+            domain_links=self._links_shown(sample),
             task_types=[
                 self._task_type_shown(by_name[name], sample.get("task_type_examples"))
                 for name in sample["task_types_offered"]
@@ -333,6 +474,24 @@ class Components:
             web_tools=web_tools,
             strict_quotes=strict_quotes,
         )
+
+    def _links_shown(self, sample):
+        """The drawn URLs of each offered domain, parallel to domains_offered;
+        none for samples that predate domain_urls. Every URL must be one of
+        the domain's URLs in these components."""
+        domains = sample["domains_offered"]
+        links = sample.get("domain_urls")
+        if links is None:
+            return [[] for _ in domains]
+        if not isinstance(links, list) or len(links) != len(domains):
+            raise ValueError("sample's domain_urls must be a list parallel to domains_offered")
+        for domain, urls in zip(domains, links):
+            known = self.domain_urls.get(domain, [])
+            if not isinstance(urls, list) or any(u not in known for u in urls):
+                raise ValueError(
+                    f"sample has URLs for domain {domain[:60]!r} that {self.source} does not list"
+                )
+        return links
 
     def _task_type_shown(self, task_type, shown):
         """The task type with only the examples the sample shows, in the
@@ -362,12 +521,14 @@ class Components:
 
     def snapshot(self, dest_dir):
         """Write the components into dest_dir (a batch's inputs/): the files
-        in COPIED_FILES as they are, the task types joined into one file."""
+        in COPIED_FILES as they are, the task types joined into one file, and
+        the domains joined into one file."""
         dest_dir = Path(dest_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
         for name in COPIED_FILES:
             shutil.copy2(self.source / name, dest_dir / name)
         (dest_dir / TASK_TYPES_FILE).write_text(join_task_types(self.source))
+        snapshot_domains(self.source, dest_dir)
 
 
 def load(directory=COMPONENTS_DIR):
@@ -377,9 +538,11 @@ def load(directory=COMPONENTS_DIR):
     env = Environment(
         loader=FileSystemLoader(directory), trim_blocks=True, lstrip_blocks=True
     )
+    domains = load_domains(directory)
     return Components(
         source=directory,
-        domains=_load_lines(directory / "domains.txt"),
+        domains=[d["domain"] for d in domains],
+        domain_urls={d["domain"]: d["urls"] for d in domains},
         task_types=load_task_types(directory),
         instruction_groups=_load_instruction_groups(directory / INSTRUCTIONS_FILE),
         template=env.get_template(TEMPLATE_FILE),
@@ -406,6 +569,12 @@ def main():
         "--strict-quotes",
         action="store_true",
         help="also include the rule against quoting from memory (implies --web-tools)",
+    )
+    parser.add_argument(
+        "--url-probability",
+        type=float,
+        default=URL_PROBABILITY,
+        help=f"chance that each URL of an offered domain is drawn (default: {URL_PROBABILITY})",
     )
     parser.add_argument("--seed", type=int, help="seed the draw so it can be repeated")
     parser.add_argument(
@@ -441,7 +610,9 @@ def main():
         sample = {key: data[key] for key in SAMPLE_KEYS if key in data}
     else:
         rng = random.Random(args.seed) if args.seed is not None else random
-        sample = components.sample(args.num_domains, args.num_task_types, rng)
+        sample = components.sample(
+            args.num_domains, args.num_task_types, rng, url_probability=args.url_probability
+        )
     if args.show_sample:
         print(
             yaml.safe_dump(sample, sort_keys=False, allow_unicode=True),
