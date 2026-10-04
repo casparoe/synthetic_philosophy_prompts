@@ -77,7 +77,7 @@ DOMAINS_DIR = "domains"  # the source: one file per theme
 DOMAINS_FILE = "domains.yaml"  # a snapshot: all domains in one list
 LEGACY_DOMAINS_FILE = "domains.txt"  # snapshots before 2026-10-03: one per line
 # Each URL of an offered domain is shown with this probability, independently.
-URL_PROBABILITY = 0.05
+URL_PROBABILITY = 0.001
 
 # Everything the meta-prompt is built from goes into each batch's inputs/
 # directory for provenance: these files copied as they are, plus the task
