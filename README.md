@@ -56,7 +56,7 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
   domains/                3,490 philosophical domains sampled from, in 46 thematic
                           YAML files; a domain may list URLs of pages about it,
                           each shown to web-enabled generators with probability 0.05
-  task_types/             70 prompt genres, one file per genre (NNN_name.yaml, read in
+  task_types/             71 prompt genres, one file per genre (NNN_name.yaml, read in
                           name order), each with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
