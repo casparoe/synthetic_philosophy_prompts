@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS pages (
 GONE_PREFIX = "gone"
 
 WAYBACK_RE = re.compile(r"^https?://web\.archive\.org/web/\d*(?:[a-z]{2}_)?/(.+)$", re.I)
-FORUM_POST_RE = re.compile(r"^/(?:posts|s/[^/]+/p)/([A-Za-z0-9]{17})(?:/|$)")
+# Post IDs have 17 characters, or 24 hex digits for posts imported from older
+# sites (the Agent Foundations forum).
+FORUM_POST_RE = re.compile(r"^/(?:posts|s/[^/]+/p)/([A-Za-z0-9]{17}|[0-9a-f]{24})(?:/|$)")
 EA_FORUM_HOSTS = {"forum.effectivealtruism.org", "ea.greaterwrong.com"}
 LESSWRONG_HOSTS = {"lesswrong.com", "greaterwrong.com", "alignmentforum.org"}
 ARXIV_RE = re.compile(r"^/(?:abs|pdf|html)/(.+?)(?:v\d+)?(?:\.pdf)?/?$")

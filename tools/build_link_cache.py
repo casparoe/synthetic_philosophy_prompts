@@ -13,10 +13,11 @@ obeyed and crawl delays are honoured. Where a site has an API that gives
 cleaner text than its pages, that is used: Wikipedia (TextExtracts), Stack
 Exchange (api.stackexchange.com, 100 questions with all their answers per
 request; a question missing there comes from its Wayback copy), Substack
-(/api/v1/posts), LessWrong (GraphQL), and the EA Forum (the GraphQL API of
-forum-bots.effectivealtruism.org, the Forum's read-only mirror for bots, ten
-posts per request; the Forum itself puts scripts behind a Cloudflare
-challenge, and ea.greaterwrong.com allows only a few requests a minute).
+(/api/v1/posts), LessWrong and the EA Forum (their GraphQL APIs, ten posts
+per request; for the EA Forum that of forum-bots.effectivealtruism.org, its
+read-only mirror for bots, since the Forum itself puts scripts behind a
+Cloudflare challenge and ea.greaterwrong.com allows only a few requests a
+minute).
 Project Gutenberg books come from the PGLAF mirror, since gutenberg.org bans
 automated access; arXiv papers (the abstract page, then the HTML or PDF full
 text) at arxiv.org's crawl delay of 15 seconds.
@@ -32,6 +33,7 @@ Usage:
 """
 
 import argparse
+import functools
 import html as htmllib
 import io
 import logging
@@ -68,10 +70,14 @@ GUTENBERG_MIRROR = "https://gutenberg.pglaf.org"
 SE_FILTER = "!20aKG._8Oscv*6djs8Pgm"
 # EA Forum posts published from this date on are under CC BY 4.0.
 EA_FORUM_CC_BY_SINCE = "2022-12-01"
-# The Forum's read-only mirror for bots and agents (its robots.txt asks for
-# one request a second), and the posts asked for per request.
-EA_FORUM_GRAPHQL = "https://forum-bots.effectivealtruism.org/graphql"
-EA_FORUM_BATCH = 10
+# The forums' GraphQL APIs: the EA Forum's read-only mirror for bots and
+# agents (its robots.txt asks for one request a second) and LessWrong's own
+# (crawl delay 3); and the posts asked for per request.
+FORUM_GRAPHQL = {
+    "eaforum": "https://forum-bots.effectivealtruism.org/graphql",
+    "lesswrong": "https://www.lesswrong.com/graphql",
+}
+FORUM_BATCH = 10
 # Licences stated site-wide, for the header of their pages.
 HOST_LICENSES = {"gwern.net": "CC0", "standardebooks.org": "Public domain"}
 # Ordinary web pages: trafilatura's guess at the author is often wrong (a
@@ -98,7 +104,7 @@ WIKIPEDIA_TAIL = (
 DELAYS = {
     "wikipedia": 0.1,
     "eaforum": 2.0,  # ten posts per request
-    "lesswrong": 2.0,
+    "lesswrong": 3.0,  # ten posts per request
     "se": 2.0,
     "wayback": 3.0,
     "gutenberg": 2.0,
@@ -344,7 +350,7 @@ def html_to_text(root):
     if isinstance(root, str):
         if not root.strip():
             return ""
-        root = lxml.html.fragment_fromstring(root, create_parent="div")
+        root = lxml.html.fragment_fromstring(source_text(root, keep_space=True), create_parent="div")
     for el in root.xpath(".//script|.//style|.//noscript|.//svg|.//button|.//form|.//comment()"):
         el.drop_tree()
     # Line breaks in the HTML source are just spaces (except in <pre>), and
@@ -375,7 +381,11 @@ def html_to_text(root):
 
 
 def source_text(text, keep_space):
-    text = re.sub(r"[\x0b\x0c]", "\n", re.sub(r"[\x00-\x08\x0e-\x1f]", "", text))
+    """Text from the HTML source without the characters XML forbids (control
+    characters, noncharacters, lone surrogates), whitespace collapsed unless
+    keep_space."""
+    text = re.sub(r"[\x00-\x08\x0e-\x1f\ufffe\uffff\ud800-\udfff]", "", text)
+    text = re.sub(r"[\x0b\x0c]", "\n", text)
     return text if keep_space else re.sub(r"\s+", " ", text)
 
 
@@ -440,6 +450,31 @@ def page_text(html, url):
     }
 
 
+# Where blogs keep a post's text (Blogger's post-body, WordPress's
+# entry-content), for the pages trafilatura extracts nothing from.
+CONTENT_XPATHS = [
+    f"//div[contains(concat(' ', normalize-space(@class), ' '), ' {name} ')]"
+    for name in ("post-body", "entry-content", "post-content", "article-content")
+] + ["//article", "//main"]
+
+
+def container_text(html):
+    """The text of the page's main content container, without its share
+    buttons, or None if it has no such container with much text."""
+    doc = lxml.html.fromstring(html)
+    for xpath in CONTENT_XPATHS:
+        found = doc.xpath(xpath)
+        if not found:
+            continue
+        root = found[0]
+        for el in root.xpath(".//*[contains(@class, 'share') or contains(@class, 'social')]"):
+            el.drop_tree()
+        text = html_to_text(root)
+        if len(text) >= THIN_CHARS:
+            return text
+    return None
+
+
 def plausible_author(name):
     name = clean(name)
     if (
@@ -500,48 +535,6 @@ def fetch_wikipedia(site, robots, key, url):
     }
 
 
-def fetch_greaterwrong(site, robots, key, url):
-    """An EA Forum (or LessWrong) post from GreaterWrong: the post only, no comments."""
-    forum, post_id = key.split(":", 1)
-    host = "ea.greaterwrong.com" if forum == "eaforum" else "www.greaterwrong.com"
-    target = url if urllib.parse.urlsplit(url).hostname == host else f"https://{host}/posts/{post_id}"
-    if not robots.check(site, target):
-        return {"status": "robots"}
-    response = site.get(target)
-    if response.status_code != 200:
-        return http_failure(response)
-    if rate_limit_page(response):
-        return {"status": "error 429"}
-    doc = lxml.html.fromstring(response.text)
-    body = doc.xpath("//div[contains(concat(' ', normalize-space(@class), ' '), ' post-body ')]")
-    if not body:
-        return {"status": "error no post body"}
-    body = body[0]
-    for el in body.xpath(".//nav[contains(@class, 'contents')]"):
-        el.drop_tree()
-    title = first(h.text_content() for h in doc.xpath("//h1[contains(@class, 'post-title')]"))
-    authors, published = [], None
-    meta = doc.xpath("//div[contains(@class, 'top-post-meta')]")
-    if meta:
-        authors = [
-            a.text_content().strip()
-            for a in meta[0].xpath(".//*[contains(concat(' ', normalize-space(@class), ' '), ' author ')]")
-        ]
-        stamp = meta[0].xpath(".//*[@data-js-date]")
-        if stamp:
-            ms = int(stamp[0].get("data-js-date"))
-            published = datetime.fromtimestamp(ms / 1000, timezone.utc).date().isoformat()
-    license_ = None
-    if forum == "eaforum" and published and published >= EA_FORUM_CC_BY_SINCE:
-        license_ = "CC BY 4.0"
-    return {
-        "status": "ok", "method": "greaterwrong", "title": title,
-        "author": ", ".join(a for a in authors if a) or None,
-        "site": "EA Forum" if forum == "eaforum" else "LessWrong",
-        "published": published, "license": license_, "text": html_to_text(body),
-    }
-
-
 FORUM_POST_FIELDS = "title postedAt htmlBody user { displayName } coauthors { displayName }"
 
 
@@ -561,25 +554,14 @@ def forum_record(post, forum):
     }
 
 
-def fetch_lesswrong(site, robots, key, url):
-    post_id = key.split(":", 1)[1]
-    query = '{ post(input: {selector: {_id: "%s"}}) { result { %s } } }' % (post_id, FORUM_POST_FIELDS)
-    response = site.request("POST", "https://www.lesswrong.com/graphql", json={"query": query})
-    if response.status_code != 200 or "json" not in response.headers.get("content-type", ""):
-        return fetch_greaterwrong(site, robots, key, url)
-    post = ((response.json().get("data") or {}).get("post") or {}).get("result")
-    if not post:
-        return {"status": "gone missing"}
-    return forum_record(post, "lesswrong")
-
-
-def run_eaforum(jobs, store, robots, progress):
-    """EA Forum posts, EA_FORUM_BATCH per request (one aliased post query
-    each), from the Forum's mirror for bots."""
-    site = Site("eaforum", DELAYS["eaforum"])
-    allowed = robots.check(site, EA_FORUM_GRAPHQL)  # and take its crawl delay
-    for i in range(0, len(jobs), EA_FORUM_BATCH):
-        chunk = jobs[i: i + EA_FORUM_BATCH]
+def run_forum(forum, jobs, store, robots, progress):
+    """Posts of a forum (eaforum or lesswrong), FORUM_BATCH per request (one
+    aliased post query each), from its GraphQL API."""
+    site = Site(forum, DELAYS[forum])
+    endpoint = FORUM_GRAPHQL[forum]
+    allowed = robots.check(site, endpoint)  # and take its crawl delay
+    for i in range(0, len(jobs), FORUM_BATCH):
+        chunk = jobs[i: i + FORUM_BATCH]
         failure, data, errors = None, {}, {}
         if not allowed:
             failure = "robots"
@@ -590,7 +572,7 @@ def run_eaforum(jobs, store, robots, progress):
                 for n, (key, _) in enumerate(chunk)
             ) + " }"
             try:
-                response = site.request("POST", EA_FORUM_GRAPHQL, json={"query": query})
+                response = site.request("POST", endpoint, json={"query": query})
                 if response.status_code != 200:
                     failure = http_failure(response)["status"]
                 else:
@@ -608,7 +590,7 @@ def run_eaforum(jobs, store, robots, progress):
                 record = {"status": failure}
             elif post:
                 try:
-                    record = forum_record(post, "eaforum")
+                    record = forum_record(post, forum)
                 except Exception as e:  # noqa: BLE001 -- one bad post shouldn't stop the rest
                     record = {"status": f"error {type(e).__name__}", "note": str(e)[:200]}
             elif errors.get(f"p{n}") == "app.missing_document":
@@ -616,7 +598,7 @@ def run_eaforum(jobs, store, robots, progress):
             else:
                 record = {"status": "error api", "note": (errors.get(f"p{n}") or "no result")[:200]}
             store.put(key, url, **record)
-            progress.add("eaforum", record["status"])
+            progress.add(forum, record["status"])
 
 
 def gutenberg_record(raw, method):
@@ -651,16 +633,45 @@ def gutenberg_record(raw, method):
 def fetch_gutenberg(site, robots, key, url):
     """A book from the PGLAF mirror: its plain text; if that is missing or
     only a stub pointing at another format, the HTML edition; failing both,
-    whatever text or PDF file the book's directory has."""
+    the best of the files in the book's directory (HTML edition, plain text,
+    TeX source, PDF)."""
     number = key.split(":", 1)[1]
     digits = "/".join(number[:-1]) if len(number) > 1 else "0"
     epub = f"{GUTENBERG_MIRROR}/cache/epub/{number}/pg{number}"
+    folder = f"{GUTENBERG_MIRROR}/{digits}/{number}/"
 
     def get(target):
         if not robots.check(site, target):
             return None
         response = site.get(target)
         return response if response.status_code == 200 else None
+
+    def links(page):
+        return re.findall(r'href="([^"?/][^"]*)"', page.text) if page is not None else []
+
+    def from_folder(files):
+        """Records from the files of the book's directory, best formats first."""
+        if f"{number}-h/" in files:
+            page = get(f"{folder}{number}-h/{number}-h.htm")
+            body = lxml.html.fromstring(page.content).xpath("//body") if page is not None else []
+            if body:
+                yield gutenberg_record(html_to_text(body[0]), "gutenberg_mirror_html")
+        for name in sorted(f for f in files if f.endswith(".txt")):
+            page = get(folder + name)
+            if page is not None:
+                yield gutenberg_record(page.content.decode("utf-8", errors="replace"), "gutenberg_mirror")
+        if f"{number}-t/" in files:
+            for name in [f for f in links(get(f"{folder}{number}-t/")) if f.endswith(".tex")][:1]:
+                page = get(f"{folder}{number}-t/{name}")
+                if page is not None:
+                    yield gutenberg_record(page.content.decode("utf-8", errors="replace"), "gutenberg_mirror_tex")
+        for name in sorted(f for f in files if f.endswith(".pdf")):
+            page = get(folder + name)
+            if page is not None:
+                text, title = pdf_text(page.content)
+                pdf_record = gutenberg_record(text, "gutenberg_mirror_pdf")
+                pdf_record["title"] = pdf_record["title"] or title
+                yield pdf_record
 
     record = None
     page = get(epub + ".txt")
@@ -674,22 +685,12 @@ def fetch_gutenberg(site, robots, key, url):
                 html_record = gutenberg_record(html_to_text(body[0]), "gutenberg_mirror_html")
                 if record is None or len(html_record["text"]) > len(record["text"]):
                     record = html_record
-    if record is None:
-        listing = get(f"{GUTENBERG_MIRROR}/{digits}/{number}/")
-        files = re.findall(r'href="([^"?/][^"]*)"', listing.text) if listing is not None else []
-        for name in sorted(files, key=lambda f: (not f.endswith(".txt"), f)):
-            if name.endswith(".txt"):
-                page = get(f"{GUTENBERG_MIRROR}/{digits}/{number}/{name}")
-                if page is not None:
-                    record = gutenberg_record(page.content.decode("utf-8", errors="replace"), "gutenberg_mirror")
-                    break
-            elif name.endswith(".pdf"):
-                page = get(f"{GUTENBERG_MIRROR}/{digits}/{number}/{name}")
-                if page is not None:
-                    text, title = pdf_text(page.content)
-                    record = gutenberg_record(text, "gutenberg_mirror_pdf")
-                    record["title"] = record["title"] or title
-                    break
+    if record is None or len(record["text"]) < 2000:
+        for candidate in from_folder(links(get(folder))):
+            if record is None or len(candidate["text"]) > len(record["text"]):
+                record = candidate
+            if len(record["text"]) >= 2000:
+                break
     return record or {"status": "error mirror 404"}
 
 
@@ -838,13 +839,18 @@ def fetch_web(site, robots, key, url, include_comments=False):
         }
     html = response.text
     text, fields = page_text(html, str(response.url))
+    method = "html"
+    if len(text or "") < THIN_CHARS:
+        fallback = container_text(html)
+        if fallback and len(fallback) > len(text or ""):
+            text, method = fallback, "html_container"
     if include_comments and text:
         with_comments = trafilatura.extract(
             html, url=str(response.url), output_format="markdown", include_comments=True,
         )
         text = with_comments or text
     return {
-        "status": "ok", "method": "html", "text": text or "", "license": HOST_LICENSES.get(host),
+        "status": "ok", "method": method, "text": text or "", "license": HOST_LICENSES.get(host),
         **{k: v for k, v in fields.items() if v},
         "site": fields.get("site") or host,
     }
@@ -930,7 +936,6 @@ def run_stack_exchange(jobs, store, robots, progress):
 
 FETCHERS = {
     "wikipedia": fetch_wikipedia,
-    "lesswrong": fetch_lesswrong,
     "gutenberg": fetch_gutenberg,
     "sep": fetch_sep,
     "arxiv": fetch_arxiv,
@@ -938,7 +943,11 @@ FETCHERS = {
     "web": fetch_web,
 }
 # Kinds fetched many pages per request, each by its own loop.
-RUNNERS = {"se": run_stack_exchange, "eaforum": run_eaforum}
+RUNNERS = {
+    "se": run_stack_exchange,
+    "eaforum": functools.partial(run_forum, "eaforum"),
+    "lesswrong": functools.partial(run_forum, "lesswrong"),
+}
 
 
 class Progress:
