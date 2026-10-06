@@ -65,16 +65,21 @@ generators/
   generate_prompt.py        generator: Anthropic API, streaming
   generate_prompt_batch.py  generator: Anthropic Message Batches API
   generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
+  link_cache.py             the local copies of the domain links that generate_prompt_oai.py's
+                            web_fetch serves instead of the live pages, long ones in parts
   generate_responses.py     model responses to a prompt set (OpenAI-compatible endpoints, OpenRouter)
   judge_pairs.py            preference judgments over a pair set (Anthropic API, streamed or as Message Batches)
 tools/
   check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
+  build_link_cache.py       fetches every domain link once, politely, into link_cache/
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
   make_pair_set.py          writes a pair set: complete response pairs from one run (two samples) or two runs, seeded sample
   check_preferences.py      report for a preference run: coverage, verdicts, position balance, cost; agreement of two runs
 QUALITY_NOTES.md          known quality issues and per-batch measurements
+link_cache/               the linked pages' text (git-ignored and never uploaded: most
+                          of it is under copyright)
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
@@ -84,7 +89,8 @@ the additional instructions drawn (persona, writing style,
 length, and from batch 029 on further groups such as epistemic and output-format
 requests; recorded as one `additional_instructions` mapping from batch 029 on and as
 separate `length`/`persona`/`writing_style` keys before), token counts, the number
-of web searches and page fetches the generator performed, a summary of the
+of web searches and page fetches the generator performed (from 2026-10-05 also how
+many fetches the link cache answered, `web_fetches_cached`), a summary of the
 generator's reasoning, and a timestamp.
 
 ## How the prompts were generated
@@ -428,6 +434,7 @@ python generators/generate_prompt_oai.py -n 10 --web-tools --base-url https://op
     --model z-ai/glm-5.3 --api-key-file api_keys/openrouter.txt --reasoning-effort high \
     --temperature 1.0 --quantizations fp8,bf16,fp16 --provider-order io-net,siliconflow \
     --provider-ignore z-ai
+python tools/build_link_cache.py      # local copies of the domain links for web_fetch (a few hours)
 
 # responses: build a prompt set, answer it with an open-weight model, check the run
 python tools/make_prompt_set.py responses/sets/open_1k.txt --generator-model 'qwen|deepseek' --sample 1000 --seed 0

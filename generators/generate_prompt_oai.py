@@ -10,7 +10,10 @@ reasoning field goes into the sidecar and is stripped from the saved prompt.
 With --web-tools, the model gets web_search (DuckDuckGo via ddgs) and
 web_fetch (httpx + trafilatura) as client-executed function calls, looped
 until the model stops calling tools -- a poor man's version of the server
-tools the Anthropic runs get. llama-server must be launched with --jinja so
+tools the Anthropic runs get. web_fetch serves the domain links from the
+local link cache (link_cache/pages.sqlite, see tools/build_link_cache.py)
+when it exists, so their sites' rate limits don't matter, and reads long
+pages in parts (offset, find). llama-server must be launched with --jinja so
 tool calls are parsed. Only the final assistant message becomes the prompt,
 so mid-loop narration is dropped for free.
 
@@ -28,6 +31,7 @@ Usage:
 """
 
 import argparse
+import functools
 import json
 import re
 import socket
@@ -48,6 +52,7 @@ from ddgs import DDGS
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from meta_prompt import assemble  # noqa: E402
 from generate_prompt import REPO_ROOT, create_batch_dir, next_output_path  # noqa: E402
+import link_cache  # noqa: E402
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 
@@ -193,17 +198,37 @@ WEB_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "web_fetch",
-            "description": "Fetch a web page by URL and return its main text "
-            "content (truncated). Use for reading a specific page, e.g. to "
-            "quote a passage verbatim.",
+            "description": "Fetch a web page by URL and return its main text, "
+            "about 6,000 characters at a time, after a short header (title, "
+            "author, site, date, and license where known). Use for reading a "
+            "specific page, e.g. to quote a passage verbatim. A long page ends "
+            "with a note on how to read on: call again with offset to continue "
+            "from that character, or with find to get the passages containing "
+            "a word or phrase.",
             "parameters": {
                 "type": "object",
-                "properties": {"url": {"type": "string"}},
+                "properties": {
+                    "url": {"type": "string"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "character to start reading from (default 0)",
+                    },
+                    "find": {
+                        "type": "string",
+                        "description": "a word or phrase to look for: returns the "
+                        "passages around its first matches instead",
+                    },
+                },
                 "required": ["url"],
             },
         },
     },
 ]
+
+# The link cache (generators/link_cache.py, built by tools/build_link_cache.py)
+# when in use: web_fetch serves the domain links from it instead of the live
+# web, so the sites' rate limits don't apply. Set in main().
+LINK_CACHE = None
 
 # DuckDuckGo dislikes bursts; serialize searches across worker threads.
 search_lock = threading.Lock()
@@ -221,30 +246,46 @@ def run_web_search(query):
     )
 
 
-def run_web_fetch(url):
+@functools.lru_cache(maxsize=256)
+def live_page_text(url):
+    """Main text of a live page, remembered so that reading on with offset
+    or find doesn't fetch the page again."""
     response = httpx.get(
         url, timeout=20.0, follow_redirects=True,
         headers={"User-Agent": "Mozilla/5.0 (research script)"},
     )
     response.raise_for_status()
-    text = trafilatura.extract(response.text) or ""
+    return trafilatura.extract(response.text) or ""
+
+
+def run_web_fetch(url, offset=0, find=None):
+    """The page's text from the link cache if it has the page, else from the
+    live web; FETCH_CHAR_LIMIT characters from offset, or the passages around
+    find. Returns the tool result and where it came from: cache or live."""
+    find = str(find) if find is not None else None
+    page = LINK_CACHE.get(url) if LINK_CACHE is not None else None
+    if page is not None and page.ok:
+        return link_cache.render(page.text, page.header(), offset, find, FETCH_CHAR_LIMIT), "cache"
+    if page is not None and page.gone:
+        reason = page.status.split(" ", 1)[-1]
+        return f"Could not fetch that page: it no longer exists ({reason}).", "cache"
+    text = live_page_text(url)
     if not text:
-        return "Could not extract text content from that page."
-    if len(text) > FETCH_CHAR_LIMIT:
-        text = text[:FETCH_CHAR_LIMIT] + "\n[truncated]"
-    return text
+        return "Could not extract text content from that page.", "live"
+    return link_cache.render(text, [], offset, find, FETCH_CHAR_LIMIT), "live"
 
 
 def run_tool(name, arguments):
+    """The tool's result, and for web_fetch where the page came from."""
     try:
         args = json.loads(arguments or "{}")
         if name == "web_search":
-            return run_web_search(args["query"])
+            return run_web_search(args["query"]), None
         if name == "web_fetch":
-            return run_web_fetch(args["url"])
-        return f"Unknown tool: {name}"
+            return run_web_fetch(args["url"], args.get("offset") or 0, args.get("find"))
+        return f"Unknown tool: {name}", None
     except Exception as e:
-        return f"Tool error: {e!r}"
+        return f"Tool error: {e!r}", None
 
 
 def generation_defect(result):
@@ -289,6 +330,7 @@ def served_model_name(client, requested):
 
 
 def main():
+    global LINK_CACHE
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("-n", "--num-prompts", type=int, default=1)
     parser.add_argument("--num-domains", type=int, default=5)
@@ -346,6 +388,20 @@ def main():
         help="give the model client-executed web search/fetch tools",
     )
     parser.add_argument(
+        "--link-cache",
+        type=Path,
+        default=link_cache.DEFAULT_PATH,
+        metavar="FILE",
+        help="serve web_fetch from this link cache where it has the page "
+        "(default: link_cache/pages.sqlite; without the file every page is "
+        "fetched live)",
+    )
+    parser.add_argument(
+        "--no-link-cache",
+        action="store_true",
+        help="fetch every page live, even the domain links the cache has",
+    )
+    parser.add_argument(
         "--continue-batch",
         metavar="DIR",
         help="append -n more prompts to this existing batch instead of starting a "
@@ -381,6 +437,14 @@ def main():
         provider["ignore"] = args.provider_ignore.split(",")
     # OpenRouter reports the cost and the serving provider of each request.
     openrouter = "openrouter.ai" in args.base_url
+    cached_pages = None  # pages in the link cache, if it is used
+    if args.web_tools and not args.no_link_cache:
+        if args.link_cache.exists():
+            LINK_CACHE = link_cache.LinkCache(args.link_cache)
+            cached_pages = LINK_CACHE.stats().get("ok", 0)
+            print(f"link cache: {cached_pages} pages", flush=True)
+        else:
+            print(f"no link cache at {args.link_cache}: every page is fetched live", flush=True)
 
     continuing = Path(args.continue_batch).resolve() if args.continue_batch else None
     components = assemble.load(continuing / "inputs") if continuing else assemble.load()
@@ -406,6 +470,7 @@ def main():
                 "read_timeout": args.read_timeout,
                 "provider_order": provider.get("order"),
                 "provider_ignore": provider.get("ignore"),
+                "link_cache_pages": cached_pages,
             }
         )
         (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -439,6 +504,8 @@ def main():
         config["provider_ignore"] = provider["ignore"]
     if args.first_id > 1:
         config["first_id"] = args.first_id
+    if cached_pages is not None and not continuing:
+        config["link_cache_pages"] = cached_pages
     (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     print(f"writing batch to {batch_dir.relative_to(REPO_ROOT)}", flush=True)
 
@@ -458,6 +525,7 @@ def main():
             stats = {
                 "searches": 0,
                 "fetches": 0,
+                "cached_fetches": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "cost": 0.0,
@@ -540,11 +608,14 @@ def main():
                         stats["searches"] += 1
                     elif name == "web_fetch":
                         stats["fetches"] += 1
+                    content, source = run_tool(name, function.get("arguments"))
+                    if source == "cache":
+                        stats["cached_fetches"] += 1
                     messages.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.get("id"),
-                            "content": run_tool(name, function.get("arguments")),
+                            "content": content,
                         }
                     )
             return None
@@ -618,9 +689,12 @@ def main():
             "effort": args.reasoning_effort,
             "web_searches": result["searches"],
             "web_fetches": result["fetches"],
-            "input_tokens": result["input_tokens"],
-            "output_tokens": result["output_tokens"],
         }
+        if LINK_CACHE is not None:
+            # how many of the fetches the link cache answered
+            metadata["web_fetches_cached"] = result["cached_fetches"]
+        metadata["input_tokens"] = result["input_tokens"]
+        metadata["output_tokens"] = result["output_tokens"]
         if openrouter:
             metadata["cost_usd"] = round(result["cost"], 6)
             metadata["providers"] = sorted(result["providers"])
