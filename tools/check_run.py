@@ -3,8 +3,8 @@
 
 Coverage against the run's prompt set, finish reasons, missing chains of
 thought or answers, <think> tags and tool-call markup left in answers,
-refusal phrases, repeated phrases, garbage tails and answers cut off after a
-bare '>', reasoning and answer lengths, cost, and the provider mix. Findings are tracked in QUALITY_NOTES.md.
+refusal phrases, repeated phrases and loops, garbage tails and answers cut off
+after a bare '>', reasoning and answer lengths, cost, and the provider mix. Findings are tracked in QUALITY_NOTES.md.
 
     tools/check_run.py responses/run_000 [--top 5]
 """
@@ -24,7 +24,8 @@ from generate_responses import RECORD_FILE_RE, read_prompt_set  # noqa: E402
 
 LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 WORD = re.compile(r"[a-z0-9']+")
-MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|</invoke>|<function_calls?>|<\|im_start\||<\|channel\|>|<\|end\|>")
+MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|</invoke>|<function_calls?>|<\|im_start\||<\|channel\|>|<\|end\|>"
+                    r"|<browser>|<query>")   # pretend browser calls instead of an answer (run 039, 2026-10-12)
 THINK_TAG = re.compile(r"</?think>")
 REFUSAL = re.compile(
     r"\b(I can(?:'|no)t (?:help|assist|comply|provide|write)|I(?:'m| am) (?:unable|not able) to (?:help|assist|comply|provide)"
@@ -76,10 +77,15 @@ def load(run_dir):
     return records
 
 
-def repeats(text, n=12, times=3):
+def top_repeat(text, n=12):
+    """How often the most frequent n-word phrase of the text occurs."""
     w = WORD.findall(text.lower())
     counts = collections.Counter(" ".join(w[i:i + n]) for i in range(len(w) - n + 1))
-    return bool(counts) and counts.most_common(1)[0][1] >= times
+    return counts.most_common(1)[0][1] if counts else 0
+
+
+def repeats(text, n=12, times=3):
+    return top_repeat(text, n) >= times
 
 
 def main():
@@ -125,7 +131,12 @@ def main():
     flag("tool/chat markup in answer", [r for r in records if MARKUP.search(r.get("answer") or "")])
     flag("refusal phrase in answer", [r for r in records if REFUSAL.search(r.get("answer") or "")])
     flag(f"answer under {SHORT_WORDS} words", [r for r in records if r.get("answer") and words(r["answer"]) < SHORT_WORDS])
-    flag("answer repeats a 12-word phrase 3+ times", [r for r in records if repeats(r.get("answer") or "")])
+    reps = [top_repeat(r.get("answer") or "") for r in records]
+    flag("answer repeats a 12-word phrase 3+ times", [r for r, k in zip(records, reps) if k >= 3])
+    # A finished answer that loops (run 029: a proposal ending in 2,700 words of chant,
+    # a worked example stuck repeating one line); refrains and table rows rarely reach 15.
+    flag("finished answer repeats a 12-word phrase 15+ times (a loop?)",
+         [r for r, k in zip(records, reps) if k >= 15 and r.get("finish_reason") == "stop"])
     flag("answer ends in a run of one odd character", [r for r in records if odd_tail(r.get("answer") or "")])
     flag("answer ends in a bare '>' (cut off at the host?)", [r for r in records if bare_gt(r.get("answer") or "")])
 

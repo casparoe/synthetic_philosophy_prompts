@@ -4,7 +4,7 @@
 Checks: counts and skips, cost / token / provider mix (where recorded), ID
 collisions across all batches, leak scans (tool-call markup, chat preambles, leaked deliberation,
 process notes before the prompt, dataset-construction framing, prompts wrapped
-in quotes), example echo (prompts
+in quotes), stray East Asian words and word salad, example echo (prompts
 reusing wording from the task-type examples they were shown), verbatim copying
 of the additional-instruction text, near-duplicate prompt pairs, the most
 repeated eight-word phrases, and whether every sidecar re-renders from the
@@ -21,6 +21,7 @@ import pathlib
 import re
 import statistics as st
 import sys
+import unicodedata
 
 import yaml
 
@@ -29,7 +30,7 @@ sys.path.insert(0, str(REPO / "meta_prompt"))
 import assemble  # noqa: E402
 
 WORD = re.compile(r"[a-z0-9']+")
-MARKUP = re.compile(r"<｜DSML｜|<\|DSML\||</?tool_call|arg_value|arg_key|</invoke>|<function_calls?>|<\|im_start\||</?think[>:\s]")
+MARKUP = re.compile(r"<｜|<\|DSML\||</?tool_call|arg_value|arg_key|</invoke>|<function_calls?>|<\|im_start\||</?think[>:\s]")
 PREAMBLE = re.compile(r"^(here is (the|your|my|a) prompt|here's (the|your|my|a) prompt|this looks good|this is my final"
                       r"|i'll rely on|i will rely on|(sure|okay|ok)[,!] here('s| is) (the|your|a) prompt|certainly[,!] here)", re.I)
 META = re.compile(r"dataset of (philosoph[a-z]* )?prompts|prompt for (the|this|your) dataset"
@@ -58,11 +59,50 @@ LEAK_VOCAB_RE = re.compile(
     r"|\bOutput the prompt only\b|\bPolish wording\b|\bLength is reasonable\b"
     r"|\bthe (?:text|page|source) I fetched\b|\ba domain and a (?:prompt )?type\b|\bwhether you want only the prompt text\b"
     r"|\bSorry, I can'?t\b.{0,40}\bprompt\b|\bthe final should be (?:just )?the prompt\b|\bLet me ensure no\b|\bprovide (?:the )?final answer now\b"
-    r"|\bNo quotation marks used\b|\bType: [^\n]{0,80}\bDomain: |\bDomain: [^\n]{0,80}\bType: ",
+    r"|\bNo quotation marks used\b|\bType: [^\n]{0,80}\bDomain: |\bDomain: [^\n]{0,80}\bType: "
+    # the end of a planning section glued to the prompt's first word ("Final composition.I teach ...", batch 060)
+    r"|(?-i:Final composition)\.(?=[A-Z])",
     re.I | re.S,
 )
 GLUE_RE = re.compile(r"\b(?:final|output|text|prompt|it|only|now|this|version|answer)(?=[A-Z][a-z]{2,})")
 MIN_WORDS = 40
+
+# A Chinese word standing in for an English one, glued to the English around it ("a norm of
+# belief更新", "agency:她 weighs"): Tencent HY4 did this in 0.4-1.6% of its prompts (batches
+# 043, 045, 054, 059), GLM-5.3 and Qwen3.8 2.4T in under 0.1%, DeepSeek V4 Pro and MiMo a
+# few times. Quoted terms are set off by a space or a parenthesis ("the Chinese term 道 (dao)",
+# "白馬非馬") and do not match.
+EAST_ASIAN = "\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af"  # kana, CJK ideographs, Hangul
+EAST_ASIAN_RE = re.compile(f"[{EAST_ASIAN}]")
+STRAY_EAST_ASIAN_RE = re.compile(f"[A-Za-z][,:;]?[{EAST_ASIAN}]|[{EAST_ASIAN}][A-Za-z]")
+# HY4 also set stray words off by a space, a dash or a full stop ("my hunch is the 니 answer",
+# "two jobs —機械 ability"); in a prompt that is not about East Asian languages or thought,
+# any East Asian characters outside brackets are suspect.
+EAST_ASIAN_TOPIC_RE = re.compile(
+    r"chinese|japanese|korean|mandarin|cantonese|kanji|\bkana\b|hiragana|katakana|hangul|hanja|pinyin"
+    r"|confuci|mencius|mengzi|xunzi|zhuangzi|laozi|lao tzu|daois|taois|mozi|mohis|han fei|legalis"
+    r"|gongsun|hui shi|school of names|white horse|wang yangming|zhu xi|analects|dao ?de ?jing"
+    r"|tao te ching|yijing|i ching|buddhis|sutra|\bzen\b|sanskrit|china|japan|korea|chengyu"
+    r"|nishida|d[oō]gen|watsuji|kyoto school|(?:tang|song|ming|qing) dynasty", re.I)
+BRACKETED_EAST_ASIAN_RE = re.compile(f"[(（\\[][^()（）\\[\\]\\n]{{0,40}}[{EAST_ASIAN}][^()（）\\[\\]\\n]{{0,40}}[)）\\]]")
+# Word salad: HY4 sometimes ends a prompt with a long run of random words, either from several
+# writing systems at once (Latin, Cyrillic, Chinese, Arabic, Hangul; batch 059) or random
+# English words without punctuation. Greek and math letters are not counted as scripts.
+SCRIPTS = {"CYRILLIC", "ARMENIAN", "HEBREW", "ARABIC", "SYRIAC", "THAANA", "DEVANAGARI", "BENGALI",
+           "GURMUKHI", "GUJARATI", "ORIYA", "TAMIL", "TELUGU", "KANNADA", "MALAYALAM", "SINHALA",
+           "THAI", "LAO", "TIBETAN", "MYANMAR", "GEORGIAN", "HANGUL", "ETHIOPIC", "CHEROKEE", "KHMER",
+           "MONGOLIAN", "CJK", "HIRAGANA", "KATAKANA", "BOPOMOFO"}
+FUNCTION_WORDS = set(
+    # English, then frequent Spanish, French, German, Italian, Portuguese and Latin ones, so
+    # quoted passages in those languages are not taken for word salad
+    "the of and to a in is that it for as with on be this are or not by an but at from have was what"
+    " which if can i you we they he she do does would should could will my your our their its there"
+    " than so about into because when how why who more one no all any"
+    " de la que el en y los se del las un por con una su para es al lo como pero sus le ya o este si"
+    " et les des du une est pour qui dans par plus pas au sur ne ce il sont avec"
+    " der die und den von zu das mit sich auf ist im dem nicht ein eine als auch es er hat aus bei sind"
+    " di e il che per non sono i da della do da em um os na ad cum quod ut quae sed ex enim esse nec"
+    " vel aut autem".split())
 
 # A note on the generator's own procedure placed before the prompt; kept in
 # sync with generators/generate_prompt_oai.py.
@@ -129,6 +169,43 @@ def leaked_deliberation(prompt_text):
     for m in PARAGRAPH_START_RE.finditer(prompt_text):
         if m.start(1) >= 150 and SELF_REVIEW_RE.match(m.group(1).strip()):
             return "self-review after the prompt"
+    return None
+
+
+def stray_east_asian(text):
+    """True if the text has East Asian characters that look like a stray word rather than a
+    quoted term: glued to the English around them, or in a prompt on some other subject and
+    not in brackets."""
+    if not EAST_ASIAN_RE.search(text):
+        return False
+    if STRAY_EAST_ASIAN_RE.search(text):
+        return True
+    return not EAST_ASIAN_TOPIC_RE.search(text) and bool(EAST_ASIAN_RE.search(BRACKETED_EAST_ASIAN_RE.sub("", text)))
+
+
+def other_scripts(text):
+    """The writing systems other than Latin and Greek with at least two letters in the text."""
+    letters = collections.Counter()
+    for ch in re.findall(r"[^\x00-\x7f]", text):
+        if ch.isalpha():
+            script = unicodedata.name(ch, "").split(" ", 1)[0]
+            if script in SCRIPTS:
+                letters["CJK" if script in ("HIRAGANA", "KATAKANA", "BOPOMOFO") else script] += 1
+    return sorted(s for s, k in letters.items() if k >= 2)
+
+
+def word_salad(text, width=40, step=5):
+    """The start of the first stretch of `width` words that are nearly all bare words of ASCII
+    letters (no punctuation, digits or symbols, so not a formula or a list of names), mostly
+    different from each other (not coin flips or a table's labels), with at most two function
+    words among them, or None."""
+    words = text.split()
+    for i in range(0, len(words) - width + 1, step):
+        window = words[i:i + width]
+        if (sum(w.isascii() and w.isalpha() for w in window) >= 0.9 * width
+                and len({w.lower() for w in window}) >= 0.75 * width
+                and sum(w.lower() in FUNCTION_WORDS for w in window) <= 0.05 * width):
+            return " ".join(window[:8])
     return None
 
 
@@ -216,7 +293,8 @@ def main():
     print(f"words: median {st.median(words):.0f}, min {min(words)}, max {max(words)}; under {MIN_WORDS}: "
           f"{sum(w < MIN_WORDS for w in words)}")
     flag = lambda rx, where=lambda t: t: [name for name, t in texts.items() if rx.search(where(t))]
-    print("tool-call markup:", flag(MARKUP)[:5] or "none")
+    markup = flag(MARKUP)
+    print(f"tool-call markup or special tokens: {len(markup)}", markup[:5] or "none")
     print("chat preamble at start:", flag(PREAMBLE, lambda t: t.strip())[:5] or "none")
     notes = [name for name, t in texts.items() if process_note(t)]
     print("process note before the prompt:", notes[:8] or "none")
@@ -226,6 +304,14 @@ def main():
     print(f"dataset-construction framing or relayed instructions: {len(framing)}", framing[:8] or "none")
     quoted = [name for name, t in texts.items() if t.strip().startswith(('"', "“")) and t.strip().endswith(('"', "”"))]
     print("wrapped in quotes / pure dialogue:", quoted[:5] or "none")
+    stray = [name for name, t in texts.items() if stray_east_asian(t)]
+    print(f"East Asian characters: {len(flag(EAST_ASIAN_RE))}; a stray word (glued to the English around it, "
+          f"or off-topic and unbracketed): {len(stray)}", stray[:8] or "none")
+    mixed = {name: s for name, t in texts.items() if len(s := other_scripts(t)) >= 2}
+    print(f"letters from two or more writing systems besides Latin and Greek: {len(mixed)}",
+          [f"{name} ({'/'.join(s)})" for name, s in list(mixed.items())[:5]] or "none")
+    salad = [name for name, t in texts.items() if word_salad(t)]
+    print(f"word salad (40 bare words with at most two function words): {len(salad)}", salad[:5] or "none")
 
     # -- example echo --------------------------------------------------------------------------
     ex, note = load_examples(b)

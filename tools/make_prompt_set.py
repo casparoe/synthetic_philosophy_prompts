@@ -5,7 +5,9 @@ Starts from every prompt under prompts/, optionally keeps only some batches
 or only prompts whose sidecar names a generating model matching a regex (e.g.
 'qwen|deepseek' for the prompts written by open-weight models), drops the IDs
 of any --exclude sets and the prompts that already have a response in any
---without-response run, and optionally takes a seeded random sample. The file
+--without-response run (with --fewer-than N: N or more response files across
+those runs, e.g. 2 to keep the prompts that have a single sample), and
+optionally takes a seeded random sample. The file
 opens with comment lines that record how it was made; IDs follow, sorted.
 
     tools/make_prompt_set.py responses/sets/open_1k.txt --generator-model 'qwen|deepseek' --sample 1000 --seed 0
@@ -13,8 +15,11 @@ opens with comment lines that record how it was made; IDs follow, sorted.
     tools/make_prompt_set.py responses/sets/open_1k_sub100.txt --from responses/sets/open_1k.txt --sample 100
     tools/make_prompt_set.py responses/sets/r1_gap.txt --batches 022-040 \
         --without-response responses/run_003 responses/run_006 responses/run_009 responses/run_010
+    tools/make_prompt_set.py responses/sets/second_sample.txt --batches 000-053 \
+        --without-response responses/run_003 responses/run_005_imported ... --fewer-than 2
 """
 import argparse
+import collections
 import pathlib
 import random
 import re
@@ -38,14 +43,15 @@ def parse_batches(spec):
     return batches
 
 
-def answered_in(run_dir):
-    """Prompt IDs that have at least one response file in a run."""
-    ids = set()
-    for path in pathlib.Path(run_dir).glob("prompt_*.yaml"):
-        m = RECORD_FILE_RE.fullmatch(path.name)
-        if m:
-            ids.add(f"prompt_{int(m.group(1)):05d}")
-    return ids
+def response_counts(run_dirs):
+    """Prompt ID -> number of response files across these runs (one per sample)."""
+    counts = collections.Counter()
+    for run_dir in run_dirs:
+        for path in pathlib.Path(run_dir).glob("prompt_*.yaml"):
+            m = RECORD_FILE_RE.fullmatch(path.name)
+            if m:
+                counts[f"prompt_{int(m.group(1)):05d}"] += 1
+    return counts
 
 
 def generating_model(prompt_path):
@@ -70,6 +76,11 @@ def main():
         "--without-response", metavar="RUN", nargs="*", default=[],
         help="drop the prompts that already have a response file in these run directories",
     )
+    parser.add_argument(
+        "--fewer-than", type=int, metavar="N", default=1,
+        help="with --without-response: drop only the prompts that have N or more response files "
+        "across those runs (default: 1, i.e. any)",
+    )
     parser.add_argument("--sample", type=int, metavar="N", help="random sample of N prompts (default: all)")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -88,9 +99,7 @@ def main():
     excluded = set()
     for set_file in args.exclude:
         excluded.update(read_prompt_set(set_file))
-    answered = set()
-    for run_dir in args.without_response:
-        answered.update(answered_in(run_dir))
+    answered = {pid for pid, k in response_counts(args.without_response).items() if k >= args.fewer_than}
     n_before = len(paths)
     paths = [p for p in paths if p.stem not in excluded]
     n_excluded = n_before - len(paths)
@@ -113,7 +122,9 @@ def main():
     if args.exclude:
         filters.append(f"minus {n_excluded} in {', '.join(args.exclude)}")
     if args.without_response:
-        filters.append(f"minus {n_answered} already answered in {', '.join(args.without_response)}")
+        filters.append(f"minus {n_answered} already answered"
+                       + (f" {args.fewer_than}+ times" if args.fewer_than > 1 else "")
+                       + f" in {', '.join(args.without_response)}")
     header = [
         f"# prompt set written {datetime.now(timezone.utc).isoformat(timespec='seconds')} by "
         + shlex.join(["tools/make_prompt_set.py", *sys.argv[1:]]),
