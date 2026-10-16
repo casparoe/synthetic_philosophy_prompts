@@ -49,6 +49,14 @@ from generate_prompt import (  # noqa: E402
 MAX_ROUNDS = 5
 RETRY_ATTEMPTS = 10
 RETRY_WAIT = 60
+# Creating a batch can be refused while the queue of unprocessed batch requests is full;
+# keep trying for up to six hours instead of abandoning a half-submitted round.
+CREATE_RETRY_ATTEMPTS = 72
+CREATE_RETRY_WAIT = 300
+
+# Fast YAML for samples.yaml, which holds one sample per prompt (about 0.5 GB at 200k).
+YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+YAML_DUMPER = getattr(yaml, "CSafeDumper", yaml.SafeDumper)
 
 # Keep well under the API's 256 MB / 100k-requests per-batch caps.
 # Continuation requests carry the whole accumulated conversation
@@ -57,24 +65,29 @@ CHUNK_BYTES = 150 * 1024 * 1024
 CHUNK_REQUESTS = 10_000
 
 
-def with_retries(fn, what):
+def with_retries(fn, what, attempts=RETRY_ATTEMPTS, wait=RETRY_WAIT):
     """Retry transient failures; a sleeping laptop breaks connections."""
-    for attempt in range(RETRY_ATTEMPTS):
+    for attempt in range(attempts):
         try:
             return fn()
+        except (anthropic.BadRequestError, anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+            raise  # retrying cannot fix the request itself
         except Exception as e:
             print(
                 f"warning: {what} failed ({e.__class__.__name__}), "
-                f"retry {attempt + 1}/{RETRY_ATTEMPTS} in {RETRY_WAIT}s",
+                f"retry {attempt + 1}/{attempts} in {wait}s",
                 file=sys.stderr,
                 flush=True,
             )
-            time.sleep(RETRY_WAIT)
-    raise RuntimeError(f"{what} kept failing after {RETRY_ATTEMPTS} attempts")
+            time.sleep(wait)
+    raise RuntimeError(f"{what} kept failing after {attempts} attempts")
 
 
-def submit_chunked(client, sized_requests):
-    """Submit (request, estimated_bytes) pairs as one or more batches."""
+def submit_chunked(client, sized_requests, on_created=None):
+    """Submit (request, estimated_bytes) pairs as one or more batches.
+
+    on_created(batch_id) is called right after each batch is created, so the IDs
+    are on disk even if a later chunk fails or the process dies mid-round."""
     batch_ids = []
     chunk, size = [], 0
 
@@ -85,8 +98,12 @@ def submit_chunked(client, sized_requests):
             batch = with_retries(
                 lambda: client.messages.batches.create(requests=requests),
                 "batch create",
+                attempts=CREATE_RETRY_ATTEMPTS,
+                wait=CREATE_RETRY_WAIT,
             )
             batch_ids.append(batch.id)
+            if on_created:
+                on_created(batch.id)
             chunk, size = [], 0
 
     for request, est in sized_requests:
@@ -183,7 +200,7 @@ def main():
         # Re-render the requests from the batch's own inputs snapshot so the
         # reconstructed user messages match what the server already saw.
         components = assemble.load(batch_dir / "inputs")
-        samples = yaml.safe_load((batch_dir / "samples.yaml").read_text())
+        samples = yaml.load((batch_dir / "samples.yaml").read_text(), Loader=YAML_LOADER)
         done = set()
         for meta_path in batch_dir.glob("prompt_*.meta.yaml"):
             cid = yaml.safe_load(meta_path.read_text()).get("custom_id")
@@ -257,7 +274,7 @@ def main():
                 "est_bytes": len(meta_prompt.encode()) + 2000,
             }
         (batch_dir / "samples.yaml").write_text(
-            yaml.safe_dump(samples, sort_keys=True, allow_unicode=True)
+            yaml.dump(samples, Dumper=YAML_DUMPER, sort_keys=True, allow_unicode=True)
         )
 
     # Higher ceiling than the streaming script: with no pause_turn to split
@@ -311,10 +328,11 @@ def main():
                 sized_requests.append(
                     ({"custom_id": cid, "params": params}, state["est_bytes"])
                 )
-            batch_ids = submit_chunked(client, sized_requests)
-            with (batch_dir / "message_batches.txt").open("a") as f:
-                for bid in batch_ids:
+            def record(bid, round_no=round_no):
+                with (batch_dir / "message_batches.txt").open("a") as f:
                     f.write(f"round {round_no}: {bid}\n")
+
+            batch_ids = submit_chunked(client, sized_requests, on_created=record)
             print(
                 f"round {round_no}: submitted {len(pending)} requests "
                 f"in {len(batch_ids)} batch(es)",
@@ -323,12 +341,14 @@ def main():
         poll_until_ended(client, batch_ids, args.poll_interval)
 
         next_pending = {}
+        seen = set()
         for bid in batch_ids:
             for result in iter_results(client, bid):
                 cid = result.custom_id
                 state = pending.get(cid)
                 if state is None:
                     continue  # already finalized before a resume
+                seen.add(cid)
                 outcome = result.result
                 if outcome.type != "succeeded":
                     error_type = getattr(
@@ -370,6 +390,13 @@ def main():
                         file=sys.stderr,
                     )
                     skipped += 1
+        # Requests in no batch of this round (the process died, or batch creation was
+        # refused, partway through submitting it) go out with the next round.
+        unsent = [cid for cid in pending if cid not in seen and cid not in next_pending]
+        for cid in unsent:
+            next_pending[cid] = pending[cid]
+        if unsent:
+            print(f"round {round_no}: {len(unsent)} requests were never submitted; carried over", flush=True)
         pending = next_pending
         print(
             f"round {round_no} done: {finalized} finalized, {skipped} skipped, "

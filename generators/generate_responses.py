@@ -204,12 +204,17 @@ def parse_message(message):
     The chain of thought normally arrives in `reasoning` (OpenRouter, vLLM's
     reasoning_content, ...); reasoning_details says whether that is the full
     text or only a summary. Some servers instead leave it inline as
-    <think>...</think>, which is moved out of the answer here."""
+    <think>...</think>, which is moved out of the answer here; when the chat
+    template opens the <think> tag in the prompt (llama.cpp with
+    --reasoning-format none), only the closing tag arrives, and everything
+    before it is the reasoning."""
     content = message.get("content") or ""
     reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
     details = message.get("reasoning_details") or []
     if not reasoning:
         reasoning = "".join(d.get("text") or "" for d in details if d.get("type") == "reasoning.text")
+    if not reasoning and "</think>" in content and "<think>" not in content:
+        reasoning, _, content = content.partition("</think>")
     if "<think>" in content:
         inline = THINK_RE.findall(content)
         if inline:
@@ -385,6 +390,11 @@ def main():
     parser.add_argument("--out-dir", metavar="DIR", help="where run_NNN/ directories go (default: responses/)")
     parser.add_argument("--resume", metavar="RUN_DIR", help="continue an existing run; settings come from its run.yaml")
     parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument(
+        "--read-timeout", type=float, metavar="SECONDS",
+        help="how long to wait for a (non-streamed) response (default: 2400; a slow local server "
+        "needs more, e.g. 10800); kept in run.yaml for --resume",
+    )
     parser.add_argument("--limit", type=int, metavar="N", help="answer at most N prompts this invocation")
     parser.add_argument("--dry-run", action="store_true", help="print the first request instead of sending anything")
     args = parser.parse_args()
@@ -429,6 +439,9 @@ def main():
             "provider": provider or None,
         }
 
+    if args.read_timeout is not None:
+        cfg["read_timeout"] = args.read_timeout
+
     ids = read_prompt_set(set_path)
     if len(set(ids)) != len(ids):
         raise SystemExit(f"{set_path}: contains duplicate prompt IDs")
@@ -444,7 +457,7 @@ def main():
     client = httpx.Client(
         base_url=cfg["base_url"],
         headers=headers,
-        timeout=httpx.Timeout(2400.0, connect=30.0),
+        timeout=httpx.Timeout(cfg.get("read_timeout") or 2400.0, connect=30.0),
         transport=httpx.HTTPTransport(retries=2, socket_options=KEEPALIVE_OPTIONS),
     )
 

@@ -55,8 +55,8 @@ LEGACY_WEB_TOOLS = [
 def uses_legacy_api(model):
     """Whether the model predates the 4.6-generation API, meaning no adaptive
     thinking (manual budget_tokens instead), no output_config.effort, and no
-    dynamic-filtering web tools. E.g. Haiku 4.5."""
-    return not re.search(r"(fable|mythos|opus|sonnet)-(5|4-[678])", model)
+    dynamic-filtering web tools. E.g. Haiku 4.5 (Haiku 5.5 is current)."""
+    return not re.search(r"(fable|mythos|opus|sonnet|haiku)-(5|4-[678])", model)
 
 
 def create_batch_dir():
@@ -176,6 +176,13 @@ def main():
         default=8,
         help="how many prompts to generate in parallel (default: 8)",
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=32000,
+        help="output token ceiling per response, thinking included (default: "
+        "32000; Haiku 5.5 at xhigh effort needs 64000)",
+    )
     args = parser.parse_args()
 
     legacy = uses_legacy_api(args.model)
@@ -189,7 +196,9 @@ def main():
         )
 
     components = assemble.load()
-    client = anthropic.Anthropic()
+    # More retries than the SDK's default 2, so rate-limit and overload errors
+    # back off and retry instead of costing the prompt.
+    client = anthropic.Anthropic(max_retries=6)
 
     batch_dir = create_batch_dir()
     components.snapshot(batch_dir / "inputs")
@@ -203,6 +212,7 @@ def main():
                 "web_tools": not args.no_web_tools,
                 "num_prompts": args.num_prompts,
                 "concurrency": args.concurrency,
+                "max_tokens": args.max_tokens,
                 "num_domains": args.num_domains,
                 "num_task_types": args.num_task_types,
             },
@@ -218,7 +228,7 @@ def main():
 
         request = {
             "model": args.model,
-            "max_tokens": 32000,
+            "max_tokens": args.max_tokens,
         }
         if legacy:
             request["thinking"] = {"type": "enabled", "budget_tokens": 16000}
