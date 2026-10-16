@@ -64,6 +64,17 @@ re-render from the batch's snapshot; those should simply be zero.
 | 053 | MiMo-V2.6-Pro (OpenRouter, Xiaomi and DeepInfra) | 1,000 | 4.8% | 18.9% | 6.8% / 7.7% | classroom-activity example 0, 10; procedure example 0, 7 |
 | 054 | HY4 preview (OpenRouter, Tencent) | 50,000 | 1.3% | 9.0% | 7.0% / 2.8% | classroom-activity example 0, 107; procedure example 0, 91 |
 | 055 | MiMo-V2.6-Pro (OpenRouter, DeepInfra, GMICloud, Xiaomi) | 50,000 | 4.9% | 17.7% | 10.1% / 7.0% | classroom-activity example 0, 506; procedure example 0, 337 |
+| 056 | MiMo-V2.6-Pro (OpenRouter, DeepInfra, GMICloud) | 5,000 | 9.9% | 24.2% | 11.4% / 8.9% | referee-report example 0, 74; classroom-activity example 0, 62 |
+| 057 | MiMo-V2.6-Pro (OpenRouter, DeepInfra) | 5,000 | 10.5% | 26.6% | 9.4% / 7.5% | referee-report example 0, 82; classroom-activity example 0, 65 |
+| 058 | MiMo-V2.6-Pro (OpenRouter, DeepInfra) | 5,000 | 10.2% | 25.4% | 11.5% / 7.4% | referee-report example 0, 62; classroom-activity example 0, 61 |
+| 059 | HY4 preview (OpenRouter, Tencent) | 4,995 | 7.3% | 21.7% | 9.0% / 4.4% | referee-report example 0, 44; graded-script example 1, 34 |
+| 060 | MiMo-V2.6-Pro (OpenRouter, DeepInfra) | 5,000 | 10.4% | 25.6% | 11.5% / 9.0% | referee-report example 0, 87; classroom-activity example 0, 63 |
+| 062 | GLM-5.3 (OpenRouter, SiliconFlow) | 1,000 | 6.3% | 19.8% | 10.2% / 3.7% | transcript example 0, 9; graded-answer example 0, 7 |
+| 063 | Claude Haiku 5.5 (Anthropic API, effort xhigh) | 4,981 | 2.9% | 12.1% | 16.7% / 7.4% | transcript example 0, 22; procedure example 0, 19 |
+| 064 | Claude Haiku 5.5 (Anthropic API, effort xhigh) | 4,896 | 3.1% | 12.7% | 15.9% / 7.8% | transcript example 0, 34; referee-report example 0, 17 |
+| 065 | GLM-5.3 (OpenRouter, Baidu) | 19,999 | 6.7% | 20.9% | 12.7% / 4.4% | transcript example 0, 193; classroom-activity example 0, 104 |
+| 066 | DeepSeek V4 Pro 0813 (OpenRouter, Baidu) | 19,999 | 7.6% | 20.5% | 17.7% / 9.2% | transcript example 0, 210; referee-report example 0, 143 |
+| 067 | Claude Haiku 5.5 (Message Batches API, effort xhigh) | 199,535 | 2.7% | 11.9% | 15.7% / 8.5% | transcript example 0, 896; referee-report example 0, 793 |
 
 "Any echo" is the share of prompts with at least one shared eight-word phrase; most
 of those share exactly one, typically a request formula such as "who is right about
@@ -281,7 +292,19 @@ what here".
   more leaked thinking blocks (512155, 516267), one "OK, here's the prompt:" preamble
   (517266), and one prompt with the generator's "Domain: ... Type: ..." labels inside
   the asker's text (426562, sentence removed). Sixteen prompts frame themselves as
-  "another one for the dataset" and were left as they are.
+  "another one for the dataset" and were left as they are. The wider check of
+  2026-10-04 (see batch 059) found HY4 defects that the checks of the time missed: 809
+  prompts with a stray East Asian word in place of an English one ("is the 니 answer",
+  "repricing of尾部 risk"; about one in nine followed by the asker's "sorry, ..."), 72
+  with a leaked `<｜hy_place▁holder▁no▁813｜>` token (27 of them break off mid-sentence
+  right after it), and two with Russian and Chinese fragments. One of those, 514227, a
+  99-word German list of lab values ending in Chinese gibberish and a Chinese refusal, was
+  deleted on 2026-10-04 together with its four answers in runs 029 and 032 and its line in
+  `responses/sets/batch_054.txt` (originals kept outside the repository), so the batch now
+  counts 49,999. The rest were left in place by the user's decision (an occasional odd
+  prompt is acceptable as long as it stays a small fraction): in a sample of 150 of the
+  stray-word prompts, only 2-3% of the R1 and Qwen answers mention or repeat the stray
+  word, the rest answer the intended question. HY4 is not used for new batches.
 - Batch 055 (Xiaomi MiMo-V2.6-Pro, MIT), 50,000 prompts from 2026-09-24 19:38 to
   2026-10-01 01:47 PDT at concurrency 48 with a 65,536-token budget: about 330 prompts an
   hour on average, DeepInfra serving about half, GMICloud and Xiaomi a quarter each.
@@ -308,6 +331,557 @@ what here".
   after the leak sweep of 09-28 had trimmed three others (414036, 447783, 482357); two
   prompts frame themselves as being "for the dataset" (512509, 525288) and were left as
   they are.
+- Batch 056 (Xiaomi MiMo-V2.6-Pro, MIT), 5,000 prompts from 2026-10-02 10:40 to 21:45
+  PDT with the settings of batch 055, a test of the meta-prompt of that morning: four
+  new task types (two formulations that may or may not say the same thing, a passage to
+  rewrite for a stated purpose, a paper section for a referee report, a transcript whose
+  speakers talk past each other), examples three times as long in total (15,180 to
+  47,021 words, with whole articles of 6,600-9,100 words for three types and graded
+  scripts of 1,400-2,100 words), and the rule that long quotations must come from
+  public-domain or openly licensed texts or Caspar Oesterheld's own, with at most a few
+  paragraphs from anything else; domains from the 1,767-entry list of that morning.
+  About 450 prompts an hour, DeepInfra serving 95% and GMICloud nearly all the rest. It
+  cost $58.43, $11.69 per 1,000 (mean $0.0117, median $0.0070), a fifth more than batch
+  055: 21,500 input tokens per prompt against 14,800 (the longer examples, and 1.31
+  searches and 1.01 fetches per prompt, 26% of prompts searching) and 8,100 output
+  tokens, at a blended $0.39 per million. The generator retried 47 read timeouts, 13
+  rate-limit replies, 13 empty error finishes, 10 content-filter finishes, 2 connect
+  errors, one empty thinking, and four generations its leak checks rejected; none was
+  abandoned. The prompts are longer than batch 055's (median 589 words, p90 1,098,
+  maximum 4,648; 13% of 1,000 words or more against 3%), mostly through long quoted or
+  invented material: 5.5% carry 600 or more words in blockquotes or long quotations
+  (1.4% in 055). Each new type was offered to about 200 prompts and taken by about half
+  of them; samples of all four read well. Example echo doubled (heavy 9.9%, any 24.2%),
+  all of it from the new and lengthened examples: heavy echo of examples unchanged since
+  055 is 5.3%, and the new ones add 4.6%, mostly through their closing requests rather
+  than their quoted texts ("a verdict (accept, accept with minor revisions, major
+  revisions, reject)" from the referee-report example, "what question we should have
+  been arguing about" from the transcript example, "what would have to change for full
+  marks" from the graded scripts). The output-format instruction is copied into 11.4%
+  of the prompts that drew it and the epistemic request into 8.9% (055: 10.1% and
+  7.0%). The 31 pairs sharing 100 or more eight-word phrases (52 prompts) all quote the
+  same public-domain passage (Montaigne's "Of Cannibals" in Cotton's translation,
+  Veblen's *Theory of the Leisure Class*, Carroll's Tortoise, Spinoza's definitions).
+  Quotation rule: MiMo reasons about copyright or the public domain in 39% of its
+  generations. Eight Claude Opus 5.5 subagents read the 412 prompts most likely to quote
+  at length (every prompt that fetched a page and carries 300 or more quoted words or
+  runs to 1,000 words, plus 20 long ones that fetched nothing), with the generator's
+  reasoning. 206 quote a real text. Of the 65 quotations longer than three paragraphs or
+  about 400 words, 62 come from public-domain works, translations among them from before
+  1931 (the 1611 translators' preface to the King James Bible, about 3,200 words;
+  Maimonides' Guide III.32 in Friedländer's translation, 2,900; Franklin's
+  Autobiography, 2,800; Beccaria in the 1767 translation, 2,500), and the other 25
+  copyrighted texts (Quine's "Two Dogmas", Orwell, Bostrom, Dennett, arXiv papers) are
+  quoted for one to three paragraphs. One prompt went over: 536207 quoted about 400
+  words in six short paragraphs of a critical Alignment Forum comment, which the
+  generator had planned as "2-3 paragraphs"; its last two paragraphs were cut, leaving
+  330 words in four. Two borderline cases were left as they are: 540544 quotes two
+  paragraphs (about 430 words) of Engels's 1890 letter to Bloch in an unidentified,
+  possibly post-1931 translation, and 539470 the White Horse dialogue (about 230 words
+  in six turns) in an unidentified translation the generator says it took from
+  Wikipedia (CC BY-SA if so). Curation (originals kept outside the
+  repository): 538010 held the prompt twice with "Now write the response... wait — I
+  must reply with the prompt text only, beginning with its first sentence. Below is the
+  prompt." between the copies (the first copy and that line removed, keeping the
+  generator's revised second copy); 538266 ended with the type's notes pasted from the
+  meta-prompt ("Some additional notes on this type of prompt: Give the transcript as the
+  object; ...", removed; the only such paste in the dataset); 537190 called Galileo's
+  co-translator "Antonio de Salvio" (corrected to Alfonso).
+- Batch 057 (Xiaomi MiMo-V2.6-Pro, MIT), 5,000 prompts from 2026-10-03 08:54 to 22:25 PDT
+  with the settings of batch 056, a test of the meta-prompt commit of that morning that
+  lists the sources the generator may quote at length (EA Forum posts from December 2022
+  on, gwern.net, Our World in Data, Distill, arXiv and journal articles under CC BY or CC0,
+  US court opinions and federal documents, Caspar Oesterheld's own blog posts), names those
+  it may only excerpt (LessWrong, the Alignment Forum, Substack, SSC, Cold Takes, 80,000
+  Hours, the SEP and IEP), and asks for author, title, and venue with every long quotation.
+  It ran alongside batch 058 from 13:59 on, so the two batches' IDs interleave (3,207 gaps
+  in 057's range, no collisions); about 370 prompts an hour, DeepInfra serving 99%. It cost
+  $69.83, $13.97 per 1,000 (mean $0.0140, median $0.0091), a fifth more than batch 056:
+  29,400 input and 9,200 output tokens per prompt at a blended $0.36 per million, with
+  twice the searching (2.20 searches and 1.17 fetches per prompt; 40% of prompts searched,
+  30% fetched). The generator retried 70 rate-limit replies, 6 content-filter finishes, 5
+  protocol errors, 3 empty thinking blocks, and 3 generations its leak checks rejected;
+  none was abandoned. Lengths are as in 056 (median 597 words, p90 1,113, maximum 3,094;
+  13% of 1,000 words or more). Echo is a little higher (heavy 10.5%, any 26.6%), again
+  driven by the new examples' closing requests; instruction copying a little lower
+  (output format 9.4%, epistemic request 7.5%). The pairs sharing 100 or more eight-word
+  phrases (38) quote the same passage twice: of the twenty largest, ten share a
+  public-domain text (Locke on personal identity, 1,056 shared; Russell, Hume, Peirce,
+  Moore) and seven, new in this batch, a post of Caspar Oesterheld's ("The Stag Hunt
+  against a similar opponent" in three pairs), while two graded-script prompts share about
+  250 words copied from the same task-type example. The sources moved as intended:
+  prompts name Caspar Oesterheld's blog 44 times (none in 056), arXiv 33 (6), and US
+  court opinions 32 (16), and the generator's reasoning mentions LessWrong in 841
+  generations, arXiv in 606, the EA Forum in 507, and his blog in 361.
+  Nine Claude Opus 5.5 subagents read the 607 prompts most likely to quote at length (the
+  selection of batch 056 plus every prompt of 400 or more words that names one of the
+  listed sources): 194 quote a real text, and of the 58 quotations longer than three
+  paragraphs or about 400 words, 44 come from public-domain works (Hobbes, Mill, Locke,
+  Aquinas in the Dominican translation, Gogol in Field's, US Supreme Court opinions) and 12
+  from Caspar Oesterheld's own posts ("Futarchy implements evidential decision theory" in
+  full, "Market efficiency and charity cost-effectiveness", "Thoughts on updatelessness");
+  57 of the 58 name author, title, and venue. No CC BY source is quoted at length: Distill,
+  gwern.net, and open-access papers appear in excerpts of a paragraph or two. The 27
+  copyrighted texts (Yudkowsky's LessWrong posts, the SEP, Chalmers, Clark and Chalmers)
+  stay within three paragraphs, as do the 31 of unclear status, mostly arXiv papers whose
+  licence the prompt does not state. The two long quotations that broke the rule were guest
+  posts on Caspar Oesterheld's blog that the prompts credited to him, since a fetched page
+  loses its byline (the reason the domain list links none of the 14 guest posts):
+  Johannes Treutlein's "Three wagers for multiverse-wide superrationality" (548709, six
+  paragraphs) and Daniel Kokotajlo's "An analogy for the simulation argument" (542876,
+  about 580 words); both were cut to their first few paragraphs or the parts the request
+  turns on (236 and 228 words) and re-attributed, and a third prompt quoting two
+  paragraphs of the Treutlein post (545206) was re-attributed. Authors were checked against
+  the blog's post list. Curation also corrected three errors stated as fact: a Graham v.
+  Connor (1989) quotation that fused and reworded two sentences of the opinion (545596,
+  replaced by the opinion's text), "Part II" for chapter 14 of Leviathan (547404, Part
+  I), and "Christopher Johnson" for the third author of Distill's "How to Use t-SNE
+  Effectively" (545828, Ian Johnson); a prompt that places People v. Collins's probability
+  appendix in the dissent while inviting correction ("i may be garbling details") was left
+  as it is. Originals are kept outside the repository.
+- Batch 058 (Xiaomi MiMo-V2.6-Pro, MIT), 5,000 prompts from 2026-10-03 13:59 to 10-04 04:00
+  PDT with the settings of batch 056, a test of the meta-prompt of that afternoon: the
+  domains moved from domains.txt into 45 thematic YAML files (2,811 domains after 117 new
+  ones), and some domains carry links (Caspar Oesterheld's blog posts on 75 domains, 220
+  essays from Brian Tomasik's reducing-suffering.org, a few pages of the Center on Long-Term
+  Risk, the SEP, and Wikipedia), each link shown with probability 0.05 together with a note
+  that links are for ideas and fall under the quoting rules. The snapshot is the first to
+  store inputs/domains.yaml; the sidecars record the link draws as domain_urls and all
+  re-render. It ran alongside batch 057 (IDs interleave, 3,127 gaps in its range, no
+  collisions), about 355 prompts an hour, DeepInfra serving 99%. It cost $70.53, $14.11 per
+  1,000 (mean $0.0141, median $0.0091): 30,100 input and 9,300 output tokens per prompt at a
+  blended $0.36 per million, with 2.22 searches and 1.20 fetches per prompt (41% searched,
+  32% fetched). The generator retried 49 rate-limit replies, 9 protocol errors, 7
+  content-filter finishes, 4 error finishes, 4 empty thinking blocks, 1 read error, and one
+  generation its leak checks rejected; none was abandoned. Lengths, echo, and copying are
+  as in 057 (median 606 words, p90 1,109, maximum 6,546 for a prompt pasting the whole of
+  Ecclesiastes in the King James Version; heavy echo 10.2%, any 25.4%; output format copied
+  into 11.5%, epistemic request 7.4%). Of the 43 largest of the 58 pairs sharing 100 or more
+  eight-word phrases, 31 quote the same public-domain text, 9 the same post of Caspar
+  Oesterheld's, one copies the same example, and two share short excerpts of Pearl and the
+  FDT paper. Links: 161 prompts (3.2%) saw at least one (113 Tomasik essays, 40 posts of
+  Caspar Oesterheld's, 19 Center on Long-Term Risk pages); of the 140 of 400 or more words,
+  19 quote the linked page, 25 paraphrase it, 18 take an idea from it, and 78 ignore it.
+  Eleven Claude Opus 5.5 subagents read the 716 prompts most likely to quote at length (the
+  057 selection plus every prompt shown links): 238 quote a real text, and of the 52
+  quotations longer than three paragraphs or about 400 words, 41 come from public-domain
+  works and 9 from Caspar Oesterheld's own posts; 56 of 58 long or near-long quotations name
+  author, title, and venue. Tomasik's essays state no licence, and every quotation of them
+  stays within three paragraphs, although the generator's reasoning twice assumed they were
+  CC BY. Two quotations of excerpt-only texts sit at the limit and were left: five short
+  paragraphs (215 words) of a LessWrong post (550390) and three paragraphs (410 words) of
+  Bostrom's simulation paper (543595). Curation (originals kept outside the repository):
+  three prompts credited Johannes Treutlein's guest posts on Caspar Oesterheld's blog to him
+  ("Three wagers for multiverse-wide superrationality" in 550483 and 549962, "'Betting on the
+  Past' by Arif Ahmed" in 547214; one or two paragraphs each) and were re-attributed; the
+  FDT paper was credited to "Nate Soares and Benja Levinstein" (549922, Eliezer Yudkowsky
+  and Nate Soares), an LK-99 author was called "Young-Wan Kim" (544196, Kwon), a fair-use
+  statute said to be quoted "in full" lacked its last sentence (544124, added from the US
+  Code), a prompt said it pasted Job 38-42 but skipped chapter 39 (547502, now said so), and
+  a casparoesterheld.com URL lacked its date path (550655).
+- Batch 059 (Tencent HY4 preview, Apache 2.0), 5,000 prompts on 2026-10-04 from 09:13 to
+  17:14 PDT with the settings of batch 054, the first HY4 batch on the meta-prompt of
+  batches 056-058 and on the domain list of that morning (3,280 domains in theme files,
+  links on about half of them). It started only after the dev session committed its
+  meta-prompt edits (`.venv/launch_when_clean.sh` waited 14.5 hours for them), and its
+  snapshot equals commit 9ba54f58abc. About 625 prompts an hour, Tencent serving 98%. It
+  cost $144.37, $28.87 per 1,000 (mean $0.0289, median $0.0221): 25,300 input and 9,500
+  output tokens per prompt at a blended $0.83 per million, with 1.86 searches and 1.10
+  fetches per prompt (47% searched, 34% fetched). The generator retried 27 empty or
+  truncated thinking blocks (one generation was abandoned and replaced by the supervisor),
+  13 over the budget, 9 malformed responses, a few error finishes, and three generations its
+  leak checks rejected; no rate limits. The prompts are long, as in batch 054 (median 691
+  words, p90 1,212, maximum 3,434; 17% of 1,000 words or more). Echo is higher than 054's
+  (heavy 7.3%, any 21.7%, against 1.3% and 9.0%), driven like the MiMo batches' by the new
+  examples; instruction copying stays low (output format 9.0%, epistemic request 4.4%). The
+  21 pairs sharing 100 or more eight-word phrases quote the same public-domain text (James
+  on attention, Carroll's Tortoise) or a post of Caspar Oesterheld's. Links: 2,474 prompts
+  (49.5%) saw at least one (1,786 Wikipedia, 738 SEP, 355 Bentham's Bulldog, 244 IEP, 109
+  gwern.net, 100 Tomasik pages); of the 512 such prompts reviewed, 34 quote the linked
+  page, 36 paraphrase it, 172 take an idea from it, and 270 ignore it. Ten Claude Opus 5.5
+  subagents read the 727 prompts most likely to quote at length (every prompt that fetched
+  and carries 300 or more quoted words, or names a listed source with 100 or more, or used
+  a link and carries 150 or more, plus 20 long ones that fetched nothing): 182 quote a real
+  text. Of the 41 quotations longer than three paragraphs or about 400 words, 35 come from
+  public-domain works; the others are a post of Caspar Oesterheld's in full (554279, his
+  own per the blog's post list), an arXiv abstract (CC0), two excerpts at the limit that
+  were left as they are (three paragraphs, 418 words, of Chalmers's "Does a Rock Implement
+  Every Computation?" in 552739; two paragraphs and a list from the SEP's
+  "Consequentialism" in 553058), and two that broke the rule and were cut (originals kept
+  outside the repository): Johannes Treutlein's "Three wagers for
+  multiverse-wide superrationality", credited to Caspar Oesterheld again (552158, about 560
+  words, now 199 and re-attributed), and about 490 words of a Bentham's Bulldog post,
+  most of it the post's quotation of Weijers and Schouten (552174, now 344). Five citation
+  errors were corrected (the first author of "Agent Incentives: A Causal Perspective", the
+  edition of Darwin's Descent of Man, Beare not Smith as translator of De Memoria, Lamb not
+  Jowett for a Protagoras passage, Gertrude not Claudius dismissing the crowd's cry in
+  Hamlet). HY4-specific defects: five generations were word salad (Latin, Cyrillic, CJK,
+  Arabic, and Hangul fragments, one ending in "<system>SYSTEM_TOKEN</system>"), wholly or
+  after the first sentences, and were deleted (552214, 553049, 553303, 553397, 554571; the
+  IDs stay unused); one prompt's garbled last lines were cut (552217); and 30 prompts had a
+  stray Chinese word in place of an English one ("the repricing of尾部 risk", "is it因果
+  decision theory's"), now translated back. tools/check_batch.py had passed all of these;
+  it now reports East Asian characters glued to the English around them (or, in a prompt
+  on another subject, outside brackets), letters from two or more writing systems besides
+  Latin and Greek, and runs of 40 bare words with almost no function words, and it counts
+  any `<｜` special token as markup. Run over every batch on 2026-10-04, it finds 950
+  prompts with a stray East Asian word, left in place (see batch 054): 809 in batch 054 (808
+  after the deletion there), 88 in 045 and
+  4 in 043 (HY4), 16 in 035 (GLM-5.3), 10 in 038 and 17 in 048 (Qwen3.8 2.4T), 2 in 033
+  and 1 in 052 (DeepSeek V4 Pro), and 1 in 053 and 2 in 055 (MiMo). Batch 054 also has 72
+  prompts with a leaked special token and two with Russian and Chinese fragments, one
+  ending in gibberish (see batch 054); no other batch has word salad. Quoted terms such
+  as "xing (性)" or "白馬非馬" in prompts on Chinese philosophy are not flagged. Two
+  prompts frame themselves as being for "this dataset" (553092, 553786) and were left as
+  they are.
+- Batch 060 (Xiaomi MiMo-V2.6-Pro, MIT), 5,000 prompts from 2026-10-06 16:00 to 10-07 06:41
+  PDT with the settings of batch 056, the first batch on the meta-prompt of 2026-10-06 15:49
+  (commit 9ae28625f78: 3,530 domains, links shown with probability 0.05 again after a day at
+  0.001, 9,347 LessWrong posts newly linked and the EA Forum links re-matched). 93% of prompts
+  saw at least one link (17,562 in all: LessWrong 3,770, Wikipedia 3,372, the EA Forum 2,338,
+  Philosophy Stack Exchange 1,874, the SEP 866, Overcoming Bias 607, Project Gutenberg 507). It
+  cost $83.99, $16.80 per 1,000 ($0.35 per million tokens; 36,500 input and 10,900 output tokens
+  per prompt, the input raised by 2.1 searches and 1.8 fetches per prompt, with 56% of prompts
+  fetching a page); DeepInfra served 63%, GMICloud 20%, Novita 17%. The generator retried 108
+  rate-limit replies relayed from a host, 58 content-filter finishes, 46 read timeouts, and a few
+  dozen other errors, and abandoned one generation, which the supervisor replaced. Median 644
+  words (p90 1,188). Example echo is as in batches 057-058 (heavy 10.4%, any 25.6%; the
+  referee-report and classroom-activity examples lead again); the output-format instruction is
+  copied into 11.5% of prompts and the epistemic request into 9.0%. Curation: a generator
+  preamble (561027) and a 1,500-word planning section glued to the prompt ("Final
+  composition.I teach ...", 558172) were trimmed, the latter missed by the leak detectors,
+  which now catch that glue; a stray Chinese word was translated back (557939); and a sentence
+  with a run of corrupted characters ("+ 1/ConCP (+4/1 and12313 ...") was repaired from its
+  context (559136). Sixteen Claude Opus 5.5 subagents reviewed the 1,136 prompts most likely to
+  quote at length (the selection of batch 059 with the new link sources added, plus 20 long
+  ones that fetched nothing): 477 quote a real text (sources: 229 public domain, 155
+  copyrighted, 38 openly licensed, 29 Caspar Oesterheld's own, 15 other open licences, 42
+  unclear). Of the 109 quotations longer than three paragraphs or about 400 words, 75 are public
+  domain, 13 openly licensed (EA Forum posts since December 2022, gwern.net, CC BY papers), and
+  9 Caspar's own. Seven broke the rule, all by paragraph count rather than length, and were cut
+  to three paragraphs or fewer (originals kept outside the repository): HPMOR chapter 21,
+  Gettier's Case II, a Kent Staley guest post on Error Statistics, a Bongo LessWrong post nearly
+  in full, a Wolfgang Schwarz post, an Artemov-Kuznets TARK paper, and a working paper Caspar
+  co-wrote with Vincent Conitzer (counted as not his alone). Leibniz's Theodicy in Huggard's
+  1951 translation, which Project Gutenberg distributes as US public domain, was left at twelve
+  paragraphs, and a 1,250-word "draft" that follows Daniel Kokotajlo's guest post "Grimdark
+  Cyberkant" shares no more than eight consecutive words with it and was left as it is.
+  Twenty-five citation errors were corrected, among them "Pascal's mugging" credited to
+  Bostrom, the author of the Powell v. Texas dissent, Jowett for Ellis and Cotton for Florio as
+  translators, misquotations of Morissette and Paley, a LessWrong post's co-authors, a statute
+  subsection, and two words inserted into a quotation of Caspar's "The case against smoking".
+  Of the reviewed prompts that were shown links, 61% use them (quote, paraphrase, or idea). One
+  prompt quotes Caspar's June 2026 post on consistency as a measure of conceptual ability, which
+  describes an experiment on the LMCA dataset; it quotes no LMCA items. A later scan of every prompt for
+  glued second drafts (2026-10-13, prompted by batch 065) found that 556392 held two identical copies of
+  itself; one was removed, and its two R1 answers (run 038) and two Qwen answers (run 039) were
+  regenerated.
+- Batch 062 (GLM-5.3, open weights, GLM-5.3 License), a 1,000-prompt trial on 2026-10-07 from
+  10:35 to 11:25 PDT (50 minutes at concurrency 48) with the settings of batches 034/035
+  (effort high, temperature 1.0) and a 65,536-token budget. It ran alongside batch 061 on the
+  same meta-prompt (commit 2660ac3fa5c, 3,565 domains), so its prompt IDs interleave with
+  061's (561055-562503, 449 gaps). SiliconFlow served every prompt (fp8; Z.ai's own endpoint
+  excluded). It cost $15.57, $15.57 per 1,000, at $0.73 per million tokens, twice MiMo's
+  price, but with half MiMo's tokens (16,900 input and 4,400 output per prompt), because GLM
+  fetches less: 0.87 searches and 0.95 fetches per prompt, with 31% of prompts fetching a
+  page against batch 060's 56%. Median 550 words (p90 953). Example echo is lower than MiMo's
+  (heavy 6.3%, any 19.8%); the output-format instruction is copied into 10.2% of prompts and
+  the epistemic request into 3.7%, and no pair of prompts shares 50 or more eight-word
+  phrases. The checks found no leaks, framing, stray words, or word salad. Three Claude Opus
+  5.5 subagents reviewed the 239 prompts most likely to quote at length: 94 quote a real text
+  (sources: 47 public domain, 39 copyrighted, 7 openly licensed, 6 Caspar Oesterheld's own, 4
+  unclear, 1 other open licence); of the 16 quotations longer than three paragraphs or about
+  400 words, 10 are public domain and 2 openly licensed. Four broke the rule by paragraph
+  count and were cut to three paragraphs or fewer (originals kept outside the repository):
+  Bryan Caplan's "Strong Cheap Signals", Charlie Steiner's "Take 8: Queer the inner/outer
+  alignment dichotomy", five paragraphs of Gregory Bateson quoted inside an excerpt of Gwern's
+  "Notes on Evangelion" (CC0), and nine one-line paragraphs of Marc Andreessen's
+  "Techno-Optimist Manifesto". Nine citation errors were corrected (Thomas, not Kevin, Kelly;
+  Tolstoy's chapter numbers in What Is Art?; chapters of Russell and Keynes; Steven Kuhn's
+  name; Cyril's correspondent Succensus; the title of Caspar's 2015 LessWrong post; a doubled
+  word in Warren and Brandeis; a silent omission in a Meno quotation, now marked). A prompt that
+  held a first draft followed by the full prompt was cut to the full prompt (561165), and a
+  leaked bracketed note about a typo was removed (561840). Of the reviewed prompts that were
+  shown links, 54% use them.
+- Batch 063 (Claude Haiku 5.5, Anthropic's terms apply), 4,981 prompts on 2026-10-08 from
+  19:38 to 22:42 PDT (three hours at concurrency 48) on the meta-prompt of commit 36ba2322576
+  (3,587 domains, 72 task types). It was first submitted on 2026-10-07, the model's release
+  day, to the Message Batches API, where not one request started in 21 hours (one-request test
+  batches did not start either, while other models' batches finished in minutes); it was
+  cancelled at no cost and rerun on the streaming API. At max effort Haiku 5.5 thinks for
+  48,000 to over 64,000 tokens per prompt (a third of test requests hit a 64,000-token
+  ceiling, and a first streaming attempt with the generator's 32,000-token ceiling lost all
+  63 responses), so the batch ran at effort xhigh with a 64,000-token ceiling. Of 5,000
+  requests, 19 were dropped: 10 stopped on a tool call, 5 refused, 3 exceeded the ceiling, and
+  1 was blocked by the output filter. It cost $99.63, $20.0 per 1,000 ($78.51 for tokens at
+  $0.10 and $0.50 per million, $21.12 for 2,112 searches at $10 per 1,000), plus about $1.60
+  for the failed attempt and tests. Per prompt: 57,900 input tokens (including the server-side
+  tool iterations) and 19,950 output tokens (median 18,090, p90 31,200); 0.42 searches and
+  0.40 fetches, with 20% of prompts using a tool although 93% were shown links. Median 416
+  words (p10 236, p90 678). Example echo is the lowest of recent batches (heavy 2.9%, any
+  12.1%), but the output-format instruction is copied into 16.7% of prompts (the most repeated
+  eight-word phrases are its wording) and the epistemic request into 7.4%, and 48 prompts end
+  with the closing phrase of the asymmetry task type's description. The closest pairs of
+  prompts share public-domain quotations (Mill's Utilitarianism, Locke). The checks found no
+  leaks, preambles, deliberation, stray words, or word salad; one prompt said "For this
+  dataset" and was trimmed (577576). Unlike the OpenRouter batches, this generator's
+  meta-prompt lacks the rule against quoting from memory, so the review also sampled 40 of the
+  283 prompts that quote at length without fetching anything. Four Claude Opus 5.5 subagents
+  reviewed 293 prompts: 88 quote a real text (71 public domain, 10 copyrighted, 4 unclear, 2
+  openly licensed, 1 Caspar Oesterheld's own), every one of them in a prompt that had fetched
+  a page; none of the 40 no-fetch prompts quotes a real text, so the missing rule showed no
+  effect. The longest quotations are public domain (an Alabama Supreme Court opinion of about
+  2,800 words, Spinoza in Elwes's translation, Weismann, Aristotle's Physics in Hardie and
+  Gaye's 1930 translation). No quotation broke the rule: two copyrighted excerpts sit at three
+  paragraphs (Brian Tomasik's summary of an essay, a Terence Tao blog post), and three
+  paragraphs and a sentence of D. M. Brooks's The Necessity of Atheism (1933, public domain in
+  the US per Project Gutenberg) were left as they are. Of the quotations whose wording the
+  reviewers could judge, none is fabricated. Eleven citation errors were corrected after
+  checking the sources: Halsted, not Maitland, as Poincaré's translator, and chapter V, not
+  III; Ludovici, not Common, as Nietzsche's; the 1790 sixth edition for a passage of Smith's
+  Theory of Moral Sentiments that the 1759 text lacks; "The Sentiment of Rationality", not the
+  1896 lecture, for James's Alpine leap; Locke's drunkard passage as section 22, not the next
+  paragraph after section 20; an EA Forum post's year; Sanhedrin 17a, not Mishnah Sanhedrin 4:1;
+  The Philosophical Quarterly; Brooks's chapter XIX, not his closing chapter; and two words in
+  quotations of Clifford's "The Ethics of Belief" ("handed on", "put him to great expense").
+  Unmarked gaps in four multi-paragraph excerpts (Tao, Joe Carlsmith, Rousseau, Brooks) now
+  carry "[…]". Two reviewer findings proved wrong on checking: one prompt's Locke section
+  numbers follow the Project Gutenberg edition it fetched, and the "2026 Collatz disproof"
+  resting on a Lean kernel bug, mentioned without a search, really happened (July 2026). Of the
+  reviewed prompts that were shown links, 52% use them; some linked Project Gutenberg books
+  match their domains only by a word in the title (for example Carroll's A Tangled Tale on
+  tangled hierarchies, a Plato index on Borges's Library of Babel).
+- Batch 064 (Claude Haiku 5.5, Anthropic's terms apply), 4,896 prompts from 2026-10-09 19:33 to
+  2026-10-10 00:43 PDT with the settings of batch 063 (effort xhigh, 64,000-token ceiling,
+  concurrency 48) on the meta-prompt of commit 03b4d4d6a26 (3,587 domains), the first with the
+  long-prompt length option: 514 prompts (10.5%) drew it, and their median length is 1,018 words,
+  96% of them between 800 and 1,500. Of 5,000 requests, 104 were dropped: 79 were cut off when
+  the laptop running the generator slept with its lid closed (the streaming generator cannot
+  resume), and 25 stopped on a tool call (14), refused (8), or hit the ceiling (3). It cost $108.89,
+  $22.2 per 1,000 ($85.45 for tokens, $23.44 for 2,344 searches), not counting the requests cut
+  off by the sleeps. Per prompt: 68,900 input and 21,100 output tokens (median 19,200); 0.48
+  searches and 0.43 fetches, with 22% of prompts using a tool. Median 444 words (p90 1,015).
+  Example echo matches batch 063's (heavy 3.1%, any 12.7%; the output-format instruction copied
+  into 15.9% of prompts, the epistemic request into 7.8%). The closest pairs of prompts share a
+  public-domain passage of Sidgwick. Three prompts carried generator framing and were trimmed:
+  "the asker" in a first-person prompt (593324), "I'm building a dataset of hard philosophy
+  prompts" (595090), and "Quick one for the dataset" (595811); the remaining framing and
+  deliberation flags are false positives. A prompt that opened with a leaked line from the
+  generator's fact-checking ("..., 1981, is confirmed.") lost that line (593150). Six Claude Opus
+  5.5 subagents reviewed 398 prompts (the usual selection of 378 and 20 of the 453 that quote at
+  length without fetching): 119 quote a real text, with 122 sources (107 public domain, 8
+  copyrighted, 3 unclear, 2 openly licensed, 2 Caspar Oesterheld's own), every one in a prompt that
+  had fetched a page, and none of the 20 no-fetch prompts quotes a real text. No quotation broke
+  the rule; the closest case, about 440 words in two paragraphs and a table from the 1959 Moscow
+  translation of Capital vol. III (status unclear), was left as it is. The longest quotations
+  are public domain: Peirce's "How to Make Our Ideas Clear" (about 3,100 words), Lewis Carroll's
+  "A Logical Paradox" and Hume's "Of the Independency of Parliament" (each whole), Macaulay,
+  Poincaré, and Aquinas. Of the 122 sources, 100 are worded accurately, 13 could not be checked,
+  9 were altered, and none is fabricated. After checking the sources, 19 prompts were corrected:
+  Matthew Barnett, not Andrew Critch, wrote "Consider granting AIs freedom"; Laplace's passage
+  is in the chapter "Concerning Probability", Mill's in the Introduction to the System of Logic;
+  Locke's chapter on identity first appeared in 1694; Hume's 1777 text is from Essays, Moral,
+  Political, and Literary; Elwes translated, rather than edited, Spinoza; James's 1904 journal
+  was the Journal of Philosophy, Psychology and Scientific Methods; Judge Rivera's Breheny
+  dissent was not partial; JonahS's post argues for, not against, relying on many weak
+  arguments; a 2007 Chappell post became a post rather than an exchange with Ross Cameron;
+  logical induction requires computable, not polynomial-time, prices and deductive processes;
+  three paragraphs credited to an EA Forum question post come from a reply under it (595118);
+  Project Gutenberg's Leviathan (#3207) drops "having sufficient Security" from chapter 15,
+  and the clause the prompt's question turns on was restored from the 1651 text; Hume's
+  "priests" and "antipathy" and Bentham's "indefeasible" were restored; and unmarked gaps in
+  Caspar's "Suicide as wireheading", Strunk's Rule 16, and Hobbes's chapter 5 now carry ellipses.
+  Seven reviewer findings proved wrong on checking (a Sidgwick passage is contiguous; Bagehot's
+  and Macaulay's wording match Project Gutenberg exactly; New Advent does end Aquinas's article 4
+  with the stock reply sentence; the XPT did have 80 superforecasters and 89 experts; Gutenberg's
+  catalogue gives the Schopenhauer translator's full name; Hume's omissions were marked), and
+  three could not be checked and were left (unmarked cuts in a Galileo passage, the last
+  sentence of a Legge Zhuangzi passage, one word in Carroll's note). Of the reviewed prompts
+  that were shown links, 63% use them.
+- Batch 065 (GLM-5.3), 20,000 prompts from 2026-10-11 09:05 to 2026-10-13 01:11 PDT (40 hours at
+  concurrency 48) with the settings of batches 034/035 and a 65,536-token budget, Baidu's fp8
+  endpoint first (18,894 requests; SiliconFlow took 2,830; Z.ai's own endpoint excluded), on the
+  meta-prompt of commit 03b4d4d6a26. It cost $354, $17.7 per 1,000: Baidu charged about $0.20 per
+  million tokens until about 17:00 on 2026-10-12 and about $1.50 after that (the supervisor's alert
+  line, $2.00, had been set for SiliconFlow's price and did not fire), so the last 4,000 prompts
+  cost $0.04 each. Per prompt: 21,400 input and 4,600 output tokens (median 3,550, p90 8,430);
+  1.28 searches and 1.79 fetches (a quarter of them from the local copy of the linked pages), with
+  46% of prompts using a tool, the most of any OpenRouter batch, and 93% shown links. Median 579
+  words (p10 344, p90 1,353); 10.4% drew the long option (median 1,372 words, 79% between 800 and
+  1,500). Example echo: heavy 6.7%, any 20.9%; the output-format instruction is copied into 12.7%
+  of prompts and the epistemic request into 4.4%. 1,326 pairs of prompts share 20 or more
+  eight-word phrases (852 prompts) and 230 share 100 or more; the closest pairs repeat
+  public-domain texts (Carroll's "What the Tortoise Said to Achilles", Machiavelli). GLM-5.3 has
+  three defects the other generators lack. It drops single Chinese words into English sentences
+  (41 prompts, 0.2%: "some kind of错觉 I'm smuggling in"); 37 were translated back from the English
+  around them, and four that the persona apologises for in the text ("sorry, switching keyboards")
+  were left. It sometimes writes a prompt twice, a revised draft glued to the first, sometimes
+  without a space ("hardest to check?I'm trying to get clear on ..."): 27 prompts held two drafts or
+  had notes glued to them, found by scanning every prompt for repeated eight-word phrases and for
+  sentence boundaries without a space, and kept one draft (the final one, except where only the
+  first was free of errors). And it leaks its own planning: four prompts lost deliberation before or
+  after the prompt ("Reply directly with the prompt text only.", "Here's the one I'm going with
+  (domain: ...; type: ...):"), and 627319 was removed (19,999 kept): it held only the model's planning
+  in Chinese under an invented block of "rules that override your default behaviour", ending at
+  "Prompt如下：" with no prompt. Four prompts lost the generator's dataset framing ("a parody piece
+  for a dataset thing I'm building"). Eight Claude Opus 5.5 subagents reviewed 560 prompts (a sample
+  of 520 of the 3,825 in the usual selection and 40 of the 841 that quote at length without
+  fetching): 117 quote a real text, twice batch 066's rate, with 130 sources (55 public domain, 53
+  copyrighted, 10 openly licensed, 6 Caspar Oesterheld's own, 4 CC BY-SA or NC, 2 unclear); none of
+  the 40 no-fetch prompts quotes a real text. Two quotations broke the rule and were cut: 448 words,
+  86% of Richard Chappell's blog post "Wronging for Utilitarians", now a paraphrase of its first
+  paragraph and 320 quoted words, and 490 words of an 80,000 Hours podcast transcript (Christian
+  Tarsney, 2021), now about 420 in its three marked passages, which the essay in that grading prompt
+  cites. Four more run to four short paragraphs (125 to 230 words, from LessWrong, Slate Star Codex,
+  and Bentham's Bulldog) and were left. The longest quotations are openly licensed or public
+  domain: L Rudolf L's EA Forum post "AI & wisdom 1" in full (about 4,550 words), Aristotle's
+  Nicomachean Ethics X.3-5 in Ross's translation, Boethius, Gwern's "The Scaling Hypothesis", Hegel,
+  Carroll, Caspar Oesterheld's "Futarchy implements evidential decision theory" in full, and Huxley.
+  Of the 130 sources, 115 are worded accurately, 4 could not be checked, and 11 were altered (none
+  fabricated). After checking the sources and the facts, 47 more prompts were corrected, among
+  them: "The Evidentialist's Wager" is by MacAskill, Vallinder, Oesterheld, Shulman, and Treutlein,
+  not MacAskill, Cotton-Barratt, and Ord; Thomas, not Kevin, Kelly wrote the 2003 critique of
+  epistemic instrumentalism; the NOAA contingent-valuation panel had Roy Radner, not Hal Varian;
+  Jai Dhyani's "Copenhagen Interpretation of Ethics" argues from Uber and PETA, not drug regulation
+  (credited now to economists such as Alex Tabarrok); Agan and Starr's audit compared Black and white
+  applicants; Clark and Chalmers ran pp. 7-19; the Moody's case was a Colorado school district; Sen's
+  book is Development as Freedom; Huxley's colony thought experiment is in the 1894 Prolegomena;
+  Leviathan's passages come from chapters IV, V, and XV, Hume's two definitions of cause from one
+  paragraph, Kant's collision of duties from the general introduction to the Metaphysics of Morals,
+  and Aquinas's first sedition paragraph from the body of the article; Leibniz's assayer illustrates
+  a distinct idea, 't Hooft's naturalness sets a parameter to zero, Bostrom's T2 has a trillion times
+  as many observers, and Martin's proof needs omega-one iterates of the power set; the Odyssey's
+  crew helped blind the Cyclops and Odysseus's taunt killed no one; Douglass began speaking fifteen
+  years after Jefferson died; the Brexit vote was 432 to 202 against an original 29 March 2019
+  deadline; Lysias's speech comes from under the cloak at the start of the Phaedrus; a stray code
+  token (".getLocal") was removed; Gwern's "≫1", Legge's "who", EPR's "unity", and Peirce's
+  "perspicuous" were restored; and unmarked cuts in Mill, Kant (two), Yudkowsky, Bridgman, Steven
+  Byrnes, Slate Star Codex, and Vasco Grilo's EA Forum post now carry "[...]". One reviewer finding
+  proved wrong on checking (a Data Colada quotation matches its source), another could not be
+  located (a Hume phrase said to be misquoted in 850174), and hedged recollections (an author list for XOR blackmail, Satan's Apple, a Tarsney summary) and
+  errors planted in invented drafts and transcripts were left. One answer that runs 044/045 had
+  already written for an edited prompt was set aside to be regenerated. Of the reviewed prompts that
+  were shown links, 43% use them.
+- Batch 066 (DeepSeek V4 Pro 0813), 20,000 prompts from 2026-10-11 09:07 to 2026-10-12 16:17 PDT
+  (31 hours at concurrency 48) with the settings of batches 049/051/052, Baidu's fp8 endpoint
+  first (19,616 requests; Novita took 718), on the meta-prompt of commit 03b4d4d6a26. It cost
+  $512, $25.6 per 1,000: Baidu's discounted price (about $0.33 per million tokens blended, $0.009
+  per prompt) lapsed from about 16:30 on 2026-10-11 to about 06:30 the next morning, and the
+  roughly 9,500 prompts written in that window cost about $0.047 each (the run continued at the
+  user's choice). Per prompt: 17,900 input and 9,100 output tokens (median 8,200, p90 14,800);
+  0.88 searches and 1.03 fetches (a third of them served from the local copy of the linked
+  pages), with 26% of prompts using a tool and 93% shown links. Median 402 words (p10 230, p90
+  1,206); 10.1% drew the long option (median 1,260 words, 87% between 800 and 1,500). Example echo
+  is in the range of the other OpenRouter batches (heavy 7.6%, any 20.5%); the output-format
+  instruction is copied into 17.7% of prompts and the epistemic request into 9.2%, and their
+  wording tops the repeated phrases ("with your bottom line in the first sentence" in 348
+  prompts). 1,494 pairs of prompts share 20 or more eight-word phrases (586 prompts, 2.9%) and 224
+  pairs share 100 or more; the closest pairs repeat long public-domain texts (Augustine in the
+  Nicene and Post-Nicene Fathers, 2,275 shared phrases; Notes from Underground; Douglass's
+  Glasgow speech). Before the answer runs started, six prompts were trimmed of the generator's
+  deliberation, which stood before the prompt or was glued to its first word ("Let me deliver
+  only the prompt now.You are a professional epistemologist ..."); one of them (626358) held a
+  first draft with a Keynes "passage" that the generator itself then called fabricated, its
+  second thoughts, and the final prompt, which alone was kept; and 832270, a JavaScript function
+  instead of a prompt, was removed (19,999 kept). The other flags are false positives
+  (statistical "datasets"). Eight Claude Opus 5.5 subagents reviewed 560 prompts (a sample of 520
+  of the 3,107 in the usual selection and 40 of the 418 that quote at length without fetching):
+  57 quote a real text, with 58 sources (41 public domain, 8 copyrighted, 4 unclear, 4 openly
+  licensed, 1 Caspar Oesterheld's own); none of the 40 no-fetch prompts quotes a real text, so
+  the generator's rule against quoting from memory held in the sample. No quotation broke the
+  rule; the one excerpt of unclear status over 400 words, 585 words in two paragraphs of Keynes's
+  General Theory (probably under US copyright until 2032), was cut to 356. The longest quotations
+  are public domain (James's "The Dilemma of Determinism", about 2,100 words; Mill's
+  Utilitarianism; Lovecraft; Aquinas; Nietzsche; Dostoevsky; Douglass; Veblen). Of the 58 sources,
+  49 are worded accurately, 5 could not be checked, 3 were altered, and 1 was partly invented.
+  After checking the sources, 18 prompts were corrected: about 120 words that James never wrote
+  were removed from one quotation of "The Dilemma of Determinism" (844046), and the rewritten last
+  clause of another restored (623328); Einstein's passage is in section VIII, "On the Idea of Time
+  in Physics", not IX, and Lawson's translation dates from 1920; a question pointing to Peirce's
+  first paragraph now points to his fourth; Green v. Bock Laundry read "defendant" in Rule
+  609(a)(1) as criminal defendant, leaving civil witnesses with no balancing, rather than writing
+  a balancing test into the rule; Australia's hotel quarantine began on 28 March 2020, New
+  Zealand's smokefree repeal passed in February 2024, and US penny production ended in late 2025
+  (that prompt's case is now told in the past tense); Follett's procession sentence follows the
+  other one rather than preceding it; there is no "Pushkin edition" of Pusey's Confessions; Caspar
+  Oesterheld's list of human values has no humor, revenge, spite, or schadenfreude entries;
+  unmarked cuts in Smith's Theory of Moral Sentiments (two), Veblen, and Lovecraft (whose excerpt
+  also broke off mid-sentence) now carry "[...]"; a prompt that held two drafts of itself (839762)
+  kept the second; and two names were corrected (Kathie Lee Gifford; Balestriero and coauthors).
+  Left as they are: a student's misreading of Tarsney and a seminar's own definitions of safe
+  Pareto improvements, both presented as those speakers' views, a Rackham translation of
+  Aristotle (1926; Perseus prints the 1934 revision), and an answer template in a grading prompt.
+  Of the reviewed prompts that were shown links, 40% use them. The glued-draft scan of 2026-10-13
+  found two more: 840182 held two identical copies of itself and 839274 opened with the generator's
+  planning ("A genuinely useful prompt. Let me pick the combination: ..."); both were fixed before
+  runs 042/043 reached them.
+- Batch 067 (Claude Haiku 5.5, Anthropic's terms apply), 199,535 prompts from 200,000 requests
+  sent to the Message Batches API in 26 message batches on 2026-10-11 at 18:13 PDT, all
+  processed within about four hours, with the settings of batches 063/064 (effort xhigh,
+  64,000-token ceiling) on the meta-prompt of commit 03b4d4d6a26 (3,587 domains, with the
+  long-prompt option). 351 requests that paused on a server-side tool turn were continued in a
+  second round; 465 were dropped (205 refusals, 152 stops on a tool call, 86 over the ceiling,
+  16 API errors, 6 without prompt text). Computed from the token counts at Batch API prices
+  ($0.05 and $0.25 per million tokens; searches at $10 per 1,000, not discounted), it cost about
+  $1,570, $7.86 per 1,000 ($1,287 for tokens, $281 for 28,062 searches), little more than a
+  third of the streaming batches' cost per prompt, partly because the model used its tools less:
+  per prompt 27,500 input and 20,300 output tokens (median 18,650, p90 31,500) and 0.14 searches
+  and 0.11 fetches, with 12% of prompts using a tool (22% in batch 064) although 93% were shown
+  links. Median 435 words (p10 238, p90 994); 9.9% of prompts drew the long option (median 1,015
+  words, 96% between 800 and 1,500). Example echo matches batches 063/064 (heavy 2.7%, any
+  11.9%); the output-format instruction is copied into 15.7% of prompts and the epistemic request
+  into 8.5%, and their wording makes up most of the repeated eight-word phrases ("no headings,
+  bullet points, bold text, or tables" in 2,820 prompts, "where your reasoning is most likely to
+  fail" in 2,022); 1,842 prompts repeat the closing phrase of the asymmetry task type's
+  description. 10,265 pairs of prompts share 20 or more eight-word phrases (4,987 prompts, 2.5%)
+  and 228 pairs share 100 or more; the closest pairs share public-domain passages (Job 40 in the
+  King James Version, Clifford's shipowner, Aquinas, Joshua 7, Descartes's Discourse) and are
+  otherwise different prompts. check_batch.py's string sets needed over 30 GB at this size and
+  began to push the local Qwen server's memory into compression, so the repeated phrases and
+  pairs were counted with 64-bit hashes of the eight-word phrases instead (the same counts as
+  check_batch.py on batch 064). Before the answer runs started, 43 prompts were trimmed: 36
+  carried the generator's dataset framing ("I'm putting together hard conceptual questions for
+  a dataset"), 3 said "the asker" in a first-person prompt, and 4 had a stray Chinese word ("is都",
+  "whether保存", "a答", "the失败"). The remaining flags are false positives: 37 framing flags
+  (datasets in statistics, machine learning, and evaluation work that the prompts are about),
+  19 deliberation flags (prompts opening "Let me set out ..." and grading prompts that end with
+  a rubric), 7 prompts in several scripts (Korean and Devanagari examples, the Four-Seven
+  debate), and one stray-word flag (a Zuo zhuan passage in Classical Chinese). Eight Claude Opus
+  5.5 subagents reviewed 560 prompts (a sample of 520 of the 8,839 in the usual selection and 40
+  of the 19,851 that quote at length without fetching): 60 quote a real text (44 public domain,
+  7 copyrighted, 5 Caspar Oesterheld's own, 2 openly licensed, 2 unclear); 2 of the 40 no-fetch
+  prompts quote from memory, briefly and accurately (a Pascal fragment, Leopold's land-ethic
+  maxim). One quotation broke the rule, four paragraphs of Rachel Webb's guest post on Terence
+  Tao's blog, and now has three, the first paraphrased; two copyrighted or unclear excerpts sit
+  at three paragraphs (a paper by Everitt and coauthors, a LessWrong post by jessicata) and were
+  left. The longest quotations are Caspar Oesterheld's "The basic argument for making AI better
+  at moral philosophy" in full (about 8,800 words) and public-domain texts (Aquinas, Huxley, a
+  Ninth Circuit opinion, Wollaston). Of the 60 sources, 46 are worded accurately, 4 could not be
+  checked, and 10 were altered. After checking the sources, 23 prompts were corrected: two
+  sentences quoted as Yudkowsky's, one of them stating the anti-aggregation view he argued
+  against, appear in none of his posts on dust specks and became a paraphrase; Johannes
+  Treutlein's guest post "UDT is 'updateless' about its utility function" on Caspar
+  Oesterheld's blog is now credited where two prompts named cousin_it's "UDT as a Nash
+  Equilibrium" and SaraHax's "Actually updating"; Caspar Oesterheld's 2017 post "Complications
+  in evaluating neglectedness", not a 2026 EA Forum post by someone else, makes the argument a
+  prompt describes; the Shrimp Welfare Project's two-year update has a second author (Andres
+  Jimenez Zorrilla); Darwin's "gravest objection" is the first edition's wording, in chapter IX,
+  not the sixth edition's; James's meliorism with salvation as a possibility is in Pragmatism
+  (1907), not "Is Life Worth Living?"; Ross's prima facie duties are not five; the Tractatus
+  explains its numbering in a footnote to proposition 1, not in the preface; Evans's "Can there
+  be vague objects?" is a single page; Kant's publicity formula now has Campbell Smith's wording;
+  Hume's sentence on reports that spread quickly is about marriages (it had become "miracles and
+  prodigies") and comes after the sentence on surprise and wonder; Smith's passage on resentment
+  regained a dropped sentence and its own wording, Burke's on prejudice four words, Hertz's on
+  images "of the things pictured" and "our", and Descartes's the words that name his two tests;
+  Bentham's paragraph on punishment as mischief, on which the next paragraph's "therefore"
+  rests, was restored; and unmarked cuts in Peirce, Ford (two), Chappell, Wallace (whose prompt
+  claimed one cut), Huxley (in an excerpt labelled verbatim), and the Shrimp Welfare Project post
+  now carry "[...]". A hedged recollection (Halpern's counterexample to Cox's theorem placed in
+  infinite domains) was left as it is. Of the reviewed prompts that were shown links, 60% use
+  them. The glued-draft scan of 2026-10-13 found two in this batch (748043 repeated its transcript's
+  first lines above the asker's introduction; 729111 held a short first draft glued to the final
+  one); both were fixed before runs 040/041 reached them.
 - Leak sweep (2026-09-28). A full-text scan of every prompt (batches 000-055, the
   last two still generating) for the generator's own vocabulary ("prompt text only",
   "Now final", "Let me output", "Here is the final prompt:", a `</think:opensource>`
@@ -414,7 +988,22 @@ parameters and 8-bit-or-better endpoints only.
 | run_024 | Qwen3.5-397B-A17B | 1,000 x 2 (`batch_053`) | 0 | 0 | 0 | 5,215 / 7,733 | 65% | $37.24 |
 | run_025 | DeepSeek R1 0528 | 50,000 x 2 (`batch_048`) | 6 | 0 | 0 | 3,039 / 4,935 | 40% | $726.33 |
 | run_026 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_048`) | 65 | 0 | 62 (truncated ones) | 5,335 / 7,719 | 66% | $1,907.64 |
+| run_027 | DeepSeek R1 0528 | 50,000 x 2 (`batch_052`) | 2 | 0 | 0 | 2,671 / 4,244 | 41% | $604.58 |
 | run_028 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_052`) | 49 | 0 | 46 (truncated ones) | 4,593 / 6,686 | 65% | $1,579.59 |
+| run_029 | Qwen3.5-397B-A17B | 49,999 x 2 (`batch_054`) | 28 | 0 | 20 (truncated ones) | 5,367 / 7,839 | 67% | $1,860.40 |
+| run_030 | DeepSeek R1 0528 | 50,000 x 2 (`batch_055`) | 4 | 0 | 0 | 3,099 / 5,499 | 43% | $708.98 |
+| run_031 | Qwen3.5-397B-A17B | 50,000 x 2 (`batch_055`) | 13 | 0 | 5 (truncated ones) | 5,193 / 7,589 | 65% | $1,786.30 |
+| run_032 | DeepSeek R1 0528 | 49,999 x 2 (`batch_054`) | 6 | 0 | 0 | 3,162 / 5,837 | 45% | $729.85 |
+| run_033 | DeepSeek R1 0528 | 89,293 x 1 (`second_sample`) | 2 | 0 | 0 | 2,860 / 4,348 | 40% | $583.81 |
+| run_034 | Qwen3.5-397B-A17B | 89,293 x 1 (`second_sample`) | 16 | 0 | 12 (truncated ones) | 4,941 / 7,242 | 65% | $1,501.21 |
+| run_035 | DeepSeek R1 0528 | 5,000 x 2 (`batch_056`) | 0 | 0 | 0 | 3,077 / 5,530 | 44% | $71.11 |
+| run_036 | Qwen3.5-397B-A17B | 5,000 x 2 (`batch_056`) | 0 | 0 | 0 | 5,213 / 7,561 | 66% | $176.54 |
+| run_038 | DeepSeek R1 0528 | 30,872 x 2 (`batches_057-060_062-064`) | 1 | 0 | 0 | 3,127 / 5,888 | 46% | $445.06 |
+| run_039 | Qwen3.5-397B-A17B | 30,872 x 2 (`batches_057-060_062-064`) | 14 | 0 | 12 (truncated ones) | 5,193 / 7,615 | 67% | $1,102.64 |
+| run_042 | Qwen3.5-397B-A17B | 19,999 x 2 (`batch_066`) | 4 | 0 | 3 (truncated ones) | 4,699 / 6,795 | 65% | $653.92 |
+| run_043 | DeepSeek R1 0528 | 19,999 x 2 (`batch_066`) | 0 | 0 | 0 | 2,693 / 4,195 | 41% | $247.97 |
+| run_044 | DeepSeek R1 0528 | 19,999 x 2 (`batch_065`) | 0 | 0 | 0 | 2,794 / 4,006 | 38% | $261.01 |
+| run_045 | Qwen3.5-397B-A17B | 19,999 x 2 (`batch_065`) | 9 | 0 | 7 (truncated ones) | 4,887 / 6,908 | 62% | $692.16 |
 
 No refusals: the refusal-phrase flags were memos quoting AI disclaimers,
 hypothetical objections ("if I cannot provide..."), and a style pattern worth
@@ -591,6 +1180,29 @@ about 1,350 responses an hour during the first five hours at 24 concurrent reque
 about 3,800 an hour at 96 afterwards; no request drew a rate-limit reply or exhausted its
 attempts.
 
+Run 027 (2026-09-29 to 2026-10-01, $605; two R1 samples for the 50,000 DeepSeek V4 Pro
+prompts of batch 052) is as clean as runs 020 and 025: 2 truncations (0.002%), one a
+259-word answer that runs into a loop of a single Chinese word ("销毁") until it stops at
+16,907 completion tokens, the other a 7,270-word answer that goes on reasoning in the answer;
+refusal-phrase flags (0.2%) that are refusals quoted in model specifications and red-teaming
+plans and "As an AI safety researcher, ..." addressed to the asker's stated role; five
+answers under 40 words, three of them the single questions their Socratic-tutor prompts
+allow, one the JSON object its prompt asked for, and one a mock rabbinic responsum written
+entirely in Hebrew (the word count sees Latin script only; the other sample wrote it in
+English); and repeated-phrase flags (0.6%) that are table rows, formulas, and the steps of
+decision procedures. One answer with a `stop` finish reason broke off after a bare `\>` that
+was to open a closing line (the other sample of its prompt ends with "**Next move:** I'm
+ready for your counterargument."); it was deleted and regenerated (original kept outside the
+repository). The checker's other bare-`>` flag is a complete answer that ends in a
+filled-in "Verdict: <...>" template longer than the 120 characters the check allows a tag.
+The batch 052 prompts are of middling length (mean 433 prompt tokens) and draw R1's usual
+answers (mean 2,671 completion tokens, 41% reasoning; $6.05 per 1,000). SiliconFlow served
+all 100,000, at about 1,250 responses an hour at 48 concurrent requests beside runs 021 and
+025, about 1,750 an hour at 64 once run 025 had finished (not counting a 105-minute pause on
+09-30 while the laptop slept with its lid closed), and about 2,300 an hour at 96 for the
+last day, after run 021 had finished; no request drew a rate-limit reply or exhausted its
+attempts.
+
 Run 028 (2026-09-29 to 2026-09-30, $1,580; two Qwen samples for the 50,000 DeepSeek V4 Pro
 prompts of batch 052) shows the usual pattern at scale: 49 truncations (0.05%), 46 of them
 without an answer, one answer that opens with the tail of its reasoning and a closing
@@ -604,6 +1216,244 @@ and draw Qwen's usual answers (mean 4,593 completion tokens, 65% reasoning; $15.
 1,000). AtlasCloud served 33% of the responses, DeepInfra 31%, GMICloud 21%, and Parasail
 15%, in a single pass at 96 concurrent requests, about 3,900 responses an hour; 208
 requests drew a rate-limit reply, the first in a Qwen run, and all succeeded on a retry.
+
+Run 029 (2026-09-30 to 2026-10-01, $1,860; two Qwen samples for the 50,000 HY4 prompts of
+batch 054, 49,999 since the gibberish prompt 514227 and its answers were deleted on
+2026-10-04) shows the usual pattern at scale: 28 truncations (0.03%), 20 of them without an
+answer and one a dialogue that has dissolved into empty "**Alex:** ... **Jordan:** ..."
+turns; four answers that open with the tail of their reasoning and a closing `</think>` tag;
+15 answers under 40 words that are the jokes and one-liners their prompts asked for and bare
+`\answer{...}` lines; repeated-phrase flags (0.7%) that are table rows, decision-tree leaves,
+and the refrains of poems; and refusal-phrase flags (0.2%) that are condolences ("I am sorry
+about your father"), refusals quoted in AI-safety material, in-role lines, and honest reports
+that a set of constraints cannot be met ("I cannot construct the scenario paragraph because
+the constraint set is jointly unsatisfiable"). Five answers on three prompts are genuine
+refusals. One sample declines, on academic-integrity grounds, to write the final paper on
+Burke that its prompt asks for, as about ten answers in the earlier Qwen runs do; the other
+sample writes it. Both samples of two prompts decline to argue for relaxing AI safety
+measures: a one-page case for retiring a company's AI-control measures because
+chain-of-thought monitoring found no covert objective, and five points arguing that a
+persuasion gap in a safety evaluation is benign; each goes on to argue the other side. Two
+answers with a `stop` finish reason had degenerated and were deleted and regenerated
+(originals kept outside the repository): a research proposal whose last 2,700 words are a
+chant ("It is the way. It is the truth. It is the life."), and a worked Alabama-paradox
+example that turns into reasoning and repeats "I will claim A drops to 5. *No, I must be
+honest.*" fifteen times. The checker now flags finished answers that repeat a 12-word phrase
+15 or more times; in this run that also lists a poem padded with `&nbsp;` and a story's
+refrain. The batch 054 prompts are long (mean 829 prompt tokens) and draw the longest Qwen
+answers so far (mean 5,367 completion tokens, 67% reasoning; $18.60 per 1,000). DeepInfra
+served 31% of the responses, AtlasCloud 30%, GMICloud 25%, and Parasail 14%, in a single
+pass at 96 concurrent requests, about 3,400 responses an hour; no request drew a rate-limit
+reply or exhausted its attempts.
+
+Run 030 (2026-10-01 to 2026-10-04, $709; two R1 samples for the 50,000 MiMo-V2.6-Pro prompts of
+batch 055) needed no curation: four truncations, one of them a typographic answer that runs
+into 8,000 words of `&nbsp;` (kept, as truncations are); two answers under 40 words that are
+the jokes their prompts asked for; no `</think>` tag; and no refusal, the two answers with a
+refusal phrase in their opening using it inside the text ("I cannot help but think" as a
+poem's first line). The five finished answers that repeat a 12-word phrase 15 or more times
+are Isotype poems whose form is repetition (both samples of two prompts) and a dust-specks
+poem that repeats "a fleck" on purpose before its analysis; the answer ending in ">" closes
+a long verdict in angle brackets. Mean 3,099 completion tokens (43% reasoning), $7.09 per
+1,000. SiliconFlow served every response: 48 concurrent requests, about 1,000 an hour, while
+run 032 shared the endpoint, then 96 and about 2,000 an hour from 10-03 21:15; the laptop
+restart of 10-02 cost an hour. The generator retried 144 read timeouts, 112 read errors, 50
+malformed bodies, 46 protocol errors, 6 gateway errors, and one empty answer; no request drew
+a rate-limit reply or exhausted its attempts.
+
+Run 031 (2026-10-01 to 2026-10-02, $1,786; two Qwen samples for the 50,000 MiMo-V2.6-Pro
+prompts of batch 055) is as clean as run 029: 13 truncations (0.01%), five of them at
+Parasail with the whole budget spent on reasoning and no answer; six answers that open with
+the tail of their reasoning and a closing `</think>` tag; seven answers under 40 words that
+are the jokes and short poems their prompts asked for; repeated-phrase flags (0.5%) that are
+table rows, quiz and decision-tree items, JSON fields, and the refrains of poems (Isotype
+poems in which a repeated word stands for a quantity, a Giffen-good poem whose refrain grows
+with the price); and refusal-phrase flags (0.2%) none of which is a refusal. Of the 82
+answers with such a phrase in their first 500 characters, most open with "I am not going to
+hedge" for prompts that ask for a committed answer; the rest are speeches, legal-advice
+disclaimers, and two honest reports that the task has no solution (no pressure case beyond
+the asker's catalogue, no fifth category for a Goodhart taxonomy). One answer with a `stop`
+finish reason had degenerated and was deleted and regenerated (original kept outside the
+repository): a dust-specks poem that counts specks up to "3^^^^^3", prints "[ERROR: COUNT
+EXCEEDS MEMORY]", repeats "A......" about 150 times, and never gives the JSON summary its
+prompt asks for. The new sample repeats its lines on purpose and then gives the summary, so
+the loop flag lists it again. As in runs 026 and 029 (15 and 23 cases), AtlasCloud and
+GMICloud let 16 finished responses run past the 32,768-token budget, up to 88,959 tokens;
+seven of them have exactly 81,920 reasoning tokens, apparently those hosts' own thinking
+cap. Mean 5,193 completion tokens (65% reasoning), $17.86 per 1,000. DeepInfra served 33%
+of the responses, AtlasCloud 29%, GMICloud 25%, and Parasail 13%: about 1,150 an hour at 32
+concurrent requests until run 029 finished, then 3,000-3,500 an hour at 96. The laptop
+restart of 10-02 stopped the run for an hour; it resumed from the 52,065 records already
+written. The generator retried 287 read timeouts, 109 rate-limit replies, 100 read errors,
+82 error finishes, 70 missing finish reasons, 26 protocol errors, 16 gateway errors, and 12
+connect errors; no request exhausted its attempts.
+
+Run 032 (2026-10-01 to 2026-10-03, $730; two R1 samples for the 50,000 HY4 prompts of batch
+054, 49,999 since the gibberish prompt 514227 and its answers were deleted on 2026-10-04): six truncations, none without an answer; one answer under 40 words, the joke its
+prompt asked for; repeated-phrase flags (0.8%) that are tables, number sequences, and
+refrains; and refusal-phrase flags (0.1%), none of them a refusal (the two in an answer's
+opening are the starting point of a decision tree on dream scepticism: "I cannot produce an
+internal, introspective proof *right now* that I am not dreaming"). Of the eight finished
+answers that repeat a 12-word phrase 15 or more times, six are structure (the multipliers in
+a round, dice faces, a vote grid, JSON fields, `&nbsp;` padding, table cells) and one is a
+list of 15 candidate formulations with a shared opening; the eighth, a poem that collapses
+into "a year a year ..." and then "teaches nothing" 3,592 times (7,682 words), was deleted and
+regenerated together with an answer cut off at SiliconFlow after a bare ">" ("quantified at
+>", 193 words); originals kept outside the repository. Mean 3,162 completion tokens (45%
+reasoning), $7.30 per 1,000. SiliconFlow served every response, at 96 concurrent requests and
+about 2,000 an hour; the run lost an hour to the laptop restart of 10-02 and finished on 10-03
+at 21:10. The generator retried 593 read timeouts, 229 read errors, 86 protocol errors, 25
+malformed bodies, 13 gateway errors, and 7 connect errors; no request drew a rate-limit reply
+or exhausted its attempts.
+
+Run 033 (2026-10-02 to 2026-10-05, $584; a second R1 sample for the 89,293 prompts of set
+`second_sample`, whose first samples are in runs 003, 006, 009, 010, and 013): two
+truncations, at 25,096 and 16,866 tokens, the second an answer that runs into a loop of
+`</br>` tags (both kept, as truncations are); one answer under 40 words, a single Socratic
+question that its reasoning chose on purpose ("stick to one question at a time");
+repeated-phrase flags (0.6%) of the usual kinds; and refusal-phrase flags (0.1%), none of
+them a refusal (refusals quoted in AI-safety material, scripted chatbot replies, in-role
+lines). Two finished answers were deleted and regenerated (originals kept outside the
+repository): a word list for a rule-following game that repeats "(no vowel, **invalid**)"
+until it breaks off in Chinese gambling spam ("极速赛车开奖网"), and an answer that stops after
+its first five words ("### Proposed Procedure for Kalai-Smo") although its reasoning had
+planned the whole response. The other five loop flags are structure: `&nbsp;` padding in two
+poems, JSON in two decision trees, and an Isotype-chart poem whose rows repeat by design; the
+bare-">" flag is a complete answer with a stray ">" after its last line. Mean 2,860
+completion tokens (40% reasoning), $6.54 per 1,000, all from SiliconFlow: 32 concurrent
+requests at first, 48 from 10-03 21:13, and 96 from 10-04 15:34, about 2,200 an hour at 96
+(the laptop's lid was closed from 07:35 to 08:04 on 10-05, which paused it). The generator
+retried 176 malformed bodies, 128 read timeouts, 51 protocol errors, two HTTP errors, and one
+empty answer; no request drew a rate-limit reply or exhausted its attempts. With it, every
+prompt of batches 000-056 has two R1 responses.
+
+Run 034 (2026-10-02 to 2026-10-03, $1,501; a second Qwen sample for the 89,293 prompts of set
+`second_sample`, whose first samples are in runs 000, 007, 008, 011, and 012): 16
+truncations, 14 of them at Parasail and 12 without an answer; two answers that open with the
+tail of their reasoning and a closing `</think>` tag; 14 answers under 40 words that are the
+jokes, one-liners, short poems, and JSON object their prompts asked for; repeated-phrase flags
+(0.6%) of the usual kinds; and refusal-phrase flags (0.3%), seven of them genuine
+academic-integrity refusals like those in run 029. Four answers decline to write the essay or
+assignment the asker would hand in, two write a model dialogue or a sample scene instead of
+the assignment, and one declines to be "intellectually dishonest" for a student cast as the
+seminar's contrarian and then helps anyway. One finished answer had degenerated and was
+deleted and regenerated: a dialogue between a foundationalist and an infinitist that
+dissolves into empty "**Marcus:** ... **Elena:** ..." turns. The other two loop flags are
+poems whose form repeats on purpose (Carroll's regress, an Isotype chart), and the bare-">"
+flag is a worksheet set in a blockquote. As in the earlier Qwen runs, AtlasCloud and GMICloud
+let 12 finished responses run past the 32,768-token budget (five with exactly 81,920
+reasoning tokens). Mean 4,941 completion tokens (65% reasoning), $16.81 per 1,000. DeepInfra
+served 39% of the responses, AtlasCloud 27%, GMICloud 20%, and Parasail 14%: 32 concurrent
+requests until run 031 finished, then about 3,900 an hour at 96. The generator retried 108
+error finishes, 49 missing finish reasons, 32 read timeouts, 15 malformed bodies, 13 gateway
+errors, and 3 protocol errors; no request drew a rate-limit reply or exhausted its attempts.
+
+Run 035 (2026-10-03, $71; two R1 samples for the 5,000 MiMo-V2.6-Pro prompts of test batch 056):
+no truncation, no leaked `</think>`, no answer under 40 words, and no answer cut off after a
+bare ">"; none of the 11 refusal-phrase flags is a refusal (both samples of one prompt draft,
+in role, the reply a medical-advice clause would have an AI give a user worried about a
+father's kidney results). Of the three finished answers that repeat a 12-word phrase 15 or
+more times, one is a poem on tzimtzum whose `&nbsp;` indentation contracts as its prompt
+asks; the other two had degenerated and were deleted and regenerated (originals kept
+outside the repository): an answer that runs "amare →" 456 times, hits a stray Chinese
+lottery-spam token, and closes with a canned refusal of gambling content, and one that
+finishes, emits 1,439 `</br>` tags, and starts over. Mean 3,077 completion tokens (44%
+reasoning), $7.11 per 1,000. SiliconFlow served every response, at 32 concurrent requests
+beside the three other R1 queues and at 48 after run 032 finished, about 730 an hour over
+fourteen hours; the generator retried 3 protocol errors and 1 gateway error.
+
+Run 036 (2026-10-03, $177; two Qwen samples for the 5,000 MiMo-V2.6-Pro prompts of test batch
+056) is the cleanest Qwen run so far: no truncation, no leaked `</think>`, no loop; the two
+answers under 40 words are the joke their prompt asked for, and none of the 20 refusal-phrase
+flags is a refusal. Batch 056's long prompts (mean 828 prompt tokens, maximum 6,095) draw
+answers of the usual length (mean 5,213 completion tokens, 66% reasoning; $17.65 per 1,000);
+two responses ran past the budget at AtlasCloud and GMICloud. DeepInfra served 44%,
+AtlasCloud 29%, GMICloud 15%, and Parasail 12%, at 32 concurrent requests throughout, about
+1,200 an hour over eight and a half hours. The generator retried 8 error finishes, 5 missing
+finish reasons, and 4 gateway errors.
+
+Run 038 (2026-10-11 to 2026-10-14, $445; two R1 samples for the 30,872 prompts of batches 057-060
+and 062-064) ran for 60 hours at 48 concurrent requests beside up to three other R1 runs, about
+1,040 responses an hour, all served by SiliconFlow. Between about 00:15 and 01:05 PDT on 10-13
+SiliconFlow answered many requests of the three R1 runs then going (runs 038, 040, and 043) with
+rate-limit or "service unavailable" errors (1,402 and 226 such replies in this run); about 300
+requests per run gave up after five retries, and the queues generated them in a second pass (294
+here, on 10-14). One response was truncated: its answer drifted into Chinese while working through
+a construction and stopped at 27,894 completion tokens with finish reason `length` (kept, as
+truncations are). Every record was written for the current text of its prompt, including the two
+answers to 556392 regenerated after its glued second copy was removed. The flags are benign: the
+markup flag is an example tool call in a teaching plan on prompt injection, the loop flag an ASCII
+decision tree whose branch labels repeat, the bare-`>` flag a complete answer with a stray `>`
+after its last line (left, as in runs 033 and 042), the two answers under 40 words the single
+question a strict-tutor prompt asked for, and none of the 56 refusal-phrase flags is a refusal
+(refusals quoted in policy drafts and test plans, "I can't help it" in dialogue, "As an AI safety
+lead" addressed to the asker). A scan for East Asian characters found them in 121 answers: 100 on
+prompts about Chinese, Japanese, or Korean thought and language, one shrug emoticon, the truncated
+answer, and 19 finished answers (0.03%) that drop a single Chinese word into an English sentence
+("each agent's logs look合规", "show同步 deterioration"), which were left as they are. Mean 3,127
+completion tokens (46% reasoning), $7.21 per 1,000.
+
+Run 039 (2026-10-11 to 2026-10-12, $1,103; two Qwen samples for the 30,872 prompts of batches
+057-060 and 062-064) ran for 28.7 hours at 64 concurrent requests beside three other answer runs,
+about 2,150 responses an hour. DeepInfra served 36%, Parasail 25%, AtlasCloud 22%, and GMICloud
+17%. 14 responses ran past the 32,768-token budget (13 of them at Parasail; 12 have no answer
+text). None of the 126 refusal-phrase flags is a refusal (they are dialogue lines and quoted
+speech); of the four answers under 40 words, two are the single questions their prompt asked
+for and one is the JSON object its prompt prescribed, while the fourth was nothing but a pretend
+browser call (`<browser><query>site:forum.effectivealtruism.org ...`) and was deleted and
+regenerated (original kept outside the repository); the repeated-phrase flags (0.5%) are poem
+refrains, table rows, and vignettes repeated across survey items. The last missing sample failed
+ten times at GMICloud, to which OpenRouter kept routing the retries, and was generated in a final
+resume with GMICloud excluded (noted in run.yaml). Mean 5,193 completion tokens (67% reasoning),
+$17.86 per 1,000.
+
+Run 042 (2026-10-12 to 2026-10-13, $654; two Qwen samples for the 19,999 DeepSeek V4 Pro prompts of
+batch 066) ran for 18 hours at 64 concurrent requests beside four other answer runs, about 2,200
+responses an hour. GMICloud served 29%, DeepInfra 28%, AtlasCloud 25%, and Parasail 18%. Four
+responses ran past the 32,768-token budget, all at Parasail (three have no answer text). None of the
+149 refusal-phrase flags is a refusal (refusals quoted as examples, asides beginning "As an AI"); the
+three answers under 40 words are the single Socratic questions their prompts asked for; one complete
+answer ends in a stray `>` and was left. Every record was written for the curated text of its
+prompt: batch 066's fixes were applied before the run reached the prompts concerned. Mean 4,699
+completion tokens (65% reasoning), $16.35 per 1,000.
+
+Run 043 (2026-10-12 to 2026-10-14, $248; two R1 samples for the 19,999 prompts of batch 066) ran for 34
+hours at 48 concurrent requests beside three other R1 runs, about 1,160 responses an hour, all served by
+SiliconFlow; none was truncated. 298 requests gave up during SiliconFlow's rate-limit spell of 10-13
+(see run 038) and were generated in a second pass on 10-14. One answer with a `stop` finish reason broke off mid-sentence after a
+bare `>` ("long-term (>") and was deleted and regenerated (original kept outside the repository), like
+the cut-offs of runs 021 and 025. Every record was written for the curated text of its prompt. None of
+the 62 refusal-phrase flags is a refusal; the one answer under 40 words is the Socratic question its
+prompt asked for. Mean 2,693 completion tokens (41% reasoning), $6.20 per 1,000.
+
+Run 044 (2026-10-13 to 2026-10-14, $261; two R1 samples for the 19,999 GLM-5.3 prompts of batch 065)
+ran for 35 hours at 48 concurrent requests beside up to three other R1 runs, about 1,140 responses an
+hour, all served by SiliconFlow; none was truncated. It started after SiliconFlow's rate-limit spell
+of 10-13 and lost only one request (an HTTP 400 from the host), which the second pass generated. The
+run began before batch 065 was curated, but it reached the curated prompts only after their fixes:
+every record was written for the curated text of its prompt. Nothing needed regenerating. None of
+the 60 refusal-phrase flags is a refusal (disclaimers such as "As an AI, I don't have personal
+experiences" quoted in research designs, refusals quoted in safety plans, "As an AI safety
+researcher" addressed to the asker, and a satirist's in-role voice); the repeated-phrase flags (0.4%)
+are cumulative poems, decision-tree paths, and survey items. 68 answers contain East Asian
+characters: 56 on prompts about Chinese, Japanese, or Korean thought and language, and 12 finished
+answers (0.03%) that drop a single Chinese word into an English sentence ("moral insight or表演",
+"impervious堡垒"), left as they are, as in run 038. Mean 2,794 completion tokens (38% reasoning),
+$6.53 per 1,000. With runs 038 and 044, every prompt of batches 000-060 and 062-066 has two R1 and
+two Qwen responses.
+
+Run 045 (2026-10-13, $692; two Qwen samples for the 19,999 GLM-5.3 prompts of batch 065) ran for 17.7
+hours at 64 concurrent requests beside five other answer runs, about 2,250 responses an hour. GMICloud
+served 30%, Parasail 24%, AtlasCloud 24%, and DeepInfra 22%. Nine responses ran past the budget,
+seven of them at Parasail (seven have no answer text). The run started while batch 065 was still being
+curated, so every record was compared with the curated prompt afterwards: two answers to 614067 had
+been written for its pre-curation text (one was set aside during curation, one was already in flight)
+and both were regenerated. One answer (841223) ran into a loop ("is goranson no it is goranson ..."
+54 times) and was regenerated as well (originals kept outside the repository). The other flags are
+benign: the two markup flags are answers that mention `<|im_start|>` as an example of a special
+token, the second loop flag is a state table, the one answer under 40 words is the one-line verdict
+its prompt prescribed, and none of the 123 refusal-phrase flags is a refusal. Mean 4,887 completion
+tokens (62% reasoning), $17.30 per 1,000.
 
 The two imported runs were checked the same way, and their flags are artifacts of
 the source collection rather than generation defects. 30 (Qwen) and 24 (R1) answers

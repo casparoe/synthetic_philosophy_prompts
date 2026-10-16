@@ -1,6 +1,6 @@
 # Synthetic Philosophy Prompts
 
-A dataset of (currently) about 530,000 synthetic user prompts on philosophical and
+A dataset of (currently) about 810,000 synthetic user prompts on philosophical and
 conceptual topics — decision theory, formal epistemology, philosophy of science,
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
@@ -70,7 +70,7 @@ generators/
   generate_responses.py     model responses to a prompt set (OpenAI-compatible endpoints, OpenRouter)
   judge_pairs.py            preference judgments over a pair set (Anthropic API, streamed or as Message Batches)
 tools/
-  check_batch.py            quality report for a batch: leaks, example echo, near-duplicates, cost
+  check_batch.py            quality report for a batch: leaks, stray words and word salad, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   build_link_cache.py       fetches every domain link once, politely, into link_cache/
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
@@ -124,9 +124,9 @@ fetching available for fact-checking and verbatim quotation.
 | 039 | DeepSeek V4.1 Flash | OpenRouter, fp8 provider (Novita), Io Net and GMICloud excluded; stopped by hand after 488 prompts; client-executed web tools (DuckDuckGo search + page fetch) |
 | 041 | DeepSeek V4.1 Flash | OpenRouter, fp8 hosts load-balanced (Novita, Morph, Venice, Parasail, DeepInfra), Io Net and GMICloud excluded; client-executed web tools (DuckDuckGo search + page fetch) |
 | 042 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded because its tool-call grammar rejects the web tools); 1,000-prompt test batch; client-executed web tools (DuckDuckGo search + page fetch) |
-| 043 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 1,000-prompt test batch, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
+| 043 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 1,000-prompt test batch, temperature 0.9 and top-p 1.0 as the model card recommends; 4 prompts carry a stray Chinese word, left in place (see known limitations); client-executed web tools (DuckDuckGo search + page fetch) |
 | 044 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded); 20,000 prompts; paused for six hours during a BaseTen outage and continued from the batch's own snapshot; client-executed web tools (DuckDuckGo search + page fetch) |
-| 045 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 20,000 prompts, temperature 0.9 and top-p 1.0 as the model card recommends; client-executed web tools (DuckDuckGo search + page fetch) |
+| 045 | Tencent HY4 preview | OpenRouter, fp8 provider (Tencent); 20,000 prompts, temperature 0.9 and top-p 1.0 as the model card recommends; 88 prompts (0.4%) carry a stray Chinese word, left in place (see known limitations); client-executed web tools (DuckDuckGo search + page fetch) |
 | 046 | Thinking Machines Inkling | OpenRouter, fp8 provider (BaseTen; DeepInfra excluded); 100,000 prompts over five days at concurrency 48; 590 prompts abandoned under rate limiting and regenerated with `--continue-batch`; the first whole batch run with the example subsetting described below; client-executed web tools (DuckDuckGo search + page fetch) |
 | 047 | Moonshot Kimi K3 | OpenRouter, fp8 provider (BaseTen, the only 8-bit host; the model is trained in MXFP4); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 (BaseTen enforces 0.95 for this model), reasoning effort high; 14 prompts abandoned under rate limiting and regenerated with `--continue-batch`; client-executed web tools (DuckDuckGo search + page fetch) |
 | 048 | Qwen3.8 2.4T-A95B | OpenRouter, fp8 provider only (SiliconFlow); 50,000 prompts over seven days at concurrency 48 with the settings of batch 038; two prompts abandoned and replaced; the first Qwen 2.4T batch with the quote-inclusion instruction; client-executed web tools (DuckDuckGo search + page fetch) |
@@ -135,8 +135,19 @@ fetching available for fact-checking and verbatim quotation.
 | 051 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 50,000 prompts; temperature 1.0 and top-p 1.0 from the model card, reasoning effort high; no prompt abandoned in four days; client-executed web tools (DuckDuckGo search + page fetch) |
 | 052 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first; Io Net and GMICloud excluded); 50,000 prompts over four days at concurrency 48 with the settings of batch 051; no prompt abandoned; continued once from the batch's own snapshot after a deliberate restart; client-executed web tools (DuckDuckGo search + page fetch) |
 | 053 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers load-balanced (Xiaomi, DeepInfra; the model is released in FP8); 1,000-prompt test batch; temperature 1.0 and top-p 0.95 from the model card, reasoning effort high; client-executed web tools (DuckDuckGo search + page fetch) |
-| 054 | Tencent HY4 preview | OpenRouter, fp8 providers (Tencent first, then Novita; SiliconFlow and DeepInfra took a few); 50,000 prompts over four and a half days at concurrency 72, temperature 0.9 and top-p 1.0 as the model card recommends, 64,000-token budget; continued three times from the batch's own snapshot after stalls and once to replace a removed file; client-executed web tools (DuckDuckGo search + page fetch) |
+| 054 | Tencent HY4 preview | OpenRouter, fp8 providers (Tencent first, then Novita; SiliconFlow and DeepInfra took a few); 50,000 prompts over four and a half days at concurrency 72, temperature 0.9 and top-p 1.0 as the model card recommends, 64,000-token budget; continued three times from the batch's own snapshot after stalls and once to replace a removed file; flaws left in place (see known limitations): 808 prompts (1.6%) carry a stray Chinese or Korean word and 72 a leaked `<｜hy_place▁holder▁no▁813｜>` token, 27 of them breaking off mid-sentence there; one gibberish prompt deleted on 2026-10-04 (49,999 kept); client-executed web tools (DuckDuckGo search + page fetch) |
 | 055 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers load-balanced (DeepInfra, GMICloud, Xiaomi; the model is released in FP8); 50,000 prompts over six days at concurrency 48, temperature 1.0 and top-p 0.95 from the model card, reasoning effort high, 65,536-token budget; continued once from the batch's own snapshot after a supervisor restart and once to replace 22 abandoned generations; client-executed web tools (DuckDuckGo search + page fetch) |
+| 056 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers load-balanced (DeepInfra; GMICloud took about 5%; the model is released in FP8); 5,000-prompt test batch of the meta-prompt of 2026-10-02 (four new task types, longer examples including whole articles and graded scripts, and the rule that long quotations must come from public-domain, openly licensed, or Caspar Oesterheld's texts); the settings of batch 055 (temperature 1.0, top-p 0.95, reasoning effort high, 65,536-token budget, concurrency 48); no prompt abandoned in eleven hours; client-executed web tools (DuckDuckGo search + page fetch) |
+| 057 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers (DeepInfra; GMICloud and Novita took a few dozen); 5,000-prompt test batch of the meta-prompt of 2026-10-03 morning, which lists the sources that may be quoted at length (EA Forum posts from December 2022 on, gwern.net, Our World in Data, Distill, CC BY arXiv and journal articles, US court and federal documents, Caspar Oesterheld's blog posts) and those that may only be excerpted; the settings of batch 056; ran alongside batch 058, so the two batches' IDs interleave; no prompt abandoned; client-executed web tools (DuckDuckGo search + page fetch) |
+| 058 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 providers (DeepInfra; Novita, GMICloud, and Xiaomi took a few dozen); 5,000-prompt test batch of the meta-prompt of 2026-10-03 afternoon: the domains moved into 45 thematic files (2,811 domains), some with links (Caspar Oesterheld's blog posts on 75 domains, 220 essays from Brian Tomasik's reducing-suffering.org, a few others), each link shown with probability 0.05, so 3.2% of prompts saw one; the settings of batch 056; ran alongside batch 057; no prompt abandoned; client-executed web tools (DuckDuckGo search + page fetch) |
+| 059 | Tencent HY4 preview | OpenRouter, fp8 providers (Tencent first, then Novita); 5,000 prompts with the settings of batch 054 (concurrency 72, temperature 0.9, top-p 1.0, 64,000-token budget), for comparison with the MiMo test batches on the meta-prompt of 2026-10-04 morning (3,280 domains, links on about half of them: Wikipedia, the SEP and IEP, Bentham's Bulldog, gwern.net, Brian Tomasik, Caspar Oesterheld); one generation abandoned and replaced; five word-salad prompts deleted and 30 stray Chinese words translated back during curation (4,995 kept); client-executed web tools (DuckDuckGo search + page fetch) |
+| 060 | Xiaomi MiMo-V2.6-Pro | OpenRouter, fp8 and bf16 providers (DeepInfra 63%, GMICloud 20%, Novita 17%); 5,000 prompts with the settings of batch 056 on the meta-prompt of 2026-10-06 15:49 (3,530 domains; each linked page shown with probability 0.05, so 93% of prompts saw at least one link, most often to LessWrong, Wikipedia, the EA Forum, Philosophy Stack Exchange, the SEP, Overcoming Bias, or Project Gutenberg); one generation abandoned and replaced; client-executed web tools (DuckDuckGo search + page fetch) |
+| 062 | GLM-5.3 | OpenRouter, fp8 provider (SiliconFlow; Z.ai's own endpoint excluded); 1,000-prompt trial with the settings of batches 034/035 (effort high, temperature 1.0) and a 65,536-token budget, on the meta-prompt of batch 061 and run alongside it, so the two batches' prompt IDs interleave; client-executed web tools (DuckDuckGo search + page fetch) |
+| 063 | claude-haiku-5-5 | Anthropic API, streaming at concurrency 48; effort xhigh with a 64,000-token ceiling, because at max effort Haiku 5.5 thought for 48,000 to over 64,000 tokens per prompt; 5,000 prompts requested and 4,981 written (19 dropped: 10 stopped on a tool call, 5 refusals, 3 over the ceiling, 1 blocked by the output filter); first submitted to the Message Batches API on the model's release day, where it never started in 21 hours and was cancelled; Anthropic's server-side web tools; unlike the OpenRouter batches, its meta-prompt lacks the rule against quoting from memory |
+| 064 | claude-haiku-5-5 | Anthropic API, streaming at concurrency 48 with the settings of batch 063 (effort xhigh, 64,000-token ceiling), on the meta-prompt of 2026-10-09 19:20, the first with the long-prompt length option; 5,000 prompts requested and 4,896 written (79 lost to requests cut off while the computer slept, 25 dropped for tool-call stops, refusals, or the ceiling); Anthropic's server-side web tools; like batch 063, no rule against quoting from memory |
+| 065 | GLM-5.3 | OpenRouter, fp8 providers (Baidu first, SiliconFlow took 13% of requests; Z.ai's own endpoint excluded); 20,000 prompts over 40 hours at concurrency 48 with the settings of batches 034/035 (effort high, temperature 1.0, top-p 0.95) and a 65,536-token budget, on the meta-prompt of 2026-10-09 19:20 (with the long-prompt option); no prompt abandoned; Baidu's price rose about sixfold for the last eight hours; during curation four prompts lost dataset framing and four leaked deliberation, 27 that held two drafts of themselves (or notes glued to the prompt) kept one, 37 stray Chinese words were translated back, and one non-prompt (the model's own planning in Chinese) was removed (19,999 kept); client-executed web tools (DuckDuckGo search + page fetch, linked pages served from a local copy) |
+| 066 | DeepSeek V4 Pro 0813 | OpenRouter, fp8 provider (Baidu first, Novita took 4% of requests; Io Net and GMICloud excluded); 20,000 prompts over 31 hours at concurrency 48 with the settings of batches 049/051/052 (reasoning effort high, temperature 1.0, top-p 1.0, 32,768-token budget) on the meta-prompt of 2026-10-09 19:20 (with the long-prompt option); no prompt abandoned; six prompts trimmed of the generator's deliberation and one non-prompt (a JavaScript function) removed during curation (19,999 kept); client-executed web tools (DuckDuckGo search + page fetch, linked pages served from a local copy) |
+| 067 | claude-haiku-5-5 | Anthropic Message Batches API at effort xhigh with a 64,000-token ceiling, on the meta-prompt of 2026-10-09 (with the long-prompt option); 200,000 requests in 26 message batches submitted on 2026-10-11 at 18:13 PDT, all processed within about four hours (on the model's release day a smaller batch had not started in 21 hours); 199,535 prompts written, 465 dropped (205 refusals, 152 tool-call stops, 86 over the ceiling, 16 API errors, 6 without prompt text), 351 continued in a second round after pausing; Anthropic's server-side web tools; like batches 063/064, no rule against quoting from memory |
 
 The exact model for every prompt is recorded in its `.meta.yaml`. From batch 026
 on, the runs through the OpenAI-compatible generator (self-hosted Qwen, then
@@ -220,7 +231,22 @@ Runs so far:
 | run_024 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_053` | 2,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt |
 | run_025 | DeepSeek R1 0528 (MIT) | `batch_048` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; 6 truncated |
 | run_026 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_048` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 65 truncated |
+| run_027 | DeepSeek R1 0528 (MIT) | `batch_052` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; 2 truncated |
 | run_028 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_052` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 49 truncated |
+| run_029 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_054` | 99,998 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 28 truncated; the answers to prompt 514227, deleted from batch 054, removed |
+| run_030 | DeepSeek R1 0528 (MIT) | `batch_055` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; 4 truncated |
+| run_031 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_055` | 100,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; 13 truncated |
+| run_032 | DeepSeek R1 0528 (MIT) | `batch_054` | 99,998 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; 6 truncated; the answers to prompt 514227, deleted from batch 054, removed |
+| run_033 | DeepSeek R1 0528 (MIT) | `second_sample` | 89,293 (1 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; the second sample for prompts that had one; 2 truncated |
+| run_034 | Qwen3.5-397B-A17B (Apache 2.0) | `second_sample` | 89,293 (1 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; the second sample for prompts that had one; 16 truncated |
+| run_035 | DeepSeek R1 0528 (MIT) | `batch_056` | 10,000 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; none truncated |
+| run_036 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_056` | 10,000 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, AtlasCloud, GMICloud, Parasail; two independent samples per prompt; none truncated |
+| run_038 | DeepSeek R1 0528 (MIT) | `batches_057-060_062-064` | 61,744 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; 1 truncated |
+| run_039 | Qwen3.5-397B-A17B (Apache 2.0) | `batches_057-060_062-064` | 61,744 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: DeepInfra, Parasail, AtlasCloud, GMICloud; two independent samples per prompt; 14 truncated; one answer (a pretend browser call) regenerated |
+| run_042 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_066` | 39,998 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: GMICloud, DeepInfra, AtlasCloud, Parasail; two independent samples per prompt; 4 truncated |
+| run_043 | DeepSeek R1 0528 (MIT) | `batch_066` | 39,998 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; none truncated; one answer cut off at the host regenerated |
+| run_044 | DeepSeek R1 0528 (MIT) | `batch_065` | 39,998 (2 per prompt) | temperature 0.6, top-p 0.95; 65,536-token budget | fp8 endpoint: SiliconFlow; two independent samples per prompt; none truncated |
+| run_045 | Qwen3.5-397B-A17B (Apache 2.0) | `batch_065` | 39,998 (2 per prompt) | temperature 0.6, top-p 0.95, top-k 20 | fp8 endpoints load-balanced: GMICloud, Parasail, AtlasCloud, DeepInfra; two independent samples per prompt; 9 truncated; two answers regenerated (one written for a prompt's pre-curation text, one stuck in a loop) |
 
 `open_1k` is a seed-0 sample of 1,000 prompts from those written by the open-weight
 generators (batches 022–029 and 032–033), so that the responses can be used to train
@@ -281,6 +307,39 @@ Set `batch_052` lists the 50,000 prompts of batch 052; run 028 answered them twi
 Qwen3.5-397B-A17B, so every prompt of batches 000–053 has a Qwen3.5-397B-A17B response,
 and all but the prompts of batches 033, 035, 038, and 041 and the `open_1k` prompts have
 two.
+Run 027 answered the same 50,000 prompts twice with R1, so every prompt of batches 000–053
+has an R1 response, and all but the prompts of batches 033, 035, 038, and 041 and the
+`open_1k` prompts have two.
+Set `batch_054` lists the 49,999 prompts of batch 054; run 029 answered them twice with
+Qwen3.5-397B-A17B, so every prompt of batches 000–054 has a Qwen3.5-397B-A17B response,
+and all but the prompts of batches 033, 035, 038, and 041 and the `open_1k` prompts have
+two.
+Set `batch_055` lists the 50,000 prompts of batch 055; run 031 answered them twice with
+Qwen3.5-397B-A17B, so every prompt of batches 000–055 has a Qwen3.5-397B-A17B response,
+and all but the prompts of batches 033, 035, 038, and 041 and the `open_1k` prompts have
+two.
+Run 032 answered the 49,999 prompts of set `batch_054` twice with R1, so every prompt of
+batches 000–054 has an R1 response, and all but the prompts of batches 033, 035, 038, and
+041 and the `open_1k` prompts have two.
+Run 030 answered the 50,000 prompts of set `batch_055` twice with R1, so every prompt of
+batches 000–055 has an R1 response.
+Set `second_sample` lists the 89,293 prompts of batches 000–053 that had one response per
+model: nearly all of batches 033, 035, 038, and 041, plus 213 `open_1k` prompts that kept
+their single early-run response. Run 034 gave each a second Qwen3.5-397B-A17B sample (the
+first is in run 000, 007, 008, 011, or 012), so every prompt of batches 000–055 now has two
+Qwen3.5-397B-A17B responses; run 033 gave each a second R1 sample (the first is in run
+003, 006, 009, 010, or 013), so every prompt of batches 000–055 also has two R1 responses.
+A prompt trimmed during curation after its first sample (five in
+batch 041 on 2026-09-28) got the second sample on the trimmed text.
+Set `batch_056` lists the 5,000 prompts of batch 056; run 036 answered them twice with
+Qwen3.5-397B-A17B, so every prompt of batches 000–056 has two Qwen3.5-397B-A17B responses,
+and run 035 answered them twice with R1, so every prompt of batches 000–056 also has two R1
+responses.
+Set `batches_057-060_062-064` lists the 30,872 prompts of batches 057–060 and 062–064; run 039
+answered them twice with Qwen3.5-397B-A17B and run 038 twice with R1. Set `batch_066` lists the
+19,999 prompts of batch 066, answered twice by each model (runs 042 and 043), and set `batch_065`
+the 19,999 prompts of batch 065, answered twice by each model as well (runs 045 and 044). So every
+prompt of batches 000–060 and 062–066 has two responses from each model.
 
 **Imported runs.** The two runs whose directory names end in `_imported` were not
 produced by `generate_responses.py`. They are the teacher-data collections of the
@@ -372,6 +431,20 @@ judgment text and verdict are complete; see `QUALITY_NOTES.md`.
 - Batch 016 was accidentally generated twice from one set of sampled parameters,
   so it contains pairs of prompts generated from identical sampling draws (the
   prompt texts differ).
+- The four batches generated with Tencent's HY4 preview (043, 045, 054, 059) have
+  flaws the other generators rarely show, and HY4 is not used for new batches. In
+  808 prompts of batch 054 (1.6%), 88 of batch 045 (0.4%), and 4 of batch 043, a
+  stray Chinese word, now and then a Korean or Japanese one, stands in for an
+  English word ("the repricing of尾部 risk", "selection and多重 comparisons");
+  sometimes the asker corrects it in the next words ("sorry, ..."). 72 prompts of
+  batch 054 contain a leaked `<｜hy_place▁holder▁no▁813｜>` token, and 27 of those
+  break off mid-sentence right after it. These prompts were left in place: the
+  answering models mostly read past the stray word (in a sample of 150 such
+  prompts, 2-3% of the R1 and Qwen answers mention or repeat it). Batch 059's 30
+  stray words were translated back and its five word-salad prompts deleted, as was
+  one gibberish prompt in batch 054. GLM-5.3, Qwen3.8 2.4T, DeepSeek V4 Pro, and
+  MiMo batches have 49 stray words between them. `tools/check_batch.py` flags all
+  of these (counts and examples in `QUALITY_NOTES.md`).
 
 ## Authorship
 
@@ -392,7 +465,7 @@ by design (see the table above).
 - **Data** (everything under `prompts/` and `responses/`): Creative Commons
   Attribution 4.0 (CC BY 4.0) — see `LICENSE-DATA`.
 
-**Provenance notice.** Most prompts (batches 000–021 and 030) are outputs of Anthropic
+**Provenance notice.** The prompts of batches 000–021, 030, 063, 064, and 067 are outputs of Anthropic
 Claude models. If you use them, you are responsible for complying with
 [Anthropic's terms and usage policies](https://www.anthropic.com/legal) as they
 apply to Claude outputs — in particular, restrictions on using outputs to train
@@ -401,11 +474,11 @@ proprietary Meta model accessed through the standard tier of the
 [Meta Model API](https://developer.meta.com/ai/products/meta-model-api/) via
 OpenRouter; its use is subject to Meta's terms for that API. Batches 022–029, 031, and 040 were generated with Qwen
 3.8 27B, an open-weights model released under Apache 2.0; via OpenRouter, batches
-032–033 with DeepSeek V4 Pro, batches 049, 051, and 052 with DeepSeek V4 Pro 0813, and batches
-039 and 041 with DeepSeek V4.1 Flash, and batches 053 and 055 with Xiaomi's MiMo-V2.6-Pro, open-weights
+032–033 with DeepSeek V4 Pro, batches 049, 051, 052, and 066 with DeepSeek V4 Pro 0813, and batches
+039 and 041 with DeepSeek V4.1 Flash, and batches 053, 055–058, and 060 with Xiaomi's MiMo-V2.6-Pro, open-weights
 models released under the MIT license, batches 042, 044, and 046 with Thinking
-Machines' Inkling and batches 043 and 045 with Tencent's HY4 preview, both open-weights
-models released under Apache 2.0, and batches 034–035 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
+Machines' Inkling and batches 043, 045, 054, and 059 with Tencent's HY4 preview, both open-weights
+models released under Apache 2.0, and batches 034–035, 062, and 065 with GLM-5.3, an open-weights model released under Z.ai's GLM-5.3
 License (MIT terms plus a security-review condition for model-as-a-service operators
 above $10 billion in annual revenue; it places no restrictions on the use of
 outputs). Batches 036, 038, and 048 were generated with Qwen3.8 2.4T-A95B, an open-weights model
