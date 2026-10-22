@@ -5,7 +5,7 @@ conceptual topics — decision theory, formal epistemology, philosophy of scienc
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of sixty-eight genres
+retired physicist, a novelist, a committee member, ...) in one of seventy-nine genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 rankings, ...).
@@ -53,10 +53,10 @@ preferences/
 meta_prompt/              the meta-prompt: the prompt that asks a model to write a prompt
   assemble.py             samples the components and renders the template (also a CLI)
   prompt.j2               the meta-prompt template
-  domains/                3,530 philosophical domains sampled from, in 46 thematic
+  domains/                3,848 philosophical domains sampled from, in 46 thematic
                           YAML files; a domain may list URLs of pages about it,
                           each shown to web-enabled generators with probability 0.05
-  task_types/             72 prompt genres, one file per genre (NNN_name.yaml, read in
+  task_types/             79 prompt genres, one file per genre (NNN_name.yaml, read in
                           name order), each with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
