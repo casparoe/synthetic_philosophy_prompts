@@ -78,8 +78,6 @@ tools/
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   build_link_cache.py       fetches every domain link once, politely, into link_cache/
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
-  pin_page_versions.py      version-pinned URLs for a link batch's pages (Wikipedia revision, arXiv
-                            version, SEP archive edition, or Wayback capture)
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
   make_pair_set.py          writes a pair set: complete response pairs from one run (two samples) or two runs, seeded sample
@@ -433,12 +431,23 @@ publishing them: the dataset holds the pages' URLs, metadata, and hashes, not th
 
 Link prompts are written in link batches of their own (`generate_prompt_oai.py
 --link-prompts`). The generating model picks a domain as usual and chooses the pages
-itself. Under each of the five offered domains, the meta-prompt lists up to three of the
-domain's linked pages, with URL, title, author, site, date, length, license, and opening
-words, drawn among the pages cached as text with 1,500 to 60,000 characters (43,931 pages
-on 3,769 domains on 2026-10-21; a sample with a domain that has no such page is drawn
-again). The model reads the pages it considers with its web_fetch tool, which serves them
-from frozen copies: every listed page's text is frozen when the prompt is sampled, into an
+itself, among stable links only: links to a version of a page that cannot change, such
+as a Wayback Machine capture with its full timestamp
+(`https://web.archive.org/web/20260621024306/https://www.lesswrong.com/posts/...`), a
+Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
+in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
+(`plato.stanford.edu/archives/fall2026/entries/...`), or one version of an arXiv paper
+(`arxiv.org/html/...v2`). `generators/link_cache.py` lists the patterns (`STABLE_LINKS`);
+more kinds can be added. A stable link is a page of its own: `tools/build_link_cache.py`
+fetches its text from the link itself (for a Wayback capture, the page as archived, and
+only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
+that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
+scripts from the permanent-link pages), never from the live page it is a version of, and
+the prompt gives the link as it is. The five domains offered are drawn among those with
+stable links of 1,500 to 60,000 characters of text, and under each the meta-prompt lists up
+to three of them, with URL, title, author, site, date, length, license, and opening words.
+The model reads the pages it considers with its web_fetch tool, which serves them from
+frozen copies: every listed page's text is frozen when the prompt is sampled, into an
 append-only store keyed by the SHA-256 hash of each text (`link_cache/snapshots.sqlite`, not
 published). So the generating model reads exactly the text the answering model will get,
 and a later re-crawl of the cache cannot change it. The prompt attaches a page by giving its
@@ -453,9 +462,6 @@ quote-inclusion instruction. The sidecar lists the pages offered (`pages_offered
 (`pages_read`), and attached (`attached_pages`); a page's entry has the URL as the prompt
 gives it and as the domain list has it, title, author, site, publication date, the license
 where the source states one, when and how the text was fetched, its length, and its hash.
-In batch 073, the first link batch, the pipeline picked the domain and the pages instead
-(one page for 75% of prompts, two for 20%, three for 5%, from one domain, at most 60,000
-characters together), and the meta-prompt showed their full text.
 
 `generate_responses.py` sends a link prompt as one user message: each page as a `<page
 url="...">` element (a header with the title, author, site, date, and license where known,
@@ -465,14 +471,11 @@ prompt text alone under `prompt` and lists the pages' URLs and hashes under
 `attached_pages`; `run.yaml` names the page format and the store.
 
 On the Hub, link batches and the runs that answer them have configs of their own,
-`link_prompts` and `link_responses`, whose rows add the `attached_pages` list. Because a URL
-alone drifts, each page there also has a `version_url` (`tools/pin_page_versions.py`) that
-shows the page as it was when fetched, where the source keeps versions (the Wikipedia
-revision, the arXiv version, the Stanford Encyclopedia of Philosophy archive edition, the
-Project Gutenberg ebook page), or else the Wayback Machine capture nearest the fetch. Such a
-version is close to, not always identical with, the text the models saw (the cache got some
-texts from APIs and extracted others from the pages' HTML); the hash tells whether a copy
-matches. A link batch is exported only once all its pages have been looked up.
+`link_prompts` and `link_responses`, whose rows add the `attached_pages` list. Since every
+attached page is a stable link, its URL pins the page: anyone can fetch it and extract the
+text as `tools/build_link_cache.py` does, and the hash tells whether the result is the text
+the models saw. A link batch with an attached page that is not a stable link is not
+exported.
 `tools/check_link_batch.py` reports on a link batch: the pages per prompt, their sources and
 licenses, whether the store holds every text, URL problems, how much of a page the prompts
 copy, and prompts that seem to ask for a whole page that is not openly licensed to be
