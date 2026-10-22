@@ -444,7 +444,7 @@ only if the archive has a capture at exactly that timestamp; for a Wikipedia rev
 that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
 scripts from the permanent-link pages), never from the live page it is a version of, and
 the prompt gives the link as it is. The five domains offered are drawn among those with
-stable links of 1,500 to 60,000 characters of text, and under each the meta-prompt lists up
+stable links of 1,500 to 100,000 characters of text, and under each the meta-prompt lists up
 to three of them, with URL, title, author, site, date, length, license, and opening words.
 The model reads the pages it considers with its web_fetch tool, which serves them from
 frozen copies: every listed page's text is frozen when the prompt is sampled, into an
@@ -452,11 +452,11 @@ append-only store keyed by the SHA-256 hash of each text (`link_cache/snapshots.
 published). So the generating model reads exactly the text the answering model will get,
 and a later re-crawl of the cache cannot change it. The prompt attaches a page by giving its
 URL: one page, or two or three if the prompt compares or combines them, usually from the
-chosen domain, with at most 10,000 words together. The meta-prompt asks for a prompt that
+chosen domain, with at most 16,000 words together. The meta-prompt asks for a prompt that
 depends on what the attached pages actually say and does not paste them; it may ask for a
 whole page to be reworked (translated, rewritten, summarized throughout) only if the page is
 under CC BY or CC0 or in the public domain. A generated prompt is generated again if it
-gives an unlisted URL, attaches no page, more than three pages, or more than 10,000 words,
+gives an unlisted URL, attaches no page, more than three pages, or more than 16,000 words,
 or attaches a page the model did not read. Link samples drop the inspiration links and the
 quote-inclusion instruction. The sidecar lists the pages offered (`pages_offered`), read
 (`pages_read`), and attached (`attached_pages`); a page's entry has the URL as the prompt
