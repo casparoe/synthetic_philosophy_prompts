@@ -22,6 +22,16 @@ Project Gutenberg books come from the PGLAF mirror, since gutenberg.org bans
 automated access; arXiv papers (the abstract page, then the HTML or PDF full
 text) at arxiv.org's crawl delay of 15 seconds.
 
+Stable links (link_cache.stable_link) are fetched from the link itself and
+from nothing else: a Wayback Machine capture as archived (its raw id_ form,
+and only if the archive has a capture at exactly that timestamp), with rules
+for the pages of the forums, Stack Exchange, and Substack, whose text the
+generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
+revision (through its API, since its robots.txt bars scripts from the
+permanent-link pages themselves); an SEP archive edition's page; an arXiv
+version's HTML or PDF (with title, authors, and license from that version's
+abstract page).
+
 Usage:
     # everything not yet cached; runs for hours, so start it detached
     caffeinate -i .venv/bin/python tools/build_link_cache.py >> link_cache/build.log 2>&1
@@ -36,6 +46,7 @@ import argparse
 import functools
 import html as htmllib
 import io
+import json
 import logging
 import re
 import sqlite3
@@ -106,7 +117,7 @@ DELAYS = {
     "eaforum": 2.0,  # ten posts per request
     "lesswrong": 3.0,  # ten posts per request
     "se": 2.0,
-    "wayback": 3.0,
+    "wayback": 5.0,  # a burst of quick requests gets connections refused for a while
     "gutenberg": 2.0,
     "sep": 5.0,
     "arxiv": 15.0,
@@ -146,14 +157,18 @@ def kind_of(key):
     return "web"
 
 
+# Stable kinds share the group (and so the pace) of the site they come from.
+SERVICE_OF = {"wikipedia_revision": "wikipedia", "sep_edition": "sep", "arxiv_version": "arxiv"}
+
+
 def group_of(key):
     """Requests within a group go out one at a time."""
     kind = kind_of(key)
     if kind == "web":
         return "web:" + key.split("/", 1)[0]
-    if kind == "wikipedia":
+    if kind in ("wikipedia", "wikipedia_revision"):
         return "wikipedia:" + key.split(":")[1]
-    return kind
+    return SERVICE_OF.get(kind, kind)
 
 
 # --- storage -----------------------------------------------------------------
@@ -489,6 +504,12 @@ def first(values):
     return next((v for v in values if v), None)
 
 
+def first_el(nodes):
+    """The first of a list of elements, or None (an lxml element without
+    children counts as false, so first() would skip it)."""
+    return nodes[0] if len(nodes) else None
+
+
 def person_name(citation_name):
     """'Weirich, Paul' -> 'Paul Weirich'."""
     if "," in citation_name:
@@ -696,7 +717,16 @@ def fetch_gutenberg(site, robots, key, url):
 
 def fetch_sep(site, robots, key, url):
     slug = key.split(":", 1)[1]
-    target = f"https://plato.stanford.edu/entries/{slug}/"
+    return sep_record(site, robots, f"https://plato.stanford.edu/entries/{slug}/", "sep")
+
+
+def fetch_sep_edition(site, robots, key, url):
+    """An entry in an SEP archive edition, from the edition's own page."""
+    _, edition, slug = key.split(":", 2)
+    return sep_record(site, robots, f"https://plato.stanford.edu/archives/{edition}/entries/{slug}/", "sep_edition")
+
+
+def sep_record(site, robots, target, method):
     if not robots.check(site, target):
         return {"status": "robots"}
     response = site.get(target)
@@ -717,7 +747,7 @@ def fetch_sep(site, robots, key, url):
             sections.append(("Contents\n\n" + text) if div_id == "toc" else text)
     authors = [person_name(m.get("content", "")) for m in doc.xpath("//meta[@name='citation_author']")]
     return {
-        "status": "ok", "method": "sep", "title": first(h.text_content() for h in doc.xpath("//h1")),
+        "status": "ok", "method": method, "title": first(h.text_content() for h in doc.xpath("//h1")),
         "author": ", ".join(a for a in authors if a) or None,
         "site": "Stanford Encyclopedia of Philosophy",
         "published": pubinfo.text_content() if pubinfo is not None else None,
@@ -856,6 +886,291 @@ def fetch_web(site, robots, key, url, include_comments=False):
     }
 
 
+# --- stable links ------------------------------------------------------------------
+
+WIKIPEDIA_DROP = (
+    "mw-editsection", "reference", "infobox", "navbox", "vertical-navbox", "sidebar", "hatnote",
+    "reflist", "references", "thumb", "metadata", "ambox", "noprint", "mw-empty-elt",
+    "shortdescription", "toc",
+)
+
+
+def fetch_wikipedia_revision(site, robots, key, url):
+    """A Wikipedia revision as Wikipedia renders it (action=parse with its
+    oldid), without edit links, reference markers and lists, infoboxes,
+    navigation boxes, images, and the sections from WIKIPEDIA_TAIL on."""
+    _, lang, revid = key.split(":", 2)
+    params = {
+        "action": "parse", "oldid": revid, "prop": "text|revid", "format": "json",
+        "formatversion": 2, "disableeditsection": 1, "disabletoc": 1, "maxlag": 5,
+    }
+    for _ in range(4):
+        response = site.get(f"https://{lang}.wikipedia.org/w/api.php", params=params)
+        if response.status_code != 200:
+            return http_failure(response)
+        data = response.json()
+        if data.get("error", {}).get("code") == "maxlag":
+            time.sleep(10)
+            continue
+        break
+    else:
+        return {"status": "error maxlag"}
+    if "error" in data:
+        code = data["error"].get("code")
+        return {"status": "gone missing" if code in ("nosuchrevid", "missingtitle") else "error api", "note": code}
+    parsed = data["parse"]
+    if str(parsed.get("revid")) != revid:
+        return {"status": "error api", "note": f"got revision {parsed.get('revid')}"}
+    root = lxml.html.fragment_fromstring(parsed["text"], create_parent="div")
+    for el in root.xpath(
+        " | ".join(f".//*[contains(concat(' ', normalize-space(@class), ' '), ' {c} ')]" for c in WIKIPEDIA_DROP)
+        + " | .//figure | .//style | .//*[@id='toc']"
+    ):
+        if el.getparent() is not None:
+            el.drop_tree()
+    # Cut at the first tail section ("See also", "References", ...): its heading
+    # (or the div that wraps it) and everything after it.
+    top = root[0] if len(root) == 1 and root[0].tag == "div" else root
+    tail = False
+    for child in list(top):
+        heading = child if child.tag == "h2" else first_el(child.xpath(".//h2"))
+        if heading is not None and heading.text_content().strip() in WIKIPEDIA_TAIL:
+            tail = True
+        if tail:
+            top.remove(child)
+    return {
+        "status": "ok", "method": "wikipedia_revision", "title": parsed.get("title"),
+        "site": "Wikipedia", "note": f"revision {revid}", "text": html_to_text(root),
+    }
+
+
+def fetch_arxiv_version(site, robots, key, url):
+    """One version of an arXiv paper: its HTML or PDF full text, as the link
+    says, with title, authors, date, and license from that version's
+    abstract page."""
+    form, version = key.split(":", 1)[1].split("/", 1)
+    target = f"https://arxiv.org/{form}/{version}"
+    abstract_page = f"https://arxiv.org/abs/{version}"
+    if not (robots.check(site, target) and robots.check(site, abstract_page)):
+        return {"status": "robots"}
+    response = site.get(target)
+    if response.status_code != 200:
+        return http_failure(response)
+    if form == "html":
+        if "<article" not in response.text:
+            return {"status": "error no-article"}
+        text, method = arxiv_html_text(response.text), "arxiv_version_html"
+    else:
+        if response.content[:5] != b"%PDF-":
+            return {"status": "error not-pdf"}
+        text, method = pdf_text(response.content)[0], "arxiv_version_pdf"
+    record = {"status": "ok", "method": method, "site": "arXiv", "text": text}
+    meta_response = site.get(abstract_page)
+    if meta_response.status_code == 200:
+        doc = lxml.html.fromstring(meta_response.text)
+
+        def meta(name):
+            return [m.get("content") for m in doc.xpath(f"//meta[@name='{name}']")]
+
+        published = first(meta("citation_date"))
+        record.update({
+            "title": first(meta("citation_title")),
+            "author": ", ".join(person_name(a) for a in meta("citation_author")) or None,
+            "published": published.replace("/", "-") if published else None,
+            "license": license_name(
+                first(a.get("href") for a in doc.xpath("//div[contains(@class, 'abs-license')]//a"))
+            ),
+        })
+    return record
+
+
+FORUM_SITES = {
+    "lesswrong.com": "LessWrong", "forum.effectivealtruism.org": "EA Forum",
+    "alignmentforum.org": "AI Alignment Forum",
+}
+
+
+def forum_page(html, host, url):
+    """A LessWrong, Alignment Forum, or EA Forum post page (ForumMagnum): the
+    post's body, without the comments. The classic pages have it in
+    #postContent; the redesigned ones (the EA Forum's in 2026, a Next.js app)
+    only in their flight data (flight_post_html)."""
+    doc = lxml.html.fromstring(html)
+
+    def meta(name):
+        return [m.get("content") for m in doc.xpath(f"//meta[@name='{name}']")]
+
+    body = first_el(doc.xpath("//*[@id='postContent']"))
+    if body is not None:
+        text = html_to_text(body)
+        stamp = first(doc.xpath("//*[contains(@class, 'PostsPageDate-date')]//time/@datetime"))
+    else:
+        post = link_cache.FORUM_POST_RE.match(urllib.parse.urlsplit(url).path)
+        fragment = flight_post_html(html, post.group(1)) if post else None
+        if not fragment:
+            return None
+        text = html_to_text(fragment)
+        stamp = first(meta("citation_publication_date"))
+    published = stamp[:10].replace("/", "-") if stamp else None
+    license_ = "CC BY 4.0" if host == "forum.effectivealtruism.org" and published and published >= EA_FORUM_CC_BY_SINCE else None
+    return {
+        "method": "forum", "title": first(meta("citation_title")),
+        "author": ", ".join(a for a in meta("citation_author") if a) or None,
+        "site": FORUM_SITES.get(host), "published": published, "license": license_, "text": text,
+    }
+
+
+def flight_post_html(html, post_id):
+    """The post's HTML from a Next.js page's flight data (the
+    self.__next_f.push chunks): the object with the post's _id points from
+    its "contents" to a text row (id:T<hex byte length>,<html>)."""
+    chunks = re.findall(r'self\.__next_f\.push\(\[1,"(.*?)"\]\)</script>', html, re.S)
+    if not chunks:
+        return None
+    try:
+        payload = "".join(json.loads(f'"{c}"') for c in chunks)
+    except ValueError:
+        return None
+    m = re.search(
+        r'"_id":"%s".{0,20000}?"contents":\{"_id":"[^"]*","html":"\$([0-9a-f]+)"' % re.escape(post_id),
+        payload, re.S,
+    )
+    if not m:
+        return None
+    data = payload.encode("utf-8")
+    row = re.search(rb"(?<![0-9a-f])" + m.group(1).encode() + rb":T([0-9a-f]+),", data)
+    if not row:
+        return None
+    return data[row.end(): row.end() + int(row.group(1), 16)].decode("utf-8", "replace")
+
+
+def greaterwrong_page(html, host):
+    doc = lxml.html.fromstring(html)
+    body = doc.xpath("//div[contains(concat(' ', normalize-space(@class), ' '), ' post-body ')]")
+    if not body:
+        return None
+    return {
+        "method": "greaterwrong", "title": first(h.text_content().strip() for h in doc.xpath("//h1")),
+        "site": "EA Forum" if host.startswith("ea.") else "LessWrong", "text": html_to_text(body[0]),
+    }
+
+
+def se_page(html, host):
+    """A Stack Exchange question page: the question and its answers (the
+    accepted one first, then by score), each with its score, author, and
+    date, as the API version gives them (se_text); no comments."""
+    doc = lxml.html.fromstring(html)
+    question = first_el(doc.xpath("//div[@id='question']"))
+    if question is None:
+        return None
+
+    def post(el):
+        """Text, author, day, and score of a question or an answer; its
+        author signs last (an editor's signature can come first)."""
+        body = first_el(el.xpath(".//div[contains(@class, 's-prose') or contains(@class, 'post-text')]"))
+        sigs = el.xpath(".//div[contains(@class, 'post-signature')]")
+        sig = sigs[-1] if sigs else None
+        name = day = None
+        if sig is not None:
+            name = first(a.text_content().strip() for a in sig.xpath(".//div[contains(@class, 'user-details')]//a"))
+            day = first(sig.xpath(".//span[contains(@class, 'relativetime')]/@title"))
+        return (html_to_text(body) if body is not None else ""), name, (day or "")[:10], el.get("data-score") or "0"
+
+    text, asker, asked, score = post(question)
+    parts = [f"Question (score {score}, asked {asked}{' by ' + asker if asker else ''}):\n\n{text}"]
+    answers = doc.xpath("//div[@data-answerid]")
+    answers.sort(key=lambda a: ("accepted-answer" not in (a.get("class") or ""), -int(a.get("data-score") or 0)))
+    for answer in answers:
+        text, name, day, score = post(answer)
+        flags = f"score {score}" + (", accepted" if "accepted-answer" in (answer.get("class") or "") else "")
+        parts.append(f"Answer{' by ' + name if name else ''} ({flags}, {day}):\n\n{text}")
+    title = first_el(doc.xpath("//h1//a"))
+    if title is None:
+        title = first_el(doc.xpath("//h1"))
+    if sum(len(part) for part in parts) < THIN_CHARS + 100:
+        return None  # markup this rule does not know; the generic extraction may
+    return {
+        "method": "stackexchange_page", "title": title.text_content().strip() if title is not None else None,
+        "site": host, "published": asked or None, "author": asker, "text": "\n\n".join(parts),
+    }
+
+
+def substack_page(html, host):
+    """A Substack post page: the post's body without subscription widgets."""
+    doc = lxml.html.fromstring(html)
+    body = first_el(doc.xpath("//div[contains(concat(' ', normalize-space(@class), ' '), ' available-content ')]"))
+    if body is None:
+        return None
+    for el in body.xpath(
+        ".//*[contains(@class, 'subscription-widget') or contains(@class, 'button-wrapper') "
+        "or contains(@class, 'captioned-button') or contains(@class, 'image-link-expand')]"
+    ):
+        el.drop_tree()
+    text = html_to_text(body)
+    subtitle = first(h.text_content().strip() for h in doc.xpath("//h3[contains(@class, 'subtitle')]"))
+    if subtitle and subtitle.strip(".… "):
+        text = f"{subtitle}\n\n{text}"
+    published = first(doc.xpath("//meta[@property='article:published_time']/@content"))
+    return {
+        "method": "substack", "title": first(h.text_content().strip() for h in doc.xpath("//h1[contains(@class, 'post-title')]")),
+        "author": first(doc.xpath("//meta[@name='author']/@content")),
+        "site": f"{host} (Substack)", "published": published[:10] if published else None, "text": text,
+    }
+
+
+def archived_page(response, url):
+    """The text and metadata of a page as the Wayback Machine archived it
+    (response is the raw capture of url): the site rules above where they
+    apply, else the generic extraction of fetch_web."""
+    host = (urllib.parse.urlsplit(url).hostname or "").lower().removeprefix("www.")
+    if response.content[:5] == b"%PDF-" or "pdf" in response.headers.get("content-type", ""):
+        text, title = pdf_text(response.content)
+        return {"method": "pdf", "title": title, "site": host, "license": HOST_LICENSES.get(host), "text": text}
+    html = response.text
+    record = None
+    if host in FORUM_SITES:
+        record = forum_page(html, host, url)
+    elif host.endswith("greaterwrong.com"):
+        record = greaterwrong_page(html, host)
+    elif host.endswith(".stackexchange.com") or host in link_cache.STACK_EXCHANGE_HOSTS:
+        record = se_page(html, host)
+    elif "available-content" in html and "substack" in html:
+        record = substack_page(html, host)
+    if record is not None and len(record.get("text") or "") < THIN_CHARS:
+        record = None  # the site rule found too little; try the generic extraction
+    if record is None:
+        text, fields = page_text(html, url)
+        method = "html"
+        if len(text or "") < THIN_CHARS:
+            fallback = container_text(html)
+            if fallback and len(fallback) > len(text or ""):
+                text, method = fallback, "html_container"
+        record = {"method": method, "text": text or "", "license": HOST_LICENSES.get(host),
+                  **{k: v for k, v in fields.items() if v}}
+        record["site"] = fields.get("site") or host
+    return record
+
+
+def fetch_wayback(site, robots, key, url):
+    """A Wayback Machine capture: the page as archived (the raw id_ form,
+    without the archive's banner and rewritten links), and only if the
+    archive has a capture at exactly the link's timestamp; it redirects to
+    the nearest capture otherwise."""
+    stamp, original = key.split(":", 1)[1].split("/", 1)
+    raw = f"https://web.archive.org/web/{stamp}id_/{original}"
+    if not robots.check(site, raw):
+        return {"status": "robots"}
+    response = site.get(raw)
+    if response.status_code != 200:
+        return http_failure(response)
+    got = re.search(r"/web/(\d{14})", str(response.url))
+    if not got or got.group(1) != stamp:
+        return {"status": "gone no-capture", "note": f"the archive redirects to {got.group(1) if got else 'another page'}"}
+    record = archived_page(response, original)
+    record["method"] = "wayback_" + record["method"]
+    return {"status": "ok", **record}
+
+
 def se_text(question):
     def who(post):
         name = (post.get("owner") or {}).get("display_name")
@@ -941,6 +1256,11 @@ FETCHERS = {
     "arxiv": fetch_arxiv,
     "substack": fetch_substack,
     "web": fetch_web,
+    # stable links
+    "wayback": fetch_wayback,
+    "wikipedia_revision": fetch_wikipedia_revision,
+    "sep_edition": fetch_sep_edition,
+    "arxiv_version": fetch_arxiv_version,
 }
 # Kinds fetched many pages per request, each by its own loop.
 RUNNERS = {
@@ -979,10 +1299,10 @@ def run_group(name, jobs, store, robots, progress):
             RUNNERS[kind](jobs, store, robots, progress)
             return
         site = Site(name, DELAYS[kind])
-        fetch = FETCHERS[kind]
         for key, url in jobs:
             try:
-                record = fetch(site, robots, key, url)
+                # a group can mix kinds of one site (sep and sep_edition, ...)
+                record = FETCHERS[kind_of(key)](site, robots, key, url)
             except Exception as e:  # noqa: BLE001 -- one bad page shouldn't stop the site
                 record = {"status": f"error {type(e).__name__}", "note": str(e)[:200]}
             store.put(key, url, **record)

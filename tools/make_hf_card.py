@@ -210,16 +210,18 @@ The columns are those of `prompts` and `responses` plus `attached_pages`, a list
 entry per page in the order the models saw them. In `link_prompts` an entry has `url`
 (as the prompt gives it), `listed_url` (as the meta-prompt's domain list has it), `title`,
 `author`, `site`, `published`, `license` (where the source states one), `fetched_at` and
-`fetch_method` (when and how the text was obtained), `chars` and `sha256` (the length of
-the text the models saw and the SHA-256 hash of its UTF-8 bytes), and `version_url`: the
-page as it was when fetched, where the source keeps versions (a Wikipedia revision, an
-arXiv version, a Stanford Encyclopedia of Philosophy archive edition, a Project Gutenberg
-ebook page), else the Wayback Machine capture nearest the fetch (null if none was found).
-In `link_responses` an entry has `url` and `sha256`; `prompt` is the prompt text alone.
+`fetch_method` (when and how the text was obtained), and `chars` and `sha256` (the length
+of the text the models saw and the SHA-256 hash of its UTF-8 bytes). Every `url` is a
+stable link, a link to a version of a page that cannot change: a Wayback Machine capture
+with its full timestamp, a Wikipedia revision, a Stanford Encyclopedia of Philosophy
+archive edition, or one version of an arXiv paper. The text was taken from that link
+itself, never from the live page it is a version of. In `link_responses` an entry has
+`url` and `sha256`; `prompt` is the prompt text alone.
 
-To rebuild the user message that a link prompt's responses answered, get each page's
-text (the hash tells whether a copy is the one the models saw) and join the pages and
-then the prompt with blank lines, each page written as
+To rebuild the user message that a link prompt's responses answered, fetch each page
+from its `url` and extract its text the way `tools/build_link_cache.py` in the GitHub
+repository does (the hash tells whether the text matches what the models saw), and
+join the pages and then the prompt with blank lines, each page written as
 
 ```
 <page url="URL">

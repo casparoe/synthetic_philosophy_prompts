@@ -26,6 +26,7 @@ import yaml
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "generators"))
 import attached_pages  # noqa: E402
+import link_cache  # noqa: E402
 
 LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 WORD = re.compile(r"[a-z0-9']+")
@@ -113,6 +114,10 @@ def main():
     print("licenses: " + ", ".join(f"{k} {v}" for k, v in licenses.most_common(8)))
     print(f"openly licensed (whole-page reworkings allowed): "
           f"{sum(attached_pages.open_license(r.get('license')) for r in pages)} of {len(pages)}")
+    kinds = collections.Counter((link_cache.stable_link(r["url"]) or ("NOT STABLE",))[0] for r in pages)
+    print("kinds of stable link: " + ", ".join(f"{k} {v}" for k, v in kinds.most_common()))
+    show("prompts attaching a page that is not a stable link",
+         [pid for pid, rs in records.items() if any(not link_cache.stable_link(r["url"]) for r in rs)])
 
     # -- the choice (batches after 073: the model picks pages from those listed)
     choosing = {pid: m for pid, m in metas.items() if "pages_offered" in m}

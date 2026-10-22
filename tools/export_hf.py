@@ -23,11 +23,11 @@ Link batches (batch.yaml: link_prompts; their prompts come with web pages, see
 generators/attached_pages.py) and the response runs that answer them (run.yaml:
 page_format) go to configs of their own, link_prompts and link_responses, since
 those prompts are incomplete without their pages. Their rows list the pages
-(attached_pages: URL, title, date, license, hash, a version-pinned URL, ...);
-the page texts are never exported. A link batch is exported only once its pages
-have been looked up (every page has an entry in its page_versions.yaml, from
-tools/pin_page_versions.py), and so are the runs that answer it; until then
-both are left out with a note.
+(attached_pages: URL, title, date, license, hash, ...); the page texts are
+never exported. Every attached page must be a stable link (a version of a page
+that cannot change, see generators/link_cache.py), so the URL itself pins the
+page; a link batch with any other attached page is left out with a note, and so
+are the runs that answer it.
 
 Normalizations, all documented in the dataset card:
   * prompt `text` is the .txt file content without its single trailing newline;
@@ -38,7 +38,6 @@ Normalizations, all documented in the dataset card:
 """
 
 import argparse
-import functools
 import json
 import random
 import re
@@ -52,6 +51,8 @@ import pyarrow.parquet as pq
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "generators"))
+import link_cache  # noqa: E402
 PROMPTS_DIR = REPO_ROOT / "prompts"
 RESPONSES_DIR = REPO_ROOT / "responses"
 PREFERENCES_DIR = REPO_ROOT / "preferences"
@@ -290,7 +291,6 @@ def shard_path(out, kind, name):
 
 # --- link batches and the runs that answer them ----------------------------------
 
-PAGE_VERSIONS_FILE = "page_versions.yaml"  # in a link batch's directory, from tools/pin_page_versions.py
 PAGE_STRUCT = pa.struct(
     [
         ("url", pa.string()),
@@ -304,7 +304,6 @@ PAGE_STRUCT = pa.struct(
         ("fetch_method", pa.string()),
         ("chars", pa.int64()),
         ("sha256", pa.string()),
-        ("version_url", pa.string()),
     ]
 )
 RESPONSE_PAGE_STRUCT = pa.struct([("url", pa.string()), ("sha256", pa.string())])
@@ -321,14 +320,6 @@ LINK_PROMPT_SCHEMA = with_field(PROMPT_SCHEMA, "text", pa.field("attached_pages"
 LINK_RESPONSE_SCHEMA = with_field(RESPONSE_SCHEMA, "source_id", pa.field("attached_pages", pa.list_(RESPONSE_PAGE_STRUCT)))
 
 
-@functools.lru_cache(maxsize=None)
-def page_versions(batch):
-    """sha256 -> version-pinned URL for the pages of a link batch."""
-    path = PROMPTS_DIR / f"batch_{batch}" / PAGE_VERSIONS_FILE
-    data = load_yaml(path) if path.exists() else {}
-    return {sha: (entry or {}).get("version_url") for sha, entry in (data or {}).items()}
-
-
 def take_pages(row):
     """Move a row's attached_pages out of its extra JSON; return them."""
     extra = json.loads(row["extra"]) if row["extra"] else {}
@@ -339,12 +330,10 @@ def take_pages(row):
 
 def link_prompt_row(batch, txt_path):
     row = prompt_row(batch, txt_path)
-    versions = page_versions(batch)
     row["attached_pages"] = [
         {
-            **{key: str_or_none(page.get(key)) for key in PAGE_STRUCT.names if key not in ("chars", "version_url")},
+            **{key: str_or_none(page.get(key)) for key in PAGE_STRUCT.names if key != "chars"},
             "chars": int_or_none(page.get("chars")),
-            "version_url": versions.get(page.get("sha256")),
         }
         for page in take_pages(row)
     ]
@@ -371,15 +360,10 @@ def is_link_batch(batch):
     return path.exists() and bool((load_yaml(path) or {}).get("link_prompts"))
 
 
-def pages_pinned(batch):
-    """Whether every page attached to the batch's prompts has an entry in its
-    page_versions.yaml (the lookup may have found no version for some)."""
-    path = PROMPTS_DIR / f"batch_{batch}" / PAGE_VERSIONS_FILE
-    if not path.exists():
-        return False
-    looked_up = set(load_yaml(path) or {})
+def pages_stable(batch):
+    """Whether every page attached to the batch's prompts is a stable link."""
     return all(
-        page.get("sha256") in looked_up
+        link_cache.stable_link(page.get("url") or "")
         for meta in (PROMPTS_DIR / f"batch_{batch}").glob("prompt_*.meta.yaml")
         for page in load_yaml(meta).get("attached_pages") or []
     )
@@ -552,13 +536,13 @@ def main():
     if args.pref_runs:
         pref_runs = [r for r in pref_runs if r in set(args.pref_runs.split(","))]
 
-    # Link batches and their runs get their own configs, and wait for version links.
+    # Link batches and their runs get their own configs; only stable links may be attached.
     link_batches = {b for b in batches if is_link_batch(b)}
-    unpinned = {b for b in link_batches if not pages_pinned(b)}
+    unpinned = {b for b in link_batches if not pages_stable(b)}
     link_runs = {r for r in runs if is_link_run(r)}
     waiting = {r for r in link_runs if link_run_batches(r, link_batches) & unpinned}
     if unpinned or waiting:
-        print(f"left out until their pages have version links (tools/pin_page_versions.py): "
+        print(f"left out because a page they attach is not a stable link: "
               f"link batches {', '.join(sorted(unpinned)) or 'none'}; runs {', '.join(sorted(waiting)) or 'none'}")
     batches = [b for b in batches if b not in unpinned]
     runs = [r for r in runs if r not in waiting]

@@ -496,6 +496,11 @@ def main():
         store = attached_pages.SnapshotStore(snapshots, writable=True)
         eligible = attached_pages.eligible_pages(components, pages_cache)
         attachable = sum(len(pages) for pages in eligible.values())
+        if not eligible:
+            parser.error(
+                "--link-prompts: no domain has a stable link in the cache to attach; add stable "
+                "links (generators/link_cache.py, STABLE_LINKS) and run tools/build_link_cache.py"
+            )
         print(
             f"link prompts: {attachable} pages on {len(eligible)} domains can be listed; "
             f"their texts are frozen into {snapshots}",

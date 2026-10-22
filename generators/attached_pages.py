@@ -17,9 +17,13 @@ which pages a prompt attaches and whether that is allowed. (In batch 073 the
 pipeline picked one domain and its pages instead, and the meta-prompt showed
 their text; that is the code at commit ea433146cf8.)
 
-The pages are the domains' linked pages as the link cache holds them
-(generators/link_cache.py). Because the cache can be re-crawled, every page
-offered is frozen when the prompt is sampled: the snapshot store
+Only stable links can be attached (link_cache.stable_link): links to a
+version of a page that cannot change, such as a Wayback Machine capture with
+its full timestamp or a Wikipedia revision. The cache holds what such a link
+itself serves (tools/build_link_cache.py fetches it from the link), never the
+live page it is a version of, and the prompt gives the link as it is. Because
+the cache can be re-crawled, every page offered is still frozen when the
+prompt is sampled: the snapshot store
 (link_cache/snapshots.sqlite, git-ignored and never uploaded, like the cache)
 keeps every text ever offered, under the SHA-256 of its UTF-8 bytes, and is
 only ever added to. The prompt's sidecar lists the pages offered under
@@ -99,9 +103,12 @@ def open_license(license):
 
 
 def display_url(url):
-    """The URL a user would paste for a linked page: the original address
-    rather than a Wayback copy of it, and the EA Forum's or LessWrong's own
-    address rather than GreaterWrong's mirror (whose text the cache holds)."""
+    """The URL a user would paste for a linked page: a stable link as it is;
+    otherwise the original address rather than a Wayback copy of it, and the
+    EA Forum's or LessWrong's own address rather than GreaterWrong's mirror
+    (whose text the cache holds)."""
+    if link_cache.stable_link(url):
+        return url
     m = link_cache.WAYBACK_RE.match(url)
     if m:
         url = m.group(1)
@@ -201,15 +208,17 @@ class Candidate:
 
 
 def eligible_pages(components, cache):
-    """domain -> the domain's linked pages that can be attached: cached as
-    text of MIN_PAGE_CHARS to MAX_PAGE_CHARS characters, one Candidate per
-    page (two URLs of one page count once), in file order. Domains without
-    such pages are left out."""
+    """domain -> the domain's linked pages that can be attached: stable links
+    (link_cache.stable_link) cached as text of MIN_PAGE_CHARS to
+    MAX_PAGE_CHARS characters, one Candidate per page, in file order. Domains
+    without such pages are left out."""
     sizes = cache.sizes()
     eligible = {}
     for domain in components.domains:
         seen, pages = set(), []
         for url in components.domain_urls.get(domain, []):
+            if not link_cache.stable_link(url):
+                continue
             key = link_cache.canonical(url)
             chars = sizes.get(key)
             if key in seen or chars is None or not MIN_PAGE_CHARS <= chars <= MAX_PAGE_CHARS:
@@ -242,16 +251,19 @@ def page_record(url, page, text, sha):
 
 
 def offer(sample, eligible, cache, store, rng=random):
-    """Make a sample into a link sample: list under each offered domain up to
+    """Make a sample into a link sample: offer domains that have pages to
+    attach, drawn at random among them in place of the sample's own (as
+    many as it offered, or all there are), so that whichever domain the
+    model picks comes with pages; list under each up to
     CANDIDATES_PER_DOMAIN of its eligible pages, drawn at random (a page
-    linked from two offered domains is listed once), freeze their texts into
-    the store, and drop the inspiration links and the instruction groups in
+    linked from two offered domains is listed once); freeze their texts into
+    the store; and drop the inspiration links and the instruction groups in
     LINK_SKIPPED_GROUPS. Returns the new sample, whose pages_offered is
-    parallel to domains_offered, and the texts by hash; or None if an offered
-    domain has no page to list, so that whichever domain the model picks
-    comes with pages (draw another sample then)."""
+    parallel to domains_offered, and the texts by hash; or None if a domain
+    turned out to have no usable page (draw again then)."""
+    domains = rng.sample(sorted(eligible), min(len(sample["domains_offered"]), len(eligible)))
     seen, offered, texts = set(), [], {}
-    for domain in sample["domains_offered"]:
+    for domain in domains:
         pool = eligible.get(domain, [])
         records = []
         for candidate in rng.sample(pool, len(pool)):
@@ -272,7 +284,8 @@ def offer(sample, eligible, cache, store, rng=random):
             return None
         offered.append(records)
     linked = dict(sample)
-    linked["domain_urls"] = [[] for _ in sample["domains_offered"]]
+    linked["domains_offered"] = domains
+    linked["domain_urls"] = [[] for _ in domains]
     linked["additional_instructions"] = {
         name: text
         for name, text in sample["additional_instructions"].items()

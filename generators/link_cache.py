@@ -12,6 +12,14 @@ Pages are keyed by canonical(url), so the same page reached by another form
 of its URL (http or https, with or without www, a Wayback copy of it, an
 arXiv abs/pdf/html link, a forum.effectivealtruism.org link for an
 ea.greaterwrong.com one) is found too.
+
+Stable links are the exception (stable_link): links to a version of a page
+that cannot change, such as a Wayback Machine capture with its full
+timestamp, a Wikipedia revision, a Stanford Encyclopedia archive edition, or
+a versioned arXiv paper. Each is a page of its own: keyed by the link itself,
+fetched from it (tools/build_link_cache.py), and never mapped to the live page
+it is a version of, nor the live page to it. Only stable links can be attached
+to link prompts (generators/attached_pages.py).
 """
 
 import re
@@ -70,10 +78,47 @@ GUTENBERG_RE = re.compile(r"^/(?:ebooks|cache/epub|files)/(\d+)(?:[/.]|$)")
 SEP_RE = re.compile(r"^/(?:archives/[a-z]+\d{4}/)?entries/([^/]+)/?(?:index\.html)?$")
 
 
+# Stable links, by kind: the URL patterns, and how a match becomes the link's
+# cache key. Extend the list to admit more kinds of stable links; the cache
+# builder needs a fetcher for each kind.
+STABLE_LINKS = [
+    # a Wayback Machine capture, pinned to its 14-digit timestamp
+    ("wayback", re.compile(r"^https://web\.archive\.org/web/(\d{14})/(https?://\S+)$"),
+     lambda m: f"{m.group(1)}/{m.group(2)}"),
+    # a Wikipedia revision (the "Permanent link" of a page)
+    ("wikipedia_revision",
+     re.compile(r"^https://([a-z][a-z-]*)\.wikipedia\.org/w/index\.php\?(?:[^#\s]*&)?oldid=(\d+)(?:&[^#\s]*)?$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    ("wikipedia_revision", re.compile(r"^https://([a-z][a-z-]*)\.wikipedia\.org/wiki/Special:PermanentLink/(\d+)$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    # an entry in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
+    ("sep_edition",
+     re.compile(r"^https://plato\.stanford\.edu/archives/((?:spr|sum|fall|win)\d{4})/entries/([^/\s#?]+)/?$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    # the full text of one version of an arXiv paper, as HTML or PDF
+    ("arxiv_version",
+     re.compile(r"^https://arxiv\.org/(html|pdf)/((?:[a-z-]+(?:\.[A-Z]{2})?/)?\d+(?:\.\d+)?v\d+)(?:\.pdf)?/?$"),
+     lambda m: f"{m.group(1)}/{m.group(2)}"),
+]
+
+
+def stable_link(url):
+    """The kind of a stable link and its cache key, or None if the URL is not
+    one of the STABLE_LINKS patterns."""
+    url = url.strip()
+    for kind, pattern, key in STABLE_LINKS:
+        if m := pattern.match(url):
+            return kind, f"{kind}:{key(m)}"
+    return None
+
+
 def canonical(url):
     """The cache key of a URL: one string per page, whatever form of the URL
-    is used. Scheme, www., fragments and utm_ parameters don't count."""
+    is used. Scheme, www., fragments and utm_ parameters don't count. A
+    stable link is keyed by the link itself (stable_link)."""
     url = url.strip()
+    if stable := stable_link(url):
+        return stable[1]
     m = WAYBACK_RE.match(url)
     if m:
         url = m.group(1)
