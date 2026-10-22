@@ -16,6 +16,8 @@ without web access. Alongside the prompts, `responses/` collects responses to
 subsets of them from open-weight models, each with the model's full chain of
 thought (see [Responses](#responses)), and `preferences/` collects pairwise judgments
 of such responses by a strong model (see [Preference pairs](#preference-pairs)).
+Link prompts are a kind of their own: each comes with one to three web pages that the
+answering model reads along with it (see [Link prompts](#link-prompts)).
 
 **Where the data lives.** Since 2026-09-26 the dataset is published on the Hugging Face Hub as
 [casparoe/synthetic_philosophy_prompts](https://huggingface.co/datasets/casparoe/synthetic_philosophy_prompts):
@@ -67,19 +69,25 @@ generators/
   generate_prompt_oai.py    generator: OpenAI-compatible endpoints (self-hosted models, OpenRouter)
   link_cache.py             the local copies of the domain links that generate_prompt_oai.py's
                             web_fetch serves instead of the live pages, long ones in parts
+  attached_pages.py         the web pages a link prompt comes with: drawn from the link cache,
+                            frozen, and shown to the generating and the answering model
   generate_responses.py     model responses to a prompt set (OpenAI-compatible endpoints, OpenRouter)
   judge_pairs.py            preference judgments over a pair set (Anthropic API, streamed or as Message Batches)
 tools/
   check_batch.py            quality report for a batch: leaks, stray words and word salad, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   build_link_cache.py       fetches every domain link once, politely, into link_cache/
+  check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
+  pin_page_versions.py      version-pinned URLs for a link batch's pages (Wikipedia revision, arXiv
+                            version, SEP archive edition, or Wayback capture)
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
   make_pair_set.py          writes a pair set: complete response pairs from one run (two samples) or two runs, seeded sample
   check_preferences.py      report for a preference run: coverage, verdicts, position balance, cost; agreement of two runs
 QUALITY_NOTES.md          known quality issues and per-batch measurements
 link_cache/               the linked pages' text (git-ignored and never uploaded: most
-                          of it is under copyright)
+                          of it is under copyright), and snapshots.sqlite, the frozen
+                          texts of the pages attached to link prompts
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
@@ -197,7 +205,8 @@ Each response file has:
 | `reasoning_detail_types` | OpenRouter's classification of the reasoning: `reasoning.text` is the full text, `reasoning.summary` would be a summary |
 | `created_at` | when the response was generated (for imported runs: when the record was converted) |
 | `imported_from`, `source_id` | only in `run_NNN_imported/` runs: the sister-repo collection the record came from and its ID there |
-| `prompt` | exactly what was sent, as the single user message (a `system_prompt` field appears only if a run used one) |
+| `attached_pages` | link prompts only: the URL and SHA-256 hash of each page that preceded the prompt in the user message (see [Link prompts](#link-prompts)) |
+| `prompt` | exactly what was sent, as the single user message (a `system_prompt` field appears only if a run used one); for a link prompt, the prompt text without the pages before it |
 | `reasoning`, `answer` | the chain of thought as returned, and the visible answer |
 
 Runs so far:
@@ -411,6 +420,56 @@ position bias in both runs, preferring the response shown second in about 60% of
 decided pairs although the order is a coin flip; and for most judgments of the third
 extension the API returned no thinking summary (`thinking: null`), although the
 judgment text and verdict are complete; see `QUALITY_NOTES.md`.
+
+## Link prompts
+
+A *link prompt* comes with one to three web pages that the asker shares: the prompt text
+gives their URLs, as a user pasting links would, and the model that answers sees each
+page's text in its user message, ahead of the prompt. The answering model gets no tools
+and fetches nothing, so a response is still a single completion; it can read the shared
+pages and nothing else on the web. Link prompts let the dataset build on real web pages
+(blog and forum posts, encyclopedia entries, Stack Exchange threads, papers) without
+publishing them: the dataset holds the pages' URLs, metadata, and hashes, not their text.
+
+Link prompts are written in link batches of their own (`generate_prompt_oai.py
+--link-prompts`). For each prompt, one of the offered domains that has suitable linked
+pages is picked, and one of its pages (75% of prompts), two (20%), or three (5%) are
+drawn, among the pages cached as text, with 1,500 to 60,000 characters of page text in
+all (43,931 pages on 3,769 domains qualified on 2026-10-21). The texts are frozen when the
+prompt is sampled, into an append-only store keyed by the SHA-256 hash of each text
+(`link_cache/snapshots.sqlite`, not published), so a later re-crawl of the cache cannot
+change what a prompt was written against. The meta-prompt shows the generating model the
+pages exactly as the answering model will see them and asks for a prompt that depends on
+what they actually say, gives their URLs and no others, and does not paste them; it may
+ask for a whole page to be reworked (translated, rewritten, summarized throughout) only if
+the page is under CC BY or CC0 or in the public domain. A link sample offers only the
+domain the pages are linked from, without the other domains' links and without the
+quote-inclusion instruction. A generated prompt that lacks one of its pages' URLs or gives
+any other URL is generated again. The sidecar lists the pages under `attached_pages`: the
+URL as the prompt gives it and as the domain list has it, title, author, site, publication
+date, the license where the source states one, when and how the text was fetched, its
+length, and its hash.
+
+`generate_responses.py` sends a link prompt as one user message: each page as a `<page
+url="...">` element (a header with the title, author, site, date, and license where known,
+a blank line, and the text), the pages separated by blank lines, then a blank line and the
+prompt (format `page-v1`, `generators/attached_pages.py`). The response file keeps the
+prompt text alone under `prompt` and lists the pages' URLs and hashes under
+`attached_pages`; `run.yaml` names the page format and the store.
+
+On the Hub, link batches and the runs that answer them have configs of their own,
+`link_prompts` and `link_responses`, whose rows add the `attached_pages` list. Because a URL
+alone drifts, each page there also has a `version_url` (`tools/pin_page_versions.py`) that
+shows the page as it was when fetched, where the source keeps versions (the Wikipedia
+revision, the arXiv version, the Stanford Encyclopedia of Philosophy archive edition, the
+Project Gutenberg ebook page), or else the Wayback Machine capture nearest the fetch. Such a
+version is close to, not always identical with, the text the models saw (the cache got some
+texts from APIs and extracted others from the pages' HTML); the hash tells whether a copy
+matches. A link batch is exported only once all its pages have been looked up.
+`tools/check_link_batch.py` reports on a link batch: the pages per prompt, their sources and
+licenses, whether the store holds every text, URL problems, how much of a page the prompts
+copy, and prompts that seem to ask for a whole page that is not openly licensed to be
+reworked.
 
 ## Quality control and known limitations
 
