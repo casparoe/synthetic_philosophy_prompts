@@ -73,7 +73,7 @@ def readme_sections(text):
 
 def count_rows(folder):
     counts = {}
-    for kind in ("prompts", "responses", "preferences"):
+    for kind in ("prompts", "responses", "preferences", "link_prompts", "link_responses"):
         files = sorted((folder / "data" / kind).glob("*.parquet"))
         counts[kind] = {f.stem: pq.read_metadata(f).num_rows for f in files}
     return counts
@@ -166,6 +166,82 @@ Per-shard row counts: {'; '.join(f'{k} {fmt(v)}' for k, v in counts['prompts'].i
 """
 
 
+def plural(n, one, many=None):
+    return f"{n} {one if n == 1 else many or one + 's'}"
+
+
+def link_configs(counts):
+    """Front-matter entries for the link configs that have shards (a config
+    without data files would not load)."""
+    return "".join(
+        f"  - config_name: {kind}\n    data_files:\n      - split: train\n        path: data/{kind}/*.parquet\n"
+        for kind in ("link_prompts", "link_responses")
+        if counts[kind]
+    )
+
+
+def link_section(repo, counts):
+    """The Hub-side description of the link configs, if there are link shards."""
+    if not counts["link_prompts"]:
+        return None
+    n_prompts = sum(counts["link_prompts"].values())
+    n_responses = sum(counts["link_responses"].values())
+    answered = (
+        f", and {fmt(n_responses)} responses to them in {plural(len(counts['link_responses']), 'run')}"
+        if n_responses else ""
+    )
+    return f"""## Link prompts on the Hub
+
+{fmt(n_prompts)} prompts in {plural(len(counts['link_prompts']), 'link batch', 'link batches')}{answered} come with one to
+three web pages that the asker shares (see Link prompts below). They have configs of their
+own, because they are incomplete without their pages:
+
+```
+data/link_prompts/batch_NNN.parquet    one row per prompt of link batch NNN (config `link_prompts`)
+data/link_responses/run_NNN.parquet    one row per response to link prompts (config `link_responses`)
+```
+
+```python
+link_prompts = load_dataset("{repo}", "link_prompts", split="train")
+```
+
+The pages' texts are not part of the dataset (most of the pages are under copyright).
+The columns are those of `prompts` and `responses` plus `attached_pages`, a list with one
+entry per page in the order the models saw them. In `link_prompts` an entry has `url`
+(as the prompt gives it), `listed_url` (as the meta-prompt's domain list has it), `title`,
+`author`, `site`, `published`, `license` (where the source states one), `fetched_at` and
+`fetch_method` (when and how the text was obtained), `chars` and `sha256` (the length of
+the text the models saw and the SHA-256 hash of its UTF-8 bytes), and `version_url`: the
+page as it was when fetched, where the source keeps versions (a Wikipedia revision, an
+arXiv version, a Stanford Encyclopedia of Philosophy archive edition, a Project Gutenberg
+ebook page), else the Wayback Machine capture nearest the fetch (null if none was found).
+In `link_responses` an entry has `url` and `sha256`; `prompt` is the prompt text alone.
+
+To rebuild the user message that a link prompt's responses answered, get each page's
+text (the hash tells whether a copy is the one the models saw) and join the pages and
+then the prompt with blank lines, each page written as
+
+```
+<page url="URL">
+Title: TITLE
+Author: AUTHOR
+Site: SITE
+Published: PUBLISHED
+License: LICENSE
+
+TEXT
+</page>
+```
+
+with a header line only for the fields that are not null (and no blank line after the
+header if all are null). This is format `page-v1` of `generators/attached_pages.py` in the
+GitHub repository; the generating model saw the pages the same way.
+
+Per-shard row counts: {'; '.join(f'{k} {fmt(v)}' for k, v in counts['link_prompts'].items())}
+(link_prompts){'; ' if n_responses else ''}{'; '.join(f'{k} {fmt(v)}' for k, v in counts['link_responses'].items())}{' (link_responses)' if n_responses else ''}.
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="hf_export")
@@ -180,9 +256,16 @@ def main():
         raise SystemExit(f"README.md lacks sections: {missing}")
     counts = count_rows(out)
     body = [opening(args.repo, counts)]
-    for name in COPIED_SECTIONS:
+    if link := link_section(args.repo, counts):
+        body.append(link)
+    names = list(COPIED_SECTIONS)
+    if "Link prompts" in sections:  # README's description of link prompts, once it has one
+        names.insert(names.index("Preference pairs") + 1, "Link prompts")
+    for name in names:
         body.append(f"## {name}\n\n{sections[name]}\n")
-    (out / "README.md").write_text(FRONT_MATTER + "\n" + "\n".join(body), encoding="utf-8")
+    head, close = FRONT_MATTER.rsplit("---\n", 1)
+    front = head + link_configs(counts) + "---\n" + close
+    (out / "README.md").write_text(front + "\n" + "\n".join(body), encoding="utf-8")
     shutil.copy2(REPO_ROOT / "LICENSE-DATA", out / "LICENSE-DATA")
     print(f"wrote {out / 'README.md'} ({(out / 'README.md').stat().st_size / 1e3:.0f} kB) and LICENSE-DATA; "
           f"{sum(counts['prompts'].values()):,} prompts, {sum(counts['responses'].values()):,} responses, "

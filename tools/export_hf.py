@@ -19,6 +19,16 @@ the source, an exact comparison of a random sample of rows with their source
 files, uniqueness of prompt IDs across batches, and that every response and
 judgment refers to an exported prompt.
 
+Link batches (batch.yaml: link_prompts; their prompts come with web pages, see
+generators/attached_pages.py) and the response runs that answer them (run.yaml:
+page_format) go to configs of their own, link_prompts and link_responses, since
+those prompts are incomplete without their pages. Their rows list the pages
+(attached_pages: URL, title, date, license, hash, a version-pinned URL, ...);
+the page texts are never exported. A link batch is exported only once its pages
+have been looked up (every page has an entry in its page_versions.yaml, from
+tools/pin_page_versions.py), and so are the runs that answer it; until then
+both are left out with a note.
+
 Normalizations, all documented in the dataset card:
   * prompt `text` is the .txt file content without its single trailing newline;
   * the three separate keys of batches before 029 (length, persona, writing_style)
@@ -28,6 +38,7 @@ Normalizations, all documented in the dataset card:
 """
 
 import argparse
+import functools
 import json
 import random
 import re
@@ -273,12 +284,129 @@ CHUNK = {"prompts": 5000, "responses": 2000, "preferences": 2000}
 
 
 def shard_path(out, kind, name):
-    return out / "data" / kind / (f"batch_{name}.parquet" if kind == "prompts" else f"{name}.parquet")
+    batch = kind in ("prompts", "link_prompts")
+    return out / "data" / kind / (f"batch_{name}.parquet" if batch else f"{name}.parquet")
+
+
+# --- link batches and the runs that answer them ----------------------------------
+
+PAGE_VERSIONS_FILE = "page_versions.yaml"  # in a link batch's directory, from tools/pin_page_versions.py
+PAGE_STRUCT = pa.struct(
+    [
+        ("url", pa.string()),
+        ("listed_url", pa.string()),
+        ("title", pa.string()),
+        ("author", pa.string()),
+        ("site", pa.string()),
+        ("published", pa.string()),
+        ("license", pa.string()),
+        ("fetched_at", pa.string()),
+        ("fetch_method", pa.string()),
+        ("chars", pa.int64()),
+        ("sha256", pa.string()),
+        ("version_url", pa.string()),
+    ]
+)
+RESPONSE_PAGE_STRUCT = pa.struct([("url", pa.string()), ("sha256", pa.string())])
+
+
+def with_field(schema, after, field):
+    """The schema with field inserted after the named one."""
+    fields = list(schema)
+    i = schema.get_field_index(after) + 1
+    return pa.schema(fields[:i] + [field] + fields[i:])
+
+
+LINK_PROMPT_SCHEMA = with_field(PROMPT_SCHEMA, "text", pa.field("attached_pages", pa.list_(PAGE_STRUCT)))
+LINK_RESPONSE_SCHEMA = with_field(RESPONSE_SCHEMA, "source_id", pa.field("attached_pages", pa.list_(RESPONSE_PAGE_STRUCT)))
+
+
+@functools.lru_cache(maxsize=None)
+def page_versions(batch):
+    """sha256 -> version-pinned URL for the pages of a link batch."""
+    path = PROMPTS_DIR / f"batch_{batch}" / PAGE_VERSIONS_FILE
+    data = load_yaml(path) if path.exists() else {}
+    return {sha: (entry or {}).get("version_url") for sha, entry in (data or {}).items()}
+
+
+def take_pages(row):
+    """Move a row's attached_pages out of its extra JSON; return them."""
+    extra = json.loads(row["extra"]) if row["extra"] else {}
+    pages = extra.pop("attached_pages", None) or []
+    row["extra"] = dump_json(extra) if extra else None
+    return pages
+
+
+def link_prompt_row(batch, txt_path):
+    row = prompt_row(batch, txt_path)
+    versions = page_versions(batch)
+    row["attached_pages"] = [
+        {
+            **{key: str_or_none(page.get(key)) for key in PAGE_STRUCT.names if key not in ("chars", "version_url")},
+            "chars": int_or_none(page.get("chars")),
+            "version_url": versions.get(page.get("sha256")),
+        }
+        for page in take_pages(row)
+    ]
+    return row
+
+
+def link_response_row(run, path):
+    row = response_row(run, path)
+    row["attached_pages"] = [
+        {"url": str_or_none(page.get("url")), "sha256": str_or_none(page.get("sha256"))}
+        for page in take_pages(row)
+    ]
+    return row
+
+
+SCHEMAS.update(link_prompts=LINK_PROMPT_SCHEMA, link_responses=LINK_RESPONSE_SCHEMA)
+ROW_FUNCS.update(link_prompts=link_prompt_row, link_responses=link_response_row)
+CHUNK.update(link_prompts=CHUNK["prompts"], link_responses=CHUNK["responses"])
+SOURCE_KIND = {"link_prompts": "prompts", "link_responses": "responses"}  # where their files are
+
+
+def is_link_batch(batch):
+    path = PROMPTS_DIR / f"batch_{batch}" / "batch.yaml"
+    return path.exists() and bool((load_yaml(path) or {}).get("link_prompts"))
+
+
+def pages_pinned(batch):
+    """Whether every page attached to the batch's prompts has an entry in its
+    page_versions.yaml (the lookup may have found no version for some)."""
+    path = PROMPTS_DIR / f"batch_{batch}" / PAGE_VERSIONS_FILE
+    if not path.exists():
+        return False
+    looked_up = set(load_yaml(path) or {})
+    return all(
+        page.get("sha256") in looked_up
+        for meta in (PROMPTS_DIR / f"batch_{batch}").glob("prompt_*.meta.yaml")
+        for page in load_yaml(meta).get("attached_pages") or []
+    )
+
+
+def is_link_run(run):
+    path = RESPONSES_DIR / run / "run.yaml"
+    return path.exists() and bool((load_yaml(path) or {}).get("page_format"))
+
+
+def link_run_batches(run, link_batches):
+    """The link batches whose prompts a link run answers (from its prompt set)."""
+    cfg = load_yaml(RESPONSES_DIR / run / "run.yaml")
+    ids = {
+        f"prompt_{int(m.group(1)):05d}"
+        for line in (REPO_ROOT / cfg["prompt_set"]).read_text().splitlines()
+        if (m := re.match(r"\s*(?:prompt_)?(\d+)", line.split("#", 1)[0]))
+    }
+    return {
+        b for b in link_batches
+        if any((PROMPTS_DIR / f"batch_{b}" / f"{pid}.txt").exists() for pid in ids)
+    }
 
 
 def write_shard(args):
     kind, name, out, force = args
-    files = source_files(kind, name)
+    files = source_files(SOURCE_KIND.get(kind, kind), name)
     path = shard_path(out, kind, name)
     if not files:
         return f"{kind}/{name}: no source files, skipped"
@@ -352,10 +480,10 @@ def verify(out, sample_size, seed, partial=False):
     problems = []
     notes = []
     prompt_ids = {}
-    for kind in ("prompts", "responses", "preferences"):
+    for kind in ("prompts", "link_prompts", "responses", "link_responses", "preferences"):
         for path in sorted((out / "data" / kind).glob("*.parquet")):
-            name = path.stem[len("batch_"):] if kind == "prompts" else path.stem
-            files = source_files(kind, name)
+            name = path.stem[len("batch_"):] if kind in ("prompts", "link_prompts") else path.stem
+            files = source_files(SOURCE_KIND.get(kind, kind), name)
             table = pq.read_table(path)
             if not table.schema.equals(SCHEMAS[kind]):
                 problems.append(f"{path.name}: schema differs from the canonical {kind} schema")
@@ -368,7 +496,7 @@ def verify(out, sample_size, seed, partial=False):
                 if row != expected:
                     diff = [c for c in table.column_names if row[c] != expected[c]]
                     problems.append(f"{path.name} row {i}: differs from source in {diff}")
-            if kind == "prompts":
+            if kind in ("prompts", "link_prompts"):
                 for pid in table.column("prompt_id").to_pylist():
                     if pid in prompt_ids:
                         problems.append(f"prompt_id {pid} appears in batch {prompt_ids[pid]} and batch {name}")
@@ -424,8 +552,19 @@ def main():
     if args.pref_runs:
         pref_runs = [r for r in pref_runs if r in set(args.pref_runs.split(","))]
 
-    jobs = [("prompts", b, out, args.force) for b in batches]
-    jobs += [("responses", r, out, args.force) for r in runs]
+    # Link batches and their runs get their own configs, and wait for version links.
+    link_batches = {b for b in batches if is_link_batch(b)}
+    unpinned = {b for b in link_batches if not pages_pinned(b)}
+    link_runs = {r for r in runs if is_link_run(r)}
+    waiting = {r for r in link_runs if link_run_batches(r, link_batches) & unpinned}
+    if unpinned or waiting:
+        print(f"left out until their pages have version links (tools/pin_page_versions.py): "
+              f"link batches {', '.join(sorted(unpinned)) or 'none'}; runs {', '.join(sorted(waiting)) or 'none'}")
+    batches = [b for b in batches if b not in unpinned]
+    runs = [r for r in runs if r not in waiting]
+
+    jobs = [("link_prompts" if b in link_batches else "prompts", b, out, args.force) for b in batches]
+    jobs += [("link_responses" if r in link_runs else "responses", r, out, args.force) for r in runs]
     jobs += [("preferences", r, out, args.force) for r in pref_runs]
     print(f"{len(batches)} batches, {len(runs)} response runs, {len(pref_runs)} preference runs -> {out}")
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
