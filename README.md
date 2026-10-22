@@ -432,23 +432,30 @@ pages and nothing else on the web. Link prompts let the dataset build on real we
 publishing them: the dataset holds the pages' URLs, metadata, and hashes, not their text.
 
 Link prompts are written in link batches of their own (`generate_prompt_oai.py
---link-prompts`). For each prompt, one of the offered domains that has suitable linked
-pages is picked, and one of its pages (75% of prompts), two (20%), or three (5%) are
-drawn, among the pages cached as text, with 1,500 to 60,000 characters of page text in
-all (43,931 pages on 3,769 domains qualified on 2026-10-21). The texts are frozen when the
-prompt is sampled, into an append-only store keyed by the SHA-256 hash of each text
-(`link_cache/snapshots.sqlite`, not published), so a later re-crawl of the cache cannot
-change what a prompt was written against. The meta-prompt shows the generating model the
-pages exactly as the answering model will see them and asks for a prompt that depends on
-what they actually say, gives their URLs and no others, and does not paste them; it may
-ask for a whole page to be reworked (translated, rewritten, summarized throughout) only if
-the page is under CC BY or CC0 or in the public domain. A link sample offers only the
-domain the pages are linked from, without the other domains' links and without the
-quote-inclusion instruction. A generated prompt that lacks one of its pages' URLs or gives
-any other URL is generated again. The sidecar lists the pages under `attached_pages`: the
-URL as the prompt gives it and as the domain list has it, title, author, site, publication
-date, the license where the source states one, when and how the text was fetched, its
-length, and its hash.
+--link-prompts`). The generating model picks a domain as usual and chooses the pages
+itself. Under each of the five offered domains, the meta-prompt lists up to three of the
+domain's linked pages, with URL, title, author, site, date, length, license, and opening
+words, drawn among the pages cached as text with 1,500 to 60,000 characters (43,931 pages
+on 3,769 domains on 2026-10-21; a sample with a domain that has no such page is drawn
+again). The model reads the pages it considers with its web_fetch tool, which serves them
+from frozen copies: every listed page's text is frozen when the prompt is sampled, into an
+append-only store keyed by the SHA-256 hash of each text (`link_cache/snapshots.sqlite`, not
+published). So the generating model reads exactly the text the answering model will get,
+and a later re-crawl of the cache cannot change it. The prompt attaches a page by giving its
+URL: one page, or two or three if the prompt compares or combines them, usually from the
+chosen domain, with at most 10,000 words together. The meta-prompt asks for a prompt that
+depends on what the attached pages actually say and does not paste them; it may ask for a
+whole page to be reworked (translated, rewritten, summarized throughout) only if the page is
+under CC BY or CC0 or in the public domain. A generated prompt is generated again if it
+gives an unlisted URL, attaches no page, more than three pages, or more than 10,000 words,
+or attaches a page the model did not read. Link samples drop the inspiration links and the
+quote-inclusion instruction. The sidecar lists the pages offered (`pages_offered`), read
+(`pages_read`), and attached (`attached_pages`); a page's entry has the URL as the prompt
+gives it and as the domain list has it, title, author, site, publication date, the license
+where the source states one, when and how the text was fetched, its length, and its hash.
+In batch 073, the first link batch, the pipeline picked the domain and the pages instead
+(one page for 75% of prompts, two for 20%, three for 5%, from one domain, at most 60,000
+characters together), and the meta-prompt showed their full text.
 
 `generate_responses.py` sends a link prompt as one user message: each page as a `<page
 url="...">` element (a header with the title, author, site, date, and license where known,
