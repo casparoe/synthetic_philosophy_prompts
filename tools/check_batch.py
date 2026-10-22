@@ -378,11 +378,17 @@ def main():
     # -- sidecars re-render ---------------------------------------------------------------------
     try:
         comp = assemble.load(b / "inputs")
+        store = None
+        if cfg.get("link_prompts"):  # a link batch: the pages' texts are in the snapshot store
+            sys.path.insert(0, str(REPO / "generators"))
+            import attached_pages
+            store = attached_pages.SnapshotStore(REPO / cfg["snapshots"])
         bad = 0
         for m in metas.values():
             try:
                 sample = {k: m[k] for k in assemble.SAMPLE_KEYS if k in m or k not in assemble.OPTIONAL_SAMPLE_KEYS}
-                comp.render(sample, web_tools=True, strict_quotes=True)
+                pages = attached_pages.render_blocks(sample["attached_pages"], store) if store else None
+                comp.render(sample, web_tools=True, strict_quotes=True, pages=pages)
             except Exception:
                 bad += 1
         print(f"sidecars that fail to re-render from the snapshot: {bad}")
