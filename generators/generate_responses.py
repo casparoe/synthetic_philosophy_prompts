@@ -9,6 +9,13 @@ YAML file per response under responses/run_NNN/. Intended for open-weight
 models whose licenses permit training on their outputs and which return their
 full reasoning rather than a summary (Qwen3.5, gpt-oss, DeepSeek V4, ...).
 
+A prompt of a link batch (batch.yaml: link_prompts) comes with web pages: its
+user message is the pages' frozen texts, each a <page> element, followed by
+the prompt (generators/attached_pages.py). The record then lists the pages'
+URLs and hashes under attached_pages and keeps the prompt text alone under
+prompt; the texts stay in the snapshot store, and run.yaml names the store and
+the page format.
+
 A run is one model, one prompt set, one sampling configuration; run.yaml
 records all of it. Sampling parameters are not defaulted: pass the model
 card's recommended values. Runs resume: --resume responses/run_NNN answers
@@ -43,6 +50,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from generate_prompt import PROMPTS_DIR, REPO_ROOT  # noqa: E402
+import attached_pages  # noqa: E402
 
 RESPONSES_DIR = REPO_ROOT / "responses"
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
@@ -99,6 +107,50 @@ def read_prompt_set(path):
 def prompt_index():
     """Prompt ID -> path, for every prompt in the dataset."""
     return {p.stem: p for p in PROMPTS_DIR.glob("**/prompt_*.txt")}
+
+
+def link_prompt_pages(ids, index):
+    """For the prompts of link batches (batch.yaml: link_prompts): prompt ID ->
+    the sidecar's attached_pages, and the snapshot store with their texts.
+    ({}, None) if no prompt is from a link batch. Exits if a sidecar lacks its
+    pages, the batches use another page format or more than one store, or the
+    store lacks a text, since every such prompt would be answered wrongly."""
+    link_batches = {}
+    for directory in {index[pid].parent for pid in ids}:
+        path = directory / "batch.yaml"
+        batch = yaml.load(path.read_text(), Loader=YAML_LOADER) if path.exists() else None
+        if batch and batch.get("link_prompts"):
+            link_batches[directory] = batch
+    if not link_batches:
+        return {}, None
+    formats = {batch.get("page_format") for batch in link_batches.values()}
+    if formats != {attached_pages.PAGE_FORMAT}:
+        raise SystemExit(f"link batches with page formats {sorted(map(str, formats))}; "
+                         f"this code renders {attached_pages.PAGE_FORMAT} only")
+    stores = {batch["snapshots"] for batch in link_batches.values()}
+    if len(stores) > 1:
+        raise SystemExit(f"the link batches name different snapshot stores: {sorted(stores)}")
+    store = attached_pages.SnapshotStore(REPO_ROOT / stores.pop())
+    pages = {}
+    for pid in ids:
+        if index[pid].parent in link_batches:
+            meta = yaml.load(index[pid].with_suffix(".meta.yaml").read_text(), Loader=YAML_LOADER)
+            if not meta.get("attached_pages"):
+                raise SystemExit(f"{pid}: a prompt of a link batch without attached_pages")
+            pages[pid] = meta["attached_pages"]
+    missing = store.missing({r["sha256"] for records in pages.values() for r in records})
+    if missing:
+        raise SystemExit(f"{store.path} lacks the texts of {len(missing)} attached pages, e.g. {missing[0]}")
+    return pages, store
+
+
+def user_message(prompt_text, attached=None, store=None):
+    """The user message for a prompt: the prompt text, after its pages if it
+    comes with any (attached_pages.render_message)."""
+    if not attached:
+        return prompt_text
+    texts = [store.get(r["sha256"]) for r in attached]
+    return attached_pages.render_message(attached, texts, prompt_text)
 
 
 def create_run_dir(root):
@@ -233,7 +285,10 @@ def clean_text(text):
     return text.replace("\r\n", "\n").replace("\r", "\n") if text else text
 
 
-def make_record(cfg, pid, path, sample_index, messages, data):
+def make_record(cfg, pid, path, sample_index, messages, data, prompt_text=None, attached=None):
+    """The response file's content. prompt is the prompt text (by default the
+    user message); for a link prompt, attached_pages identifies the pages that
+    preceded it in the user message, whose texts are not copied."""
     choice = data["choices"][0]
     reasoning, answer, kinds = parse_message(choice.get("message") or {})
     usage = data.get("usage") or {}
@@ -256,19 +311,23 @@ def make_record(cfg, pid, path, sample_index, messages, data):
     }
     if cfg.get("system_prompt"):
         record["system_prompt"] = messages[0]["content"]
-    record["prompt"] = messages[-1]["content"]
+    if attached:
+        record["attached_pages"] = [{"url": r["url"], "sha256": r["sha256"]} for r in attached]
+    record["prompt"] = messages[-1]["content"] if prompt_text is None else prompt_text
     record["reasoning"] = clean_text(reasoning)
     record["answer"] = clean_text(answer)
     return record
 
 
-def answer_one(client, cfg, pid, path, sample_index):
-    """Ask the model to answer one prompt. Returns (record, None) on success
-    and (None, reason) when the request keeps failing or is rejected."""
+def answer_one(client, cfg, pid, path, sample_index, attached=None, store=None):
+    """Ask the model to answer one prompt (with its pages, for a link prompt).
+    Returns (record, None) on success and (None, reason) when the request
+    keeps failing or is rejected."""
+    prompt_text = path.read_text().strip()
     messages = []
     if cfg.get("system_prompt"):
         messages.append({"role": "system", "content": cfg["system_prompt"]})
-    messages.append({"role": "user", "content": path.read_text().strip()})
+    messages.append({"role": "user", "content": user_message(prompt_text, attached, store)})
     request = build_request(cfg, messages)
     delay = 10
     for attempt in range(1, MAX_ATTEMPTS + 1):
@@ -304,7 +363,9 @@ def answer_one(client, cfg, pid, path, sample_index):
                     problem = "no choices in response"
                 else:
                     try:
-                        record = make_record(cfg, pid, path, sample_index, messages, data)
+                        record = make_record(
+                            cfg, pid, path, sample_index, messages, data, prompt_text, attached
+                        )
                     except (KeyError, TypeError, IndexError, AttributeError) as e:
                         record = None
                         problem = f"unexpected response shape ({e!r})"
@@ -450,6 +511,14 @@ def main():
     if missing:
         raise SystemExit(f"{set_path}: {len(missing)} prompts not found under prompts/, e.g. {missing[:5]}")
     cfg["num_prompts"] = len(ids)
+    pages, store = link_prompt_pages(ids, index)
+    if pages:
+        if cfg.get("page_format", attached_pages.PAGE_FORMAT) != attached_pages.PAGE_FORMAT:
+            raise SystemExit(f"run.yaml: page format {cfg['page_format']}; this code renders "
+                             f"{attached_pages.PAGE_FORMAT} only")
+        cfg["page_format"] = attached_pages.PAGE_FORMAT
+        cfg["snapshots"] = repo_relative(store.path)
+        print(f"{len(pages)} of the prompts come with pages, from {cfg['snapshots']}", flush=True)
 
     headers = {}
     if args.api_key_file:
@@ -464,7 +533,10 @@ def main():
     if args.dry_run:
         first = ids[0]
         messages = ([{"role": "system", "content": cfg["system_prompt"]}] if cfg.get("system_prompt") else [])
-        messages.append({"role": "user", "content": index[first].read_text().strip()})
+        messages.append({
+            "role": "user",
+            "content": user_message(index[first].read_text().strip(), pages.get(first), store),
+        })
         print(yaml.safe_dump(build_request(cfg, messages), sort_keys=False, allow_unicode=True))
         return
 
@@ -496,7 +568,8 @@ def main():
     finish = collections.Counter()
     with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
         futures = {
-            executor.submit(answer_one, client, cfg, pid, index[pid], k): (pid, k) for pid, k in items
+            executor.submit(answer_one, client, cfg, pid, index[pid], k, pages.get(pid), store): (pid, k)
+            for pid, k in items
         }
         try:
             for future in as_completed(futures):

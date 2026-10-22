@@ -127,6 +127,8 @@ class Page:
     published: str | None
     license: str | None
     text: str | None
+    method: str | None = None  # how the text was fetched
+    fetched_at: str | None = None
 
     @property
     def ok(self):
@@ -168,15 +170,23 @@ class LinkCache:
     def get(self, url):
         """The cached Page for url, or None if the cache doesn't have it."""
         row = self._connection().execute(
-            "SELECT url, status, title, author, site, published, license, text "
-            "FROM pages WHERE key = ?",
+            "SELECT url, status, title, author, site, published, license, text, "
+            "method, fetched_at FROM pages WHERE key = ?",
             (canonical(url),),
         ).fetchone()
         if row is None:
             return None
-        url, status, title, author, site, published, license_, blob = row
+        url, status, title, author, site, published, license_, blob, method, fetched_at = row
         text = zlib.decompress(blob).decode("utf-8") if blob is not None else None
-        return Page(url, status, title, author, site, published, license_, text)
+        return Page(url, status, title, author, site, published, license_, text, method, fetched_at)
+
+    def sizes(self):
+        """Characters of text per page key, for the pages the cache has as text."""
+        return dict(
+            self._connection().execute(
+                "SELECT key, chars FROM pages WHERE status = 'ok' AND text IS NOT NULL"
+            ).fetchall()
+        )
 
     def stats(self):
         """Pages per status."""

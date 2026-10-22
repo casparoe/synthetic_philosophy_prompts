@@ -17,6 +17,14 @@ pages in parts (offset, find). llama-server must be launched with --jinja so
 tool calls are parsed. Only the final assistant message becomes the prompt,
 so mid-loop narration is dropped for free.
 
+With --link-prompts, the batch is a link batch: every prompt comes with one to
+three of the linked pages of one domain, which the model that answers it will
+see in full (generators/attached_pages.py). Their texts are frozen into the
+snapshot store and shown in the meta-prompt exactly as the answering model will
+see them; the prompt must give every page's URL and no other, and the sidecar
+lists the pages under attached_pages. This needs the link cache, but not
+--web-tools.
+
 Usage:
     .venv/bin/python generators/generate_prompt_oai.py -n 50 --web-tools \
         --base-url http://127.0.0.1:8088 --model qwen3.8-27b
@@ -52,6 +60,7 @@ from ddgs import DDGS
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from meta_prompt import assemble  # noqa: E402
 from generate_prompt import REPO_ROOT, create_batch_dir, next_output_path  # noqa: E402
+import attached_pages  # noqa: E402
 import link_cache  # noqa: E402
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
@@ -402,6 +411,20 @@ def main():
         help="fetch every page live, even the domain links the cache has",
     )
     parser.add_argument(
+        "--link-prompts",
+        action="store_true",
+        help="make a link batch: every prompt comes with one to three of a domain's "
+        "linked pages, which the answering model will see in full "
+        "(generators/attached_pages.py); needs the link cache",
+    )
+    parser.add_argument(
+        "--snapshots",
+        type=Path,
+        metavar="FILE",
+        help="with --link-prompts: the store the pages' texts are frozen into "
+        "(default: link_cache/snapshots.sqlite; a continued batch keeps its own)",
+    )
+    parser.add_argument(
         "--continue-batch",
         metavar="DIR",
         help="append -n more prompts to this existing batch instead of starting a "
@@ -448,6 +471,36 @@ def main():
 
     continuing = Path(args.continue_batch).resolve() if args.continue_batch else None
     components = assemble.load(continuing / "inputs") if continuing else assemble.load()
+
+    # A link batch gives every prompt pages to share (attached_pages.py); a
+    # continued batch is one if its batch.yaml says so, and keeps its store.
+    prior = yaml.safe_load((continuing / "batch.yaml").read_text()) if continuing else {}
+    link_prompts = bool(prior.get("link_prompts")) if continuing else args.link_prompts
+    if continuing and args.link_prompts and not link_prompts:
+        parser.error("--link-prompts: the batch to continue is not a link batch")
+    if continuing and args.snapshots:
+        parser.error("--snapshots: a continued batch keeps the store its batch.yaml names")
+    pages_cache = store = eligible = None
+    if link_prompts:
+        if not args.link_cache.exists():
+            parser.error(f"--link-prompts needs the link cache, and there is none at {args.link_cache}")
+        snapshots = (
+            REPO_ROOT / prior["snapshots"]
+            if continuing
+            else args.snapshots or attached_pages.DEFAULT_SNAPSHOTS
+        )
+        pages_cache = LINK_CACHE or link_cache.LinkCache(args.link_cache)
+        if cached_pages is None:
+            cached_pages = pages_cache.stats().get("ok", 0)
+        store = attached_pages.SnapshotStore(snapshots, writable=True)
+        eligible = attached_pages.eligible_pages(components, pages_cache)
+        attachable = sum(len(pages) for pages in eligible.values())
+        print(
+            f"link prompts: {attachable} pages on {len(eligible)} domains can be attached; "
+            f"their texts are frozen into {snapshots}",
+            flush=True,
+        )
+
     headers = {}
     if args.api_key_file:
         headers["Authorization"] = "Bearer " + Path(args.api_key_file).read_text().strip()
@@ -473,6 +526,8 @@ def main():
                 "link_cache_pages": cached_pages,
             }
         )
+        if link_prompts:
+            config["continued"][-1]["attachable_pages"] = attachable
         (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         print(f"continuing {batch_dir.relative_to(REPO_ROOT)} with {args.num_prompts} more prompts", flush=True)
     else:
@@ -506,14 +561,39 @@ def main():
         config["first_id"] = args.first_id
     if cached_pages is not None and not continuing:
         config["link_cache_pages"] = cached_pages
+    if link_prompts and not continuing:
+        config["link_prompts"] = True
+        config["page_format"] = attached_pages.PAGE_FORMAT
+        config["pages_per_prompt"] = dict(attached_pages.PAGES_PER_PROMPT)
+        config["min_page_chars"] = attached_pages.MIN_PAGE_CHARS
+        config["max_total_page_chars"] = attached_pages.MAX_TOTAL_CHARS
+        config["attachable_pages"] = attachable
+        try:
+            config["snapshots"] = str(Path(snapshots).resolve().relative_to(REPO_ROOT))
+        except ValueError:
+            config["snapshots"] = str(Path(snapshots).resolve())
     (batch_dir / "batch.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     print(f"writing batch to {batch_dir.relative_to(REPO_ROOT)}", flush=True)
 
     path_lock = threading.Lock()
 
+    def attach_pages(sample):
+        """The sample made into a link sample, with its pages' texts; a sample
+        none of whose offered domains has a page to attach is drawn again."""
+        while (linked := attached_pages.attach(sample, eligible, pages_cache, store)) is None:
+            sample = components.sample(args.num_domains, args.num_task_types)
+        return linked
+
     def generate_one(sample):
+        pages = None
+        if link_prompts:
+            sample, texts = attach_pages(sample)
+            pages = [
+                attached_pages.render_page(record, text)
+                for record, text in zip(sample["attached_pages"], texts)
+            ]
         meta_prompt = components.render(
-            sample, web_tools=args.web_tools, strict_quotes=args.web_tools
+            sample, web_tools=args.web_tools, strict_quotes=args.web_tools, pages=pages
         )
 
         def attempt_turns():
@@ -671,6 +751,14 @@ def main():
                 )
                 return
             problem = generation_defect(result)
+            if problem is None and link_prompts:
+                # the prompt must give its pages' URLs, and no others
+                problem = attached_pages.url_problem(
+                    THINK_RE.sub("", result["content"]).strip(), sample["attached_pages"]
+                )
+                if problem:
+                    hosts = ",".join(sorted(result["providers"])) or "server"
+                    problem += f" (from {hosts}, ${result['cost']:.3f} spent)"
             if problem is None:
                 break
             attempt += 1
@@ -710,6 +798,9 @@ def main():
         )
         offered = " / ".join(sample["task_types_offered"])
         extras = ", ".join(sample["additional_instructions"]) or "none"
+        if link_prompts:
+            n = len(sample["attached_pages"])
+            extras += f"; {n} page{'s' if n > 1 else ''}"
         cost = f" ${result['cost']:.3f}" if openrouter else ""
         print(
             f"[{offered} | {extras}]{cost} -> {out_path.relative_to(REPO_ROOT)}",

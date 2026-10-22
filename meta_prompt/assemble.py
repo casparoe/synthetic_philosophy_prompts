@@ -24,7 +24,10 @@ batch 044, lack this key and showed every example in file order), which addition
 contributed, and which URLs were drawn for each offered domain (each of a
 domain's URLs with probability URL_PROBABILITY, in file order; samples from
 before 2026-10-03 lack this key). The URLs are shown only when the generator
-has web tools. Samples use the same keys as the per-prompt .meta.yaml sidecars
+has web tools. A link sample (link batches only, see
+generators/attached_pages.py) also lists under attached_pages the web pages the
+prompt comes with; it offers only the domain they are linked from, and render()
+shows their text, which the caller passes in. Samples use the same keys as the per-prompt .meta.yaml sidecars
 and the samples.yaml files under prompts/, so the meta-prompt behind any
 existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
 before 029 predate additional_instructions.yaml; rebuild those with the code at
@@ -95,11 +98,12 @@ SAMPLE_KEYS = [
     "additional_instructions",
     "domains_offered",
     "domain_urls",
+    "attached_pages",
 ]
-# Keys a sample may lack (older sidecars); render() then falls back to the
-# behaviour of the time: every example of a task type, in file order, and no
-# URLs.
-OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls"}
+# Keys a sample may lack (older sidecars, and all but link samples for
+# attached_pages); render() then falls back to the behaviour of the time:
+# every example of a task type, in file order, no URLs, and no pages.
+OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls", "attached_pages"}
 # For each offered task type, how many of its examples are shown: a number
 # from 1 to this drawn uniformly, capped by how many examples the type has.
 MAX_EXAMPLES_SHOWN = 5
@@ -442,13 +446,15 @@ class Components:
             ],
         }
 
-    def render(self, sample, web_tools=False, strict_quotes=False):
+    def render(self, sample, web_tools=False, strict_quotes=False, pages=None):
         """Render the meta-prompt for one sample.
 
         web_tools tells the model it may search and fetch (the generator has
         to actually provide the tools). strict_quotes adds the rule against
         quoting from memory; the template only shows it together with
-        web_tools.
+        web_tools. pages are the rendered texts of a link sample's
+        attached_pages, in order, exactly as the answering model will see
+        them (generators/attached_pages.render_blocks).
         """
         by_name = {t["type"]: t for t in self.task_types}
         chosen = sample["additional_instructions"]
@@ -473,7 +479,25 @@ class Components:
             ],
             web_tools=web_tools,
             strict_quotes=strict_quotes,
+            attached_pages=self._pages_shown(sample, pages),
         )
+
+    def _pages_shown(self, sample, pages):
+        """A link sample's pages for the template, each with its URL and its
+        rendered text; none for other samples, which must not get pages."""
+        records = sample.get("attached_pages") or []
+        if not records:
+            if pages:
+                raise ValueError("pages given for a sample without attached_pages")
+            return []
+        if pages is None or len(pages) != len(records):
+            raise ValueError(
+                f"the sample has {len(records)} attached pages; pass their rendered "
+                "text as pages (generators/attached_pages.render_blocks)"
+            )
+        if len(sample["domains_offered"]) != 1:
+            raise ValueError("a link sample offers exactly one domain, the one its pages are linked from")
+        return [{"url": r["url"], "text": text} for r, text in zip(records, pages)]
 
     def _links_shown(self, sample):
         """The drawn URLs of each offered domain, parallel to domains_offered;
@@ -595,6 +619,12 @@ def main():
         action="store_true",
         help="also print the drawn parameters as YAML to stderr",
     )
+    parser.add_argument(
+        "--snapshots",
+        metavar="FILE",
+        help="for a link prompt's sample: the snapshot store holding its pages' "
+        "text (default: link_cache/snapshots.sqlite)",
+    )
     args = parser.parse_args()
 
     try:
@@ -619,11 +649,19 @@ def main():
             end="",
             file=sys.stderr,
         )
+    pages = None
+    if sample.get("attached_pages"):
+        sys.path.insert(0, str(COMPONENTS_DIR.parent / "generators"))
+        import attached_pages
+
+        store = attached_pages.SnapshotStore(args.snapshots or attached_pages.DEFAULT_SNAPSHOTS)
+        pages = attached_pages.render_blocks(sample["attached_pages"], store)
     print(
         components.render(
             sample,
             web_tools=args.web_tools or args.strict_quotes,
             strict_quotes=args.strict_quotes,
+            pages=pages,
         )
     )
 
