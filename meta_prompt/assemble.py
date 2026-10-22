@@ -46,7 +46,9 @@ either layout.
 The domains live in domains/, one YAML file per theme (decision_theory.yaml,
 fiction_film_and_games.yaml, ...), read in name order. Each file is a list of
 mappings with the domain's text under domain and, optionally, a list of URLs
-under urls. A snapshot joins the files into one list, domains.yaml. Snapshots
+under urls (the inspiration links) and one of stable links under stable_urls
+(pages only link prompts attach; see generators/attached_pages.py). A snapshot
+joins the files into one list, domains.yaml. Snapshots
 of batches before 2026-10-03 hold domains.txt instead, one domain per line and
 no URLs; load() reads all three layouts.
 
@@ -66,7 +68,7 @@ import collections
 import random
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -296,12 +298,28 @@ def join_task_types(directory):
     return text
 
 
-DOMAIN_KEYS = {"domain", "urls"}
+DOMAIN_KEYS = {"domain", "urls", "stable_urls"}
+
+
+def _check_url_list(urls, key, where):
+    if urls is None:
+        return []
+    if not isinstance(urls, list) or not all(
+        isinstance(u, str) and u.startswith(("http://", "https://")) and not any(c.isspace() for c in u)
+        for u in urls
+    ):
+        raise ValueError(f"{where}: {key} must be a list of http(s) URLs")
+    if len(set(urls)) != len(urls):
+        raise ValueError(f"{where}: a URL is listed twice under {key}")
+    return urls
 
 
 def _check_domain(data, where):
     """One domain: a mapping with its text under domain and, optionally, a
-    list of distinct http(s) URLs under urls."""
+    list of distinct http(s) URLs under urls, and one of stable links under
+    stable_urls (versions of pages that cannot change, see
+    generators/link_cache.py; only link prompts use them, as pages to attach,
+    so they are not shown as inspiration links)."""
     if not isinstance(data, dict):
         raise ValueError(f"{where}: expected a mapping with domain and optionally urls")
     if unknown := set(data) - DOMAIN_KEYS:
@@ -309,17 +327,11 @@ def _check_domain(data, where):
     text = data.get("domain")
     if not isinstance(text, str) or not text.strip() or text != text.strip() or "\n" in text:
         raise ValueError(f"{where}: domain must be a non-empty one-line string without surrounding spaces")
-    urls = data.get("urls")
-    if urls is None:
-        urls = []
-    if not isinstance(urls, list) or not all(
-        isinstance(u, str) and u.startswith(("http://", "https://")) and not any(c.isspace() for c in u)
-        for u in urls
-    ):
-        raise ValueError(f"{where}: urls must be a list of http(s) URLs")
-    if len(set(urls)) != len(urls):
-        raise ValueError(f"{where}: a URL is listed twice")
-    return {"domain": text, "urls": urls}
+    urls = _check_url_list(data.get("urls"), "urls", where)
+    stable = _check_url_list(data.get("stable_urls"), "stable_urls", where)
+    if both := set(urls) & set(stable):
+        raise ValueError(f"{where}: listed under both urls and stable_urls: {sorted(both)[0]}")
+    return {"domain": text, "urls": urls, "stable_urls": stable}
 
 
 def _domain_files(folder):
@@ -362,7 +374,7 @@ def load_domains(directory):
             raise ValueError(f"{single}: expected a list of domains")
         domains = [_check_domain(d, f"{single}, item {i + 1}") for i, d in enumerate(data)]
     elif legacy.exists():
-        domains = [{"domain": line, "urls": []} for line in _load_lines(legacy)]
+        domains = [{"domain": line, "urls": [], "stable_urls": []} for line in _load_lines(legacy)]
     else:
         raise FileNotFoundError(
             f"{directory}: no {DOMAINS_DIR}/ directory, {DOMAINS_FILE}, or {LEGACY_DOMAINS_FILE}"
@@ -409,6 +421,8 @@ class Components:
     task_types: list  # dicts with "type" and optional "examples"/"notes", in file order
     instruction_groups: dict  # group name -> InstructionGroup, in file order
     template: object  # jinja2.Template
+    # domain text -> its stable links (pages link prompts can attach), in file order
+    stable_urls: dict = field(default_factory=dict)
 
     def sample(
         self,
@@ -591,6 +605,7 @@ def load(directory=COMPONENTS_DIR):
         task_types=load_task_types(directory),
         instruction_groups=_load_instruction_groups(directory / INSTRUCTIONS_FILE),
         template=env.get_template(TEMPLATE_FILE),
+        stable_urls={d["domain"]: d["stable_urls"] for d in domains},
     )
 
 

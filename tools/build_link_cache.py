@@ -142,7 +142,7 @@ def load_links():
     links = {}
     for path in sorted(DOMAINS_DIR.glob("*.yaml")):
         for entry in yaml.safe_load(path.read_text()) or []:
-            for url in entry.get("urls") or []:
+            for url in (entry.get("urls") or []) + (entry.get("stable_urls") or []):
                 links.setdefault(link_cache.canonical(url), url)
     return links
 

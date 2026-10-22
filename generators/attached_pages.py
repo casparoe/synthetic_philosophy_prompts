@@ -219,7 +219,8 @@ def eligible_pages(components, cache):
     eligible = {}
     for domain in components.domains:
         seen, pages = set(), []
-        for url in components.domain_urls.get(domain, []):
+        # stable_urls, and any stable link among the inspiration links
+        for url in components.stable_urls.get(domain, []) + components.domain_urls.get(domain, []):
             if not link_cache.stable_link(url):
                 continue
             key = link_cache.canonical(url)
