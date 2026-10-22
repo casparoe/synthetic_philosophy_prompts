@@ -53,15 +53,18 @@ DEFAULT_SNAPSHOTS = link_cache.REPO_ROOT / "link_cache" / "snapshots.sqlite"
 # record it, so that a later format can be told apart.
 PAGE_FORMAT = "page-v1"
 # Pages with less text make poor material, longer ones a very long message.
+# 100,000 characters (about 25,000 tokens) admits half of the SEP's entries,
+# bibliography included (raised from 60,000 on 2026-10-22).
 MIN_PAGE_CHARS = 1500
-MAX_PAGE_CHARS = 60000
+MAX_PAGE_CHARS = 100000
 # Under each offered domain, up to CANDIDATES_PER_DOMAIN of its pages are
 # listed for the generating model to choose from. A prompt attaches one to
-# MAX_PAGES of them, with at most MAX_TOTAL_WORDS words together (about 13,000
-# tokens). The listing shows the first PREVIEW_CHARS characters of each page.
+# MAX_PAGES of them, with at most MAX_TOTAL_WORDS words together (about the
+# length of one page at MAX_PAGE_CHARS, so any listed page fits on its own).
+# The listing shows the first PREVIEW_CHARS characters of each page.
 CANDIDATES_PER_DOMAIN = 3
 MAX_PAGES = 3
-MAX_TOTAL_WORDS = 10000
+MAX_TOTAL_WORDS = 16000
 PREVIEW_CHARS = 300
 # Instruction groups left out of link samples: quote_inclusion asks for a
 # prompt built around a verbatim passage, which the attached page replaces.
