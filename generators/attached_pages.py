@@ -299,6 +299,19 @@ URL_RE = re.compile(r"https?://[^\s<>\"'`]+")
 TRAILING_PUNCTUATION = ".,;:!?*”’»"
 
 
+def _strip_one(url):
+    """The URL without its last character if that is punctuation around or
+    after a URL in prose or Markdown (a final period, a closing parenthesis
+    that the URL did not open), else None."""
+    if url and url[-1] in TRAILING_PUNCTUATION:
+        return url[:-1]
+    if url.endswith(")") and url.count(")") > url.count("("):
+        return url[:-1]
+    if url.endswith("]") and url.count("]") > url.count("["):
+        return url[:-1]
+    return None
+
+
 def urls_in(text):
     """The http(s) URLs in a text, without the punctuation that ends a
     sentence or closes a parenthesis, bracket, or quotation around a URL; a
@@ -307,15 +320,8 @@ def urls_in(text):
     urls = []
     for m in URL_RE.finditer(text):
         url = m.group(0)
-        while url:
-            if url[-1] in TRAILING_PUNCTUATION:
-                url = url[:-1]
-            elif url[-1] == ")" and url.count(")") > url.count("("):
-                url = url[:-1]
-            elif url[-1] == "]" and url.count("]") > url.count("["):
-                url = url[:-1]
-            else:
-                break
+        while (shorter := _strip_one(url)) is not None:
+            url = shorter
         urls.append(url)
     return urls
 
@@ -324,15 +330,24 @@ def url_problem(prompt_text, records):
     """Why a link prompt's URLs don't fit its pages, or None. The prompt must
     give the URL of every page it comes with (any form of it that
     link_cache.canonical maps to the same page) and no other URL, since the
-    answering model can open nothing else."""
+    answering model can open nothing else. A URL counts as a page's if it
+    matches with or without the punctuation after it, since a title can end
+    in some (Wikipedia's Scared_Straight!)."""
     pages = {link_cache.canonical(r["url"]) for r in records}
-    found = {}
-    for url in urls_in(prompt_text):
-        found.setdefault(link_cache.canonical(url), url)
+    found, others = set(), []
+    for m in URL_RE.finditer(prompt_text):
+        url, keys = m.group(0), []
+        while url is not None:
+            keys.append(link_cache.canonical(url))
+            shortest, url = url, _strip_one(url)
+        matched = [key for key in keys if key in pages]
+        if matched:
+            found.add(matched[0])
+        else:
+            others.append(shortest)
     missing = [r["url"] for r in records if link_cache.canonical(r["url"]) not in found]
     if missing:
         return f"the prompt lacks the URL of an attached page ({missing[0]})"
-    others = [url for key, url in found.items() if key not in pages]
     if others:
         return f"the prompt has a URL of a page that is not attached ({others[0]})"
     return None
