@@ -57,7 +57,9 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
   prompt.j2               the meta-prompt template
   domains/                3,848 philosophical domains sampled from, in 46 thematic
                           YAML files; a domain may list URLs of pages about it,
-                          each shown to web-enabled generators with probability 0.05
+                          each shown to web-enabled generators with probability 0.05,
+                          and under stable_urls stable links, which only link
+                          prompts attach
   task_types/             79 prompt genres, one file per genre (NNN_name.yaml, read in
                           name order), each with examples and notes
   additional_instructions.yaml
@@ -77,6 +79,8 @@ tools/
   check_batch.py            quality report for a batch: leaks, stray words and word salad, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   build_link_cache.py       fetches every domain link once, politely, into link_cache/
+  add_stable_links.py       adds stable versions of the domains' links under stable_urls
+                            (so far: Wikipedia articles, as permanent links to a revision)
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
@@ -443,9 +447,13 @@ fetches its text from the link itself (for a Wayback capture, the page as archiv
 only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
 that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
 scripts from the permanent-link pages), never from the live page it is a version of, and
-the prompt gives the link as it is. The five domains offered are drawn among those with
-stable links of 1,500 to 100,000 characters of text, and under each the meta-prompt lists up
-to three of them, with URL, title, author, site, date, length, license, and opening words.
+the prompt gives the link as it is. A domain lists its stable links under `stable_urls`,
+apart from the links under `urls`, which remain the inspiration links of ordinary prompts;
+`tools/add_stable_links.py` adds them (on 2026-10-22, for every linked Wikipedia article, the
+revision current that day: 9,891 links on 3,523 domains). The five domains offered are drawn
+among those with stable links of 1,500 to 100,000 characters of text, and under each the
+meta-prompt lists up to three of them, with URL, title, author, site, date, length, license,
+and opening words.
 The model reads the pages it considers with its web_fetch tool, which serves them from
 frozen copies: every listed page's text is frozen when the prompt is sampled, into an
 append-only store keyed by the SHA-256 hash of each text (`link_cache/snapshots.sqlite`, not
