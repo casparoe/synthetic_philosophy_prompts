@@ -18,24 +18,16 @@ tool calls are parsed. Only the final assistant message becomes the prompt,
 so mid-loop narration is dropped for free.
 
 With --link-prompts, the batch is a link batch: every prompt comes with one to
-three of the linked pages of one domain, which the model that answers it will
-see in full (generators/attached_pages.py). Their texts are frozen into the
-snapshot store and shown in the meta-prompt exactly as the answering model will
-see them; the prompt must give every page's URL and no other, and the sidecar
-lists the pages under attached_pages. This needs the link cache, but not
---web-tools.
-
-Usage:
-    .venv/bin/python generators/generate_prompt_oai.py -n 50 --web-tools \
-        --base-url http://127.0.0.1:8088 --model qwen3.8-27b
-
-    # OpenRouter: bearer key from a file, an explicit reasoning effort, and
-    # (since OpenRouter reports it) each prompt's cost in its sidecar
-    .venv/bin/python generators/generate_prompt_oai.py -n 1000 --web-tools \
-        --base-url https://openrouter.ai/api --model deepseek/deepseek-v4-pro \
-        --api-key-file api_keys/openrouter.txt --reasoning-effort high \
-        --quantizations fp8,bf16,fp16 --provider-order streamlake,baidu \
-        --provider-ignore z-ai --concurrency 32
+three web pages, which the model that answers it will see in full
+(generators/attached_pages.py). Under each offered domain the meta-prompt lists
+a few of its linked pages; their texts are frozen into the snapshot store, and
+web_fetch serves those pages from it, so the generating model reads exactly
+what the answering model will get. The model picks a domain and attaches pages
+by putting their URLs into the prompt; a prompt that gives an unlisted URL,
+attaches no page, too many, or too much text, or attaches a page the model did
+not read, is generated again. The sidecar lists the pages offered
+(pages_offered), those attached (attached_pages), and those read
+(pages_read). This needs the link cache and --web-tools.
 """
 
 import argparse
@@ -267,11 +259,16 @@ def live_page_text(url):
     return trafilatura.extract(response.text) or ""
 
 
-def run_web_fetch(url, offset=0, find=None):
-    """The page's text from the link cache if it has the page, else from the
-    live web; FETCH_CHAR_LIMIT characters from offset, or the passages around
-    find. Returns the tool result and where it came from: cache or live."""
+def run_web_fetch(url, offset=0, find=None, listed=None):
+    """The page's text: for a page listed in a link prompt's meta-prompt (in
+    listed, canonical key -> (record, frozen text)) the frozen text, else the
+    link cache's if it has the page, else the live web's; FETCH_CHAR_LIMIT
+    characters from offset, or the passages around find. Returns the tool
+    result and where it came from: listed, cache, or live."""
     find = str(find) if find is not None else None
+    if listed and (key := link_cache.canonical(url)) in listed:
+        record, text = listed[key]
+        return link_cache.render(text, attached_pages.page_header(record), offset, find, FETCH_CHAR_LIMIT), "listed"
     page = LINK_CACHE.get(url) if LINK_CACHE is not None else None
     if page is not None and page.ok:
         return link_cache.render(page.text, page.header(), offset, find, FETCH_CHAR_LIMIT), "cache"
@@ -284,14 +281,15 @@ def run_web_fetch(url, offset=0, find=None):
     return link_cache.render(text, [], offset, find, FETCH_CHAR_LIMIT), "live"
 
 
-def run_tool(name, arguments):
-    """The tool's result, and for web_fetch where the page came from."""
+def run_tool(name, arguments, listed=None):
+    """The tool's result, and for web_fetch where the page came from; listed
+    are a link prompt's listed pages (see run_web_fetch)."""
     try:
         args = json.loads(arguments or "{}")
         if name == "web_search":
             return run_web_search(args["query"]), None
         if name == "web_fetch":
-            return run_web_fetch(args["url"], args.get("offset") or 0, args.get("find"))
+            return run_web_fetch(args["url"], args.get("offset") or 0, args.get("find"), listed)
         return f"Unknown tool: {name}", None
     except Exception as e:
         return f"Tool error: {e!r}", None
@@ -413,9 +411,10 @@ def main():
     parser.add_argument(
         "--link-prompts",
         action="store_true",
-        help="make a link batch: every prompt comes with one to three of a domain's "
-        "linked pages, which the answering model will see in full "
-        "(generators/attached_pages.py); needs the link cache",
+        help="make a link batch: every prompt comes with one to three web pages, chosen "
+        "by the model from pages listed under the offered domains, which the answering "
+        "model will see in full (generators/attached_pages.py); needs the link cache "
+        "and --web-tools",
     )
     parser.add_argument(
         "--snapshots",
@@ -482,6 +481,8 @@ def main():
         parser.error("--snapshots: a continued batch keeps the store its batch.yaml names")
     pages_cache = store = eligible = None
     if link_prompts:
+        if not args.web_tools:
+            parser.error("--link-prompts needs --web-tools: the model reads the listed pages with web_fetch")
         if not args.link_cache.exists():
             parser.error(f"--link-prompts needs the link cache, and there is none at {args.link_cache}")
         snapshots = (
@@ -496,7 +497,7 @@ def main():
         eligible = attached_pages.eligible_pages(components, pages_cache)
         attachable = sum(len(pages) for pages in eligible.values())
         print(
-            f"link prompts: {attachable} pages on {len(eligible)} domains can be attached; "
+            f"link prompts: {attachable} pages on {len(eligible)} domains can be listed; "
             f"their texts are frozen into {snapshots}",
             flush=True,
         )
@@ -564,9 +565,11 @@ def main():
     if link_prompts and not continuing:
         config["link_prompts"] = True
         config["page_format"] = attached_pages.PAGE_FORMAT
-        config["pages_per_prompt"] = dict(attached_pages.PAGES_PER_PROMPT)
+        config["candidates_per_domain"] = attached_pages.CANDIDATES_PER_DOMAIN
+        config["max_pages"] = attached_pages.MAX_PAGES
+        config["max_total_page_words"] = attached_pages.MAX_TOTAL_WORDS
         config["min_page_chars"] = attached_pages.MIN_PAGE_CHARS
-        config["max_total_page_chars"] = attached_pages.MAX_TOTAL_CHARS
+        config["max_page_chars"] = attached_pages.MAX_PAGE_CHARS
         config["attachable_pages"] = attachable
         try:
             config["snapshots"] = str(Path(snapshots).resolve().relative_to(REPO_ROOT))
@@ -577,24 +580,32 @@ def main():
 
     path_lock = threading.Lock()
 
-    def attach_pages(sample):
-        """The sample made into a link sample, with its pages' texts; a sample
-        none of whose offered domains has a page to attach is drawn again."""
-        while (linked := attached_pages.attach(sample, eligible, pages_cache, store)) is None:
+    def offer_pages(sample):
+        """The sample made into a link sample, with the listed pages' texts by
+        hash; a sample with an offered domain that has no page to list is
+        drawn again."""
+        while (linked := attached_pages.offer(sample, eligible, pages_cache, store)) is None:
             sample = components.sample(args.num_domains, args.num_task_types)
         return linked
 
     def generate_one(sample):
-        pages = None
+        pages = listed = None
         if link_prompts:
-            sample, texts = attach_pages(sample)
+            sample, texts = offer_pages(sample)
             pages = [
-                attached_pages.render_page(record, text)
-                for record, text in zip(sample["attached_pages"], texts)
+                [attached_pages.render_candidate(record, texts[record["sha256"]]) for record in records]
+                for records in sample["pages_offered"]
             ]
+            listed = {
+                link_cache.canonical(record["url"]): (record, texts[record["sha256"]])
+                for records in sample["pages_offered"]
+                for record in records
+            }
         meta_prompt = components.render(
             sample, web_tools=args.web_tools, strict_quotes=args.web_tools, pages=pages
         )
+        if link_prompts and f"{attached_pages.MAX_TOTAL_WORDS:,} words" not in meta_prompt:
+            raise SystemExit("prompt.j2 states another word limit than attached_pages.MAX_TOTAL_WORDS")
 
         def attempt_turns():
             """Run one full tool-round conversation. Returns a dict with the
@@ -606,6 +617,7 @@ def main():
                 "searches": 0,
                 "fetches": 0,
                 "cached_fetches": 0,
+                "pages_read": set(),  # keys of listed pages fetched
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "cost": 0.0,
@@ -688,9 +700,12 @@ def main():
                         stats["searches"] += 1
                     elif name == "web_fetch":
                         stats["fetches"] += 1
-                    content, source = run_tool(name, function.get("arguments"))
-                    if source == "cache":
+                    content, source = run_tool(name, function.get("arguments"), listed)
+                    if source in ("cache", "listed"):
                         stats["cached_fetches"] += 1
+                    if source == "listed":
+                        url = json.loads(function.get("arguments") or "{}").get("url", "")
+                        stats["pages_read"].add(link_cache.canonical(url))
                     messages.append(
                         {
                             "role": "tool",
@@ -705,6 +720,7 @@ def main():
         # generation_defect) is retried, the whole conversation restarting
         # from scratch; after MAX_ATTEMPTS the prompt is skipped.
         problem = None
+        attached = []  # for a link prompt: the pages it attaches
         attempt = 0  # generations that came back defective (these cost money)
         failures = 0  # transport and gateway failures (these cost nothing)
         while True:
@@ -752,10 +768,13 @@ def main():
                 return
             problem = generation_defect(result)
             if problem is None and link_prompts:
-                # the prompt must give its pages' URLs, and no others
-                problem = attached_pages.url_problem(
-                    THINK_RE.sub("", result["content"]).strip(), sample["attached_pages"]
+                # which listed pages the prompt attaches, and whether that is allowed
+                attached, problem = attached_pages.choose(
+                    THINK_RE.sub("", result["content"]).strip(), sample["pages_offered"]
                 )
+                unread = [r["url"] for r in attached if link_cache.canonical(r["url"]) not in result["pages_read"]]
+                if problem is None and unread:
+                    problem = f"the prompt attaches a page the model did not read ({unread[0]})"
                 if problem:
                     hosts = ",".join(sorted(result["providers"])) or "server"
                     problem += f" (from {hosts}, ${result['cost']:.3f} spent)"
@@ -789,6 +808,14 @@ def main():
             # one per round, for auditing costs against OpenRouter's records
             metadata["generation_ids"] = result["generation_ids"]
         metadata.update(sample)
+        if link_prompts:
+            metadata["attached_pages"] = attached
+            metadata["pages_read"] = [
+                record["url"]
+                for records in sample["pages_offered"]
+                for record in records
+                if link_cache.canonical(record["url"]) in result["pages_read"]
+            ]
         metadata["reasoning_summary"] = reasoning_summary or None
         metadata["generated_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds"
@@ -799,8 +826,8 @@ def main():
         offered = " / ".join(sample["task_types_offered"])
         extras = ", ".join(sample["additional_instructions"]) or "none"
         if link_prompts:
-            n = len(sample["attached_pages"])
-            extras += f"; {n} page{'s' if n > 1 else ''}"
+            n = len(attached)
+            extras += f"; {n} page{'s' if n > 1 else ''} attached, {len(result['pages_read'])} read"
         cost = f" ${result['cost']:.3f}" if openrouter else ""
         print(
             f"[{offered} | {extras}]{cost} -> {out_path.relative_to(REPO_ROOT)}",

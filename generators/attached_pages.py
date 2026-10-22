@@ -5,20 +5,29 @@ A link prompt (every prompt of a link batch, see generate_prompt_oai.py
 prompt text gives their URLs, and the model that answers sees each page's text
 in the user message, ahead of the prompt (render_message). Nothing is fetched
 at answer time and no tools are offered, so a response is still a single
-completion. The generating model sees the pages in the meta-prompt in the same
-form, so it writes the prompt against exactly the text the answering model
-will read.
+completion.
+
+The generating model chooses the pages. Under each domain the meta-prompt
+offers, it lists a few of the domain's linked pages (offer, render_candidate):
+URL, title, author, site, date, length, license, and opening words. The model
+picks a domain as usual, reads candidate pages with web_fetch, which serves
+them in exactly the text the answering model will get, and attaches one page,
+or two or three, by putting their URLs into the prompt; choose() works out
+which pages a prompt attaches and whether that is allowed. (In batch 073 the
+pipeline picked one domain and its pages instead, and the meta-prompt showed
+their text; that is the code at commit ea433146cf8.)
 
 The pages are the domains' linked pages as the link cache holds them
-(generators/link_cache.py). Because the cache can be re-crawled, the text a
-prompt is written against is frozen when the prompt is sampled: the snapshot
-store (link_cache/snapshots.sqlite, git-ignored and never uploaded, like the
-cache) keeps every text ever attached, under the SHA-256 of its UTF-8 bytes,
-and is only ever added to. The prompt's sidecar lists the pages under
-attached_pages (the URL as shown, title, author, site, date, license, when and
-how the text was fetched, its length, and the hash); the hash ties a prompt,
-its responses, and the text together. The store is the only exact copy of
-these texts, so it needs a backup.
+(generators/link_cache.py). Because the cache can be re-crawled, every page
+offered is frozen when the prompt is sampled: the snapshot store
+(link_cache/snapshots.sqlite, git-ignored and never uploaded, like the cache)
+keeps every text ever offered, under the SHA-256 of its UTF-8 bytes, and is
+only ever added to. The prompt's sidecar lists the pages offered under
+pages_offered and those attached under attached_pages (the URL as shown,
+title, author, site, date, license, when and how the text was fetched, its
+length, and the hash); the hash ties a prompt, its responses, and the text
+together. The store is the only exact copy of these texts, so it needs a
+backup.
 """
 
 import hashlib
@@ -39,13 +48,17 @@ DEFAULT_SNAPSHOTS = link_cache.REPO_ROOT / "link_cache" / "snapshots.sqlite"
 # How a page is shown to the models (render_page); batch.yaml and run.yaml
 # record it, so that a later format can be told apart.
 PAGE_FORMAT = "page-v1"
-# Pages with less text make poor material; a prompt's pages together may have
-# at most MAX_TOTAL_CHARS characters (about 15,000 tokens).
+# Pages with less text make poor material, longer ones a very long message.
 MIN_PAGE_CHARS = 1500
-MAX_TOTAL_CHARS = 60000
-# How many pages a link prompt comes with, and how often; several pages come
-# from the same domain, so that they can be compared.
-PAGES_PER_PROMPT = {1: 0.75, 2: 0.2, 3: 0.05}
+MAX_PAGE_CHARS = 60000
+# Under each offered domain, up to CANDIDATES_PER_DOMAIN of its pages are
+# listed for the generating model to choose from. A prompt attaches one to
+# MAX_PAGES of them, with at most MAX_TOTAL_WORDS words together (about 13,000
+# tokens). The listing shows the first PREVIEW_CHARS characters of each page.
+CANDIDATES_PER_DOMAIN = 3
+MAX_PAGES = 3
+MAX_TOTAL_WORDS = 10000
+PREVIEW_CHARS = 300
 # Instruction groups left out of link samples: quote_inclusion asks for a
 # prompt built around a verbatim passage, which the attached page replaces.
 LINK_SKIPPED_GROUPS = {"quote_inclusion"}
@@ -72,6 +85,10 @@ HEADER_FIELDS = [
 
 def text_sha256(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def word_count(text):
+    return len(text.split())
 
 
 def open_license(license):
@@ -185,7 +202,7 @@ class Candidate:
 
 def eligible_pages(components, cache):
     """domain -> the domain's linked pages that can be attached: cached as
-    text of MIN_PAGE_CHARS to MAX_TOTAL_CHARS characters, one Candidate per
+    text of MIN_PAGE_CHARS to MAX_PAGE_CHARS characters, one Candidate per
     page (two URLs of one page count once), in file order. Domains without
     such pages are left out."""
     sizes = cache.sizes()
@@ -195,7 +212,7 @@ def eligible_pages(components, cache):
         for url in components.domain_urls.get(domain, []):
             key = link_cache.canonical(url)
             chars = sizes.get(key)
-            if key in seen or chars is None or not MIN_PAGE_CHARS <= chars <= MAX_TOTAL_CHARS:
+            if key in seen or chars is None or not MIN_PAGE_CHARS <= chars <= MAX_PAGE_CHARS:
                 continue
             seen.add(key)
             pages.append(Candidate(url, chars))
@@ -204,31 +221,10 @@ def eligible_pages(components, cache):
     return eligible
 
 
-def draw_pages(domains, eligible, rng=random):
-    """Pick a link prompt's pages: one of the given domains that has eligible
-    pages, a number of pages from PAGES_PER_PROMPT, then that many of the
-    domain's eligible pages at random, skipping any that would take the total
-    past MAX_TOTAL_CHARS (so a domain with few or long pages can yield fewer).
-    Returns (domain, candidates), or None if no domain has eligible pages."""
-    usable = [d for d in domains if eligible.get(d)]
-    if not usable:
-        return None
-    domain = rng.choice(usable)
-    wanted = rng.choices(list(PAGES_PER_PROMPT), weights=list(PAGES_PER_PROMPT.values()))[0]
-    chosen, total = [], 0
-    for candidate in rng.sample(eligible[domain], len(eligible[domain])):
-        if len(chosen) == wanted:
-            break
-        if total + candidate.chars <= MAX_TOTAL_CHARS:
-            chosen.append(candidate)
-            total += candidate.chars
-    return domain, chosen
-
-
 def page_record(url, page, text, sha):
-    """What a prompt's sidecar records about one attached page: the URL as
-    shown (display_url) and as listed under the domain, the header fields,
-    when and how the cache fetched the text, its length, and its hash."""
+    """What a prompt's sidecar records about one page: the URL as shown
+    (display_url) and as listed under the domain, the header fields, when and
+    how the cache fetched the text, its length, and its hash."""
     return {
         "url": display_url(url),
         "listed_url": url,
@@ -240,39 +236,78 @@ def page_record(url, page, text, sha):
         "fetched_at": page.fetched_at,
         "fetch_method": page.method,
         "chars": len(text),
+        "words": word_count(text),
         "sha256": sha,
     }
 
 
-def attach(sample, eligible, cache, store, rng=random):
-    """Make a sample into a link sample: draw its pages (draw_pages), freeze
-    their texts into the store, and narrow the sample to them. domains_offered
-    becomes the pages' domain alone, without inspiration links, the groups in
-    LINK_SKIPPED_GROUPS are dropped, and attached_pages lists the pages.
-    Returns the new sample and the pages' texts, or None if no offered domain
-    has a usable page (draw another sample then)."""
-    drawn = draw_pages(sample["domains_offered"], eligible, rng)
-    if drawn is None:
-        return None
-    domain, candidates = drawn
-    records, texts = [], []
-    for candidate in candidates:
-        page = cache.get(candidate.url)
-        text = page.text.strip() if page is not None and page.ok else ""
-        if not text or "</page>" in text:
-            return None  # can't be shown as a page; rare enough to redraw
-        records.append(page_record(candidate.url, page, text, store.put(text)))
-        texts.append(text)
+def offer(sample, eligible, cache, store, rng=random):
+    """Make a sample into a link sample: list under each offered domain up to
+    CANDIDATES_PER_DOMAIN of its eligible pages, drawn at random (a page
+    linked from two offered domains is listed once), freeze their texts into
+    the store, and drop the inspiration links and the instruction groups in
+    LINK_SKIPPED_GROUPS. Returns the new sample, whose pages_offered is
+    parallel to domains_offered, and the texts by hash; or None if an offered
+    domain has no page to list, so that whichever domain the model picks
+    comes with pages (draw another sample then)."""
+    seen, offered, texts = set(), [], {}
+    for domain in sample["domains_offered"]:
+        pool = eligible.get(domain, [])
+        records = []
+        for candidate in rng.sample(pool, len(pool)):
+            if len(records) == CANDIDATES_PER_DOMAIN:
+                break
+            key = link_cache.canonical(candidate.url)
+            if key in seen:
+                continue
+            page = cache.get(candidate.url)
+            text = page.text.strip() if page is not None and page.ok else ""
+            if not text or "</page>" in text or word_count(text) > MAX_TOTAL_WORDS:
+                continue
+            seen.add(key)
+            sha = store.put(text)
+            texts[sha] = text
+            records.append(page_record(candidate.url, page, text, sha))
+        if not records:
+            return None
+        offered.append(records)
     linked = dict(sample)
-    linked["domains_offered"] = [domain]
-    linked["domain_urls"] = [[]]
+    linked["domain_urls"] = [[] for _ in sample["domains_offered"]]
     linked["additional_instructions"] = {
         name: text
         for name, text in sample["additional_instructions"].items()
         if name not in LINK_SKIPPED_GROUPS
     }
-    linked["attached_pages"] = records
+    linked["pages_offered"] = offered
     return linked, texts
+
+
+def render_candidate(record, text):
+    """How the meta-prompt lists a page under its domain: the URL, a line with
+    the title, author, site, date, length, and license (where known), and
+    the page's opening words."""
+    about = [
+        f'"{record["title"]}"' if record.get("title") else None,
+        f"by {record['author']}" if record.get("author") else None,
+        record.get("site"),
+        record.get("published"),
+        f"about {record['words']:,} words",
+        f"license: {record['license']}" if record.get("license") else None,
+    ]
+    opening = " ".join(text[: PREVIEW_CHARS + 40].split())
+    if len(opening) > PREVIEW_CHARS:
+        opening = opening[:PREVIEW_CHARS].rsplit(" ", 1)[0] + " ..."
+    return (
+        f"- {record['url']}\n"
+        f"  {', '.join(a for a in about if a)}\n"
+        f'  Opens: "{opening}"'
+    )
+
+
+def page_header(record):
+    """The header lines web_fetch shows above a listed page's text."""
+    fields = HEADER_FIELDS + [("URL", "url")]
+    return [f"{name}: {record[key]}" for name, key in fields if record.get(key)]
 
 
 def render_page(record, text):
@@ -288,6 +323,12 @@ def render_page(record, text):
 def render_blocks(records, store):
     """The rendered pages of a sample's attached_pages, from the store."""
     return [render_page(r, store.get(r["sha256"])) for r in records]
+
+
+def render_offered(offered, store):
+    """The listing entries of a sample's pages_offered, per domain, from the
+    store."""
+    return [[render_candidate(r, store.get(r["sha256"])) for r in records] for records in offered]
 
 
 def render_message(records, texts, prompt_text):
@@ -326,20 +367,56 @@ def urls_in(text):
     return urls
 
 
+def _url_keys(match):
+    """The page keys a URL in a prompt may stand for: its canonical form as
+    found and without each trailing punctuation mark in turn (a title can end
+    in one, like Wikipedia's Scared_Straight!); and its shortest form."""
+    url, keys = match.group(0), []
+    while url is not None:
+        keys.append(link_cache.canonical(url))
+        shortest, url = url, _strip_one(url)
+    return keys, shortest
+
+
+def choose(prompt_text, offered):
+    """The pages a prompt attaches -- the listed pages whose URLs it gives,
+    in the order it first gives them -- and why that is not allowed, or None.
+    Every URL in the prompt must be a listed page's, and the prompt must
+    attach one to MAX_PAGES pages with at most MAX_TOTAL_WORDS words together.
+    offered is a sample's pages_offered."""
+    by_key = {}
+    for records in offered:
+        for record in records:
+            by_key.setdefault(link_cache.canonical(record["url"]), record)
+    attached, others = [], []
+    for match in URL_RE.finditer(prompt_text):
+        keys, shortest = _url_keys(match)
+        found = [key for key in keys if key in by_key]
+        if not found:
+            others.append(shortest)
+        elif by_key[found[0]] not in attached:
+            attached.append(by_key[found[0]])
+    if others:
+        return attached, f"the prompt has a URL of a page that is not listed ({others[0]})"
+    if not attached:
+        return attached, "the prompt gives no listed page's URL, so it attaches no page"
+    if len(attached) > MAX_PAGES:
+        return attached, f"the prompt attaches {len(attached)} pages (at most {MAX_PAGES})"
+    words = sum(record["words"] for record in attached)
+    if words > MAX_TOTAL_WORDS:
+        return attached, f"the attached pages have {words:,} words together (at most {MAX_TOTAL_WORDS:,})"
+    return attached, None
+
+
 def url_problem(prompt_text, records):
-    """Why a link prompt's URLs don't fit its pages, or None. The prompt must
-    give the URL of every page it comes with (any form of it that
+    """Why a link prompt's URLs don't fit its attached pages, or None. The
+    prompt must give the URL of every page it comes with (any form of it that
     link_cache.canonical maps to the same page) and no other URL, since the
-    answering model can open nothing else. A URL counts as a page's if it
-    matches with or without the punctuation after it, since a title can end
-    in some (Wikipedia's Scared_Straight!)."""
+    answering model can open nothing else."""
     pages = {link_cache.canonical(r["url"]) for r in records}
     found, others = set(), []
-    for m in URL_RE.finditer(prompt_text):
-        url, keys = m.group(0), []
-        while url is not None:
-            keys.append(link_cache.canonical(url))
-            shortest, url = url, _strip_one(url)
+    for match in URL_RE.finditer(prompt_text):
+        keys, shortest = _url_keys(match)
         matched = [key for key in keys if key in pages]
         if matched:
             found.add(matched[0])

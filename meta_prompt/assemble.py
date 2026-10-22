@@ -25,9 +25,12 @@ contributed, and which URLs were drawn for each offered domain (each of a
 domain's URLs with probability URL_PROBABILITY, in file order; samples from
 before 2026-10-03 lack this key). The URLs are shown only when the generator
 has web tools. A link sample (link batches only, see
-generators/attached_pages.py) also lists under attached_pages the web pages the
-prompt comes with; it offers only the domain they are linked from, and render()
-shows their text, which the caller passes in. Samples use the same keys as the per-prompt .meta.yaml sidecars
+generators/attached_pages.py) lists under pages_offered, parallel to
+domains_offered, the pages the generating model may attach, and render() lists
+them under their domains (the caller passes in their entries); the sidecar
+then also lists the pages the prompt attached under attached_pages. (In batch
+073 the pages were fixed instead: its samples offer one domain, list its pages
+under attached_pages, and render with their full text.) Samples use the same keys as the per-prompt .meta.yaml sidecars
 and the samples.yaml files under prompts/, so the meta-prompt behind any
 existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
 before 029 predate additional_instructions.yaml; rebuild those with the code at
@@ -98,12 +101,13 @@ SAMPLE_KEYS = [
     "additional_instructions",
     "domains_offered",
     "domain_urls",
+    "pages_offered",
     "attached_pages",
 ]
-# Keys a sample may lack (older sidecars, and all but link samples for
-# attached_pages); render() then falls back to the behaviour of the time:
-# every example of a task type, in file order, no URLs, and no pages.
-OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls", "attached_pages"}
+# Keys a sample may lack (older sidecars, and all but link samples for the
+# pages); render() then falls back to the behaviour of the time: every example
+# of a task type, in file order, no URLs, and no pages.
+OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls", "pages_offered", "attached_pages"}
 # For each offered task type, how many of its examples are shown: a number
 # from 1 to this drawn uniformly, capped by how many examples the type has.
 MAX_EXAMPLES_SHOWN = 5
@@ -452,9 +456,10 @@ class Components:
         web_tools tells the model it may search and fetch (the generator has
         to actually provide the tools). strict_quotes adds the rule against
         quoting from memory; the template only shows it together with
-        web_tools. pages are the rendered texts of a link sample's
-        attached_pages, in order, exactly as the answering model will see
-        them (generators/attached_pages.render_blocks).
+        web_tools. For a link sample, pages are its listed pages' entries,
+        per offered domain (generators/attached_pages.render_offered); for
+        the fixed pages of batch 073's samples, their rendered text
+        (attached_pages.render_blocks).
         """
         by_name = {t["type"]: t for t in self.task_types}
         chosen = sample["additional_instructions"]
@@ -479,12 +484,28 @@ class Components:
             ],
             web_tools=web_tools,
             strict_quotes=strict_quotes,
-            attached_pages=self._pages_shown(sample, pages),
+            domain_pages=self._offered_shown(sample, pages),
+            attached_pages=[] if "pages_offered" in sample else self._pages_shown(sample, pages),
         )
 
+    def _offered_shown(self, sample, pages):
+        """The listing entries of a link sample's pages, per offered domain;
+        none for other samples."""
+        offered = sample.get("pages_offered")
+        if offered is None:
+            return []
+        if not isinstance(offered, list) or len(offered) != len(sample["domains_offered"]):
+            raise ValueError("sample's pages_offered must be a list parallel to domains_offered")
+        if pages is None or [len(p) for p in pages] != [len(o) for o in offered]:
+            raise ValueError(
+                "a link sample needs its listed pages' entries, per domain, as pages "
+                "(generators/attached_pages.render_offered)"
+            )
+        return pages
+
     def _pages_shown(self, sample, pages):
-        """A link sample's pages for the template, each with its URL and its
-        rendered text; none for other samples, which must not get pages."""
+        """The fixed pages of a batch 073 sample for the template, each with
+        its URL and rendered text; none for other samples."""
         records = sample.get("attached_pages") or []
         if not records:
             if pages:
@@ -650,12 +671,15 @@ def main():
             file=sys.stderr,
         )
     pages = None
-    if sample.get("attached_pages"):
+    if sample.get("pages_offered") or sample.get("attached_pages"):
         sys.path.insert(0, str(COMPONENTS_DIR.parent / "generators"))
         import attached_pages
 
         store = attached_pages.SnapshotStore(args.snapshots or attached_pages.DEFAULT_SNAPSHOTS)
-        pages = attached_pages.render_blocks(sample["attached_pages"], store)
+        if sample.get("pages_offered"):
+            pages = attached_pages.render_offered(sample["pages_offered"], store)
+        else:
+            pages = attached_pages.render_blocks(sample["attached_pages"], store)
     print(
         components.render(
             sample,

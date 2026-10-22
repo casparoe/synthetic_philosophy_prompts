@@ -387,7 +387,11 @@ def main():
         for m in metas.values():
             try:
                 sample = {k: m[k] for k in assemble.SAMPLE_KEYS if k in m or k not in assemble.OPTIONAL_SAMPLE_KEYS}
-                pages = attached_pages.render_blocks(sample["attached_pages"], store) if store else None
+                pages = None
+                if store and "pages_offered" in sample:
+                    pages = attached_pages.render_offered(sample["pages_offered"], store)
+                elif store:  # batch 073: fixed pages
+                    pages = attached_pages.render_blocks(sample["attached_pages"], store)
                 comp.render(sample, web_tools=True, strict_quotes=True, pages=pages)
             except Exception:
                 bad += 1

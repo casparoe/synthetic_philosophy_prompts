@@ -114,6 +114,24 @@ def main():
     print(f"openly licensed (whole-page reworkings allowed): "
           f"{sum(attached_pages.open_license(r.get('license')) for r in pages)} of {len(pages)}")
 
+    # -- the choice (batches after 073: the model picks pages from those listed)
+    choosing = {pid: m for pid, m in metas.items() if "pages_offered" in m}
+    if choosing:
+        offered = [r for m in choosing.values() for rs in m["pages_offered"] for r in rs]
+        read = [len(m.get("pages_read") or []) for m in choosing.values()]
+        print(f"pages listed per prompt: {dist([sum(map(len, m['pages_offered'])) for m in choosing.values()])}; "
+              f"read per prompt: {dist(read)}; prompts reading none: {sum(1 for n in read if not n)}")
+        spread = collections.Counter(
+            len({i for i, rs in enumerate(m["pages_offered"]) for r in rs if r["sha256"] in {a["sha256"] for a in m["attached_pages"]}})
+            for m in choosing.values()
+        )
+        print("domains the attached pages come from: " + ", ".join(f"{k}: {v}" for k, v in sorted(spread.items())))
+        kind = lambda r: r.get("fetch_method") or "?"  # noqa: E731
+        listed_share = collections.Counter(kind(r) for r in offered)
+        chosen_share = collections.Counter(kind(r) for r in pages)
+        print("attached vs listed, by source: " + ", ".join(
+            f"{k} {chosen_share[k] / len(pages):.0%} vs {v / len(offered):.0%}" for k, v in listed_share.most_common(7)))
+
     # -- the store
     missing = store.missing(distinct)
     show("page texts missing from the store", missing)
