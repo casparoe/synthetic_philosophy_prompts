@@ -30,9 +30,11 @@ generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
 revision (through its API, since its robots.txt bars scripts from the
 permanent-link pages themselves); an SEP archive edition's page; one version
 of an arXiv paper (its abstract link) as that version's source rendered by
-LaTeXML in a sandbox (tools/arxiv_latexml.py), or its PDF if it has no TeX
-source or LaTeXML fails, with title, authors, date, and license from the
-version's abstract page. These come from export.arxiv.org, the copy of arXiv
+LaTeXML in a sandbox (tools/arxiv_latexml.py), with title, authors, date, and
+license from the version's abstract page. A version whose source is only a
+PDF, or that LaTeXML cannot render, is skipped (status "skipped pdf-only" or
+"skipped latexml"), never taken from its PDF; skipped versions are not tried
+again unless asked (--redo-skipped). These come from export.arxiv.org, the copy of arXiv
 that arXiv sets aside for programmatic access ("We ask that users intent on
 harvesting use the dedicated site export.arxiv.org",
 https://info.arxiv.org/help/bulk_data.html; arxiv.org's robots.txt bars
@@ -49,6 +51,8 @@ Usage:
     # what is cached, and the pages that failed
     .venv/bin/python tools/build_link_cache.py --status
     .venv/bin/python tools/build_link_cache.py --failures > failures.tsv
+    # arXiv versions skipped before, again (after a LaTeXML update, say)
+    .venv/bin/python tools/build_link_cache.py --kinds arxiv_version --redo-skipped
 """
 
 import argparse
@@ -1047,9 +1051,10 @@ def arxiv_version_source(site, version, directory):
 
 
 def arxiv_render(source, submitted, latexml, log_path):
-    """The text of a version's source: LaTeXML's rendering (in the sandbox),
-    with method and a note on how it went; or (None, "pdf", why) if it is a
-    PDF, or LaTeXML failed. LaTeXML's log goes to log_path."""
+    """A version's page, from its source as LaTeXML renders it (in the
+    sandbox): (text, method, "ok", note); or (None, None, "skipped ...", note)
+    if the source is only a PDF, or LaTeXML cannot render it. LaTeXML's log
+    goes to log_path."""
     import arxiv_latexml
 
     sha = hashlib.sha256(source).hexdigest()
@@ -1059,21 +1064,22 @@ def arxiv_render(source, submitted, latexml, log_path):
             source, source_date=submitted.timestamp() if submitted else None, keep_log=log_path
         )
     except arxiv_latexml.SourceError as e:
-        return None, "pdf", f"source {sha}; {latexml[0]}; {e}"
+        return None, None, "skipped latexml", f"source {sha}; {latexml[0]}; {e}"
     if kind == "pdf":
-        return None, "pdf", f"source {sha} is a PDF"
+        return None, None, "skipped pdf-only", f"source {sha} is a PDF"
     text = arxiv_html_text(content)
     note = (f"source {sha}; {latexml[0]}; main file {info['main']}; "
             f"LaTeXML status {info['status']} in {info['seconds']} s: {info['summary']}")
     if len(text) < 1500:
-        return None, "pdf", note + f"; only {len(text)} characters"
-    return text, f"arxiv_latexml {latexml[1]}", note
+        return None, None, "skipped latexml", note + f"; only {len(text)} characters"
+    return text, f"arxiv_latexml {latexml[1]}", "ok", note
 
 
 def run_arxiv_versions(jobs, store, robots, progress, site=None):
     """Versioned arXiv abstract links (see the module docstring): the
     abstract pages and sources are fetched one at a time, and the sources
-    rendered LATEXML_WORKERS at a time meanwhile."""
+    rendered LATEXML_WORKERS at a time meanwhile; a version LaTeXML cannot
+    render is skipped."""
     import concurrent.futures
 
     import arxiv_latexml
@@ -1089,19 +1095,12 @@ def run_arxiv_versions(jobs, store, robots, progress, site=None):
     logs = store.path.parent / "arxiv_logs"  # LaTeXML's, one per version
     log(f"arxiv_version: {len(jobs)} versions, rendered with {latexml[0]}")
 
-    def finish(key, url, record, text, method, note):
-        if text is None:  # the PDF of that version
-            try:
-                response = site.get(f"{ARXIV_EXPORT}/pdf/{key.split(':', 1)[1]}")
-                if response.status_code == 200 and response.content[:5] == b"%PDF-":
-                    text, method = pdf_text(response.content)[0], "arxiv_pdf"
-                else:
-                    record = {**record, **http_failure(response)} if response.status_code != 200 else {
-                        **record, "status": "error not-pdf"}
-            except Exception as e:  # noqa: BLE001 -- the connection, a broken PDF
-                record = {**record, "status": f"error {type(e).__name__}"}
-        if text is not None:
+    def finish(key, url, record, outcome):
+        text, method, status, note = outcome
+        if status == "ok":
             record = {**record, "method": method, "text": text}
+        else:
+            record = {**record, "status": status}
         store.put(key, url, **{**record, "note": note})
         progress.add("arxiv_version", record["status"])
 
@@ -1115,10 +1114,10 @@ def run_arxiv_versions(jobs, store, robots, progress, site=None):
             for future in done:
                 key, url, record = pending.pop(future)
                 try:
-                    text, method, note = future.result()
+                    outcome = future.result()
                 except Exception as e:  # noqa: BLE001 -- one bad paper shouldn't stop the rest
-                    text, method, note = None, "pdf", f"error {type(e).__name__}: {e}"[:300]
-                finish(key, url, record, text, method, note)
+                    outcome = None, None, f"error {type(e).__name__}", str(e)[:300]
+                finish(key, url, record, outcome)
 
         for key, url in jobs:
             version = key.split(":", 1)[1]
@@ -1507,6 +1506,8 @@ def main():
     parser.add_argument("--hosts", help="only these hosts (of web and substack links), comma-separated")
     parser.add_argument("--limit", type=int, help="at most this many pages per site (for a trial)")
     parser.add_argument("--redo-thin", action="store_true", help="fetch pages with thin text again")
+    parser.add_argument("--redo-skipped", action="store_true",
+                        help="try the arXiv versions skipped before again (after a LaTeXML update, say)")
     parser.add_argument("--status", action="store_true", help="report what is cached and exit")
     parser.add_argument("--failures", action="store_true", help="list pages without usable text and exit")
     args = parser.parse_args()
@@ -1519,10 +1520,8 @@ def main():
     store = Store(args.db)
     done = store.statuses()
     redo = store.thin_keys() if args.redo_thin else set()
-    todo = {
-        k: u for k, u in links.items()
-        if k in redo or not done.get(k, "").startswith(("ok", "gone"))
-    }
+    finished = ("ok", "gone") + (() if args.redo_skipped else ("skipped",))
+    todo = {k: u for k, u in links.items() if k in redo or not done.get(k, "").startswith(finished)}
     if args.kinds:
         kinds = set(args.kinds.split(","))
         todo = {k: u for k, u in todo.items() if kind_of(k) in kinds}

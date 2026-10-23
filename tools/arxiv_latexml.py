@@ -7,8 +7,9 @@ it was submitted, as "a permanent part of the scientific record". The page
 behind such a link is that source, rendered by LaTeXML (the converter behind
 arXiv's own HTML versions, which arXiv regenerates, so that they are not
 stable themselves); tools/build_link_cache.py downloads the sources and takes
-the text from the HTML as it does from arXiv's (arxiv_html_text). A
-submission without TeX source is a PDF, and its text is the PDF's.
+the text from the HTML as it does from arXiv's (arxiv_html_text). A version
+whose source is only a PDF has no such page, and neither has one that LaTeXML
+cannot render: both are skipped, never taken from a PDF.
 
 LaTeXML and the TeX Live it reads are pinned (tools/install_latexml.sh), so
 that a source renders the same way again; the options are LATEXML_OPTIONS
@@ -314,7 +315,9 @@ def main_tex(src):
     r"""The file LaTeX should be run on: the one arXiv's 00README.json names
     as toplevel, else the TeX file that starts a document (\documentclass or
     \documentstyle, preferring one with \begin{document}, one that no other
-    file includes, a common name, the largest)."""
+    file includes, a common name, the largest); else, for plain TeX (AMS-TeX,
+    harvmac, ...), the file that ends one (\bye, \enddocument, \end), or
+    the only TeX file there is."""
     readme = src / "00README.json"
     if readme.is_file():
         try:
@@ -329,6 +332,10 @@ def main_tex(src):
         if path.is_file() and path.suffix in TEX_SUFFIXES and path.stat().st_size < 20_000_000:
             texts[path] = _uncommented(path.read_text(errors="replace"))
     starts = [p for p, t in texts.items() if re.search(r"\\document(class|style)\b", t)]
+    if not starts:
+        starts = [p for p, t in texts.items() if re.search(r"\\(?:bye|enddocument)\b|^\s*\\end\s*$", t, re.M)]
+    if not starts and len(texts) == 1:
+        starts = list(texts)
     if not starts:
         raise SourceError("error no-main-tex")
     included = set()
@@ -525,12 +532,10 @@ def main():
         kind, content, info = eprint_html(args.source.read_bytes(), keep_log=args.log)
     except SourceError as e:
         sys.exit(str(e))
-    print(json.dumps(info), file=sys.stderr)
     if kind == "pdf":
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from build_link_cache import pdf_text
-        print(pdf_text(content)[0])
-    elif args.html:
+        sys.exit("the source is only a PDF, which is not rendered")
+    print(json.dumps(info), file=sys.stderr)
+    if args.html:
         print(content)
     else:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
