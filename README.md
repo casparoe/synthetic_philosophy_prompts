@@ -451,8 +451,9 @@ fetches its text from the link itself (for a Wayback capture, the page as archiv
 only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
 that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
 scripts from the permanent-link pages; for an arXiv version, that version's source, which
-arXiv keeps as it was submitted, rendered by LaTeXML in a sandbox, or the version's PDF if
-it has no TeX source or LaTeXML fails), never from the live page it is a version of, and
+arXiv keeps as it was submitted, rendered by LaTeXML in a sandbox; a version whose source is
+only a PDF, or that LaTeXML cannot render, is skipped rather than taken from a PDF), never
+from the live page it is a version of, and
 the prompt gives the link as it is. (arXiv's own HTML versions are not stable: arXiv
 re-renders them.) A domain lists its stable links under `stable_urls`,
 apart from the links under `urls`, which remain the inspiration links of ordinary prompts;
