@@ -79,8 +79,11 @@ tools/
   check_batch.py            quality report for a batch: leaks, stray words and word salad, example echo, near-duplicates, cost
   make_prompt_set.py        writes a prompt set: filter by batch or generating model, seeded sample
   build_link_cache.py       fetches every domain link once, politely, into link_cache/
+  arxiv_latexml.py          renders an arXiv paper's source with LaTeXML, in a sandbox (--self-test)
+  install_latexml.sh        installs the pinned LaTeXML and TeX Live 2025 that arxiv_latexml.py uses, into .venv
   add_stable_links.py       adds stable versions of the domains' links under stable_urls
-                            (so far: Wikipedia articles, as permanent links to a revision)
+                            (Wikipedia articles as permanent links to a revision, arXiv
+                            papers as links to a version)
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
@@ -88,8 +91,9 @@ tools/
   check_preferences.py      report for a preference run: coverage, verdicts, position balance, cost; agreement of two runs
 QUALITY_NOTES.md          known quality issues and per-batch measurements
 link_cache/               the linked pages' text (git-ignored and never uploaded: most
-                          of it is under copyright), and snapshots.sqlite, the frozen
-                          texts of the pages attached to link prompts
+                          of it is under copyright), snapshots.sqlite, the frozen
+                          texts of the pages attached to link prompts, and the arXiv
+                          sources with LaTeXML's logs (arxiv_source/, arxiv_logs/)
 ```
 
 Per-prompt metadata includes the generating model, the domains and task types
@@ -440,17 +444,21 @@ as a Wayback Machine capture with its full timestamp
 (`https://web.archive.org/web/20260621024306/https://www.lesswrong.com/posts/...`), a
 Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
 in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
-(`plato.stanford.edu/archives/fall2026/entries/...`), or one version of an arXiv paper
-(`arxiv.org/html/...v2`). `generators/link_cache.py` lists the patterns (`STABLE_LINKS`);
+(`plato.stanford.edu/archives/fall2026/entries/...`), or one version of an arXiv paper,
+by its abstract link (`https://arxiv.org/abs/2307.04879v2`). `generators/link_cache.py` lists the patterns (`STABLE_LINKS`);
 more kinds can be added. A stable link is a page of its own: `tools/build_link_cache.py`
 fetches its text from the link itself (for a Wayback capture, the page as archived, and
 only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
 that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
-scripts from the permanent-link pages), never from the live page it is a version of, and
-the prompt gives the link as it is. A domain lists its stable links under `stable_urls`,
+scripts from the permanent-link pages; for an arXiv version, that version's source, which
+arXiv keeps as it was submitted, rendered by LaTeXML in a sandbox, or the version's PDF if
+it has no TeX source or LaTeXML fails), never from the live page it is a version of, and
+the prompt gives the link as it is. (arXiv's own HTML versions are not stable: arXiv
+re-renders them.) A domain lists its stable links under `stable_urls`,
 apart from the links under `urls`, which remain the inspiration links of ordinary prompts;
 `tools/add_stable_links.py` adds them (on 2026-10-22, for every linked Wikipedia article, the
-revision current that day: 9,891 links on 3,523 domains). The five domains offered are drawn
+revision current that day: 9,891 links on 3,523 domains; and for every linked arXiv paper the
+version the link names, else the latest: 989 links to 816 papers on 455 domains). The five domains offered are drawn
 among those with stable links of 1,500 to 100,000 characters of text, and under each the
 meta-prompt lists up to three of them, with URL, title, author, site, date, length, license,
 and opening words.
@@ -584,6 +592,8 @@ python generators/generate_prompt_oai.py -n 10 --web-tools --base-url https://op
     --model z-ai/glm-5.3 --api-key-file api_keys/openrouter.txt --reasoning-effort high \
     --temperature 1.0 --quantizations fp8,bf16,fp16 --provider-order io-net,siliconflow \
     --provider-ignore z-ai
+tools/install_latexml.sh              # LaTeXML and TeX Live 2025 for arXiv sources (half an hour, 5 GB)
+python tools/arxiv_latexml.py --self-test   # the sandbox LaTeXML runs in holds
 python tools/build_link_cache.py      # local copies of the domain links for web_fetch (a few hours)
 
 # responses: build a prompt set, answer it with an open-weight model, check the run
