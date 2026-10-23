@@ -28,9 +28,18 @@ and only if the archive has a capture at exactly that timestamp), with rules
 for the pages of the forums, Stack Exchange, and Substack, whose text the
 generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
 revision (through its API, since its robots.txt bars scripts from the
-permanent-link pages themselves); an SEP archive edition's page; an arXiv
-version's HTML or PDF (with title, authors, and license from that version's
-abstract page).
+permanent-link pages themselves); an SEP archive edition's page; one version
+of an arXiv paper (its abstract link) as that version's source rendered by
+LaTeXML in a sandbox (tools/arxiv_latexml.py), or its PDF if it has no TeX
+source or LaTeXML fails, with title, authors, date, and license from the
+version's abstract page. These come from export.arxiv.org, the copy of arXiv
+that arXiv sets aside for programmatic access ("We ask that users intent on
+harvesting use the dedicated site export.arxiv.org",
+https://info.arxiv.org/help/bulk_data.html; arxiv.org's robots.txt bars
+/src, and export.arxiv.org's turns away all crawlers), one request at a time,
+after any arxiv.org requests (arXiv asks for one connection at a time). The
+sources are kept in link_cache/arxiv_source, so another rendering of them
+needs no download.
 
 Usage:
     # everything not yet cached; runs for hours, so start it detached
@@ -44,6 +53,7 @@ Usage:
 
 import argparse
 import functools
+import hashlib
 import html as htmllib
 import io
 import json
@@ -121,6 +131,7 @@ DELAYS = {
     "gutenberg": 2.0,
     "sep": 5.0,
     "arxiv": 15.0,
+    "arxiv_version": 10.0,  # export.arxiv.org: HTTP 429 or "Rate exceeded." at a request every 2 to 5 seconds
     "substack": 1.0,
     "web": 1.0,
 }
@@ -158,7 +169,9 @@ def kind_of(key):
 
 
 # Stable kinds share the group (and so the pace) of the site they come from.
-SERVICE_OF = {"wikipedia_revision": "wikipedia", "sep_edition": "sep", "arxiv_version": "arxiv"}
+SERVICE_OF = {"wikipedia_revision": "wikipedia", "sep_edition": "sep"}
+# Groups that must not run at the same time as another: they run after it, in its thread.
+AFTER = {"arxiv_version": "arxiv"}
 
 
 def group_of(key):
@@ -177,6 +190,7 @@ def group_of(key):
 class Store:
     def __init__(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
+        self.path = path
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(link_cache.SCHEMA)
@@ -294,11 +308,12 @@ class Site:
 
 
 def rate_limit_page(response):
-    """GreaterWrong serves its 'Too many requests' page with status 200."""
+    """GreaterWrong serves its 'Too many requests' page with status 200;
+    export.arxiv.org answers just "Rate exceeded."."""
+    body = response.content.lower() if len(response.content) < 4000 else b""
     return (
-        response.status_code == 200
-        and len(response.content) < 4000
-        and b"too many requests" in response.content.lower()
+        (response.status_code == 200 and b"too many requests" in body)
+        or body.strip() == b"rate exceeded."
     )
 
 
@@ -766,12 +781,40 @@ def license_name(href):
     return None
 
 
+def ltx_class(name):
+    """An XPath test for an element with the class name (LaTeXML's ltx_...)."""
+    return f"contains(concat(' ', @class, ' '), ' {name} ')"
+
+
 def arxiv_html_text(html):
+    """The text of LaTeXML's HTML (arXiv's, or ours): formulas as their TeX,
+    footnotes in brackets where they are marked ("[Footnote 2: ...]"), without
+    the table of contents or the names of macros LaTeXML did not know."""
     doc = lxml.html.fromstring(html)
     article = doc.xpath("//article") or [doc]
     root = article[0]
     for nav in root.xpath(".//nav"):  # LaTeXML's table of contents
         nav.drop_tree()
+    for error in root.xpath(f".//*[{ltx_class('ltx_ERROR')}]"):
+        error.drop_tree()  # keeps the tail
+    # A note is its mark, then its content, which repeats the mark: "form¹¹The contrast ..."
+    for note in root.xpath(f".//*[{ltx_class('ltx_note')}]"):
+        marks = note.xpath(f"./*[{ltx_class('ltx_note_mark')}]")
+        mark = marks[0].text_content().strip() if marks else ""
+        content = note.xpath(f".//*[{ltx_class('ltx_note_content')}]")
+        bracket = lxml.html.Element("span")
+        footnote = "ltx_role_footnote" in (note.get("class") or "").split()
+        bracket.text = f" [Footnote {mark}: " if footnote and mark else " [Note: "
+        if content:
+            body = content[0]
+            for el in body.xpath(f".//*[{ltx_class('ltx_note_mark')} or {ltx_class('ltx_tag_note')}]"):
+                el.drop_tree()
+            body.tail = "]"
+            bracket.append(body)
+        else:
+            bracket.text += "]"
+        bracket.tail = note.tail
+        note.getparent().replace(note, bracket)
     for math in root.xpath(".//math"):
         alt = math.get("alttext")
         span = lxml.html.Element("span")
@@ -944,44 +987,158 @@ def fetch_wikipedia_revision(site, robots, key, url):
     }
 
 
-def fetch_arxiv_version(site, robots, key, url):
-    """One version of an arXiv paper: its HTML or PDF full text, as the link
-    says, with title, authors, date, and license from that version's
-    abstract page."""
-    form, version = key.split(":", 1)[1].split("/", 1)
-    target = f"https://arxiv.org/{form}/{version}"
-    abstract_page = f"https://arxiv.org/abs/{version}"
-    if not (robots.check(site, target) and robots.check(site, abstract_page)):
-        return {"status": "robots"}
-    response = site.get(target)
+ARXIV_EXPORT = "https://export.arxiv.org"
+LATEXML_WORKERS = 3  # papers rendered at once
+# a version in the abstract page's submission history: "[v2] Tue, 8 Aug 2023 23:47:28 UTC (1,029 KB)"
+ARXIV_HISTORY_RE = r"\[v{n}\]\s+\w{{3}}, (\d{{1,2}} \w{{3}} \d{{4}} \d\d:\d\d:\d\d) UTC"
+
+
+def arxiv_version_metadata(site, version):
+    """Title, authors, date and license of one version of an arXiv paper,
+    from its abstract page, and the time it was submitted (or a failure)."""
+    response = site.get(f"{ARXIV_EXPORT}/abs/{version}")
     if response.status_code != 200:
-        return http_failure(response)
-    if form == "html":
-        if "<article" not in response.text:
-            return {"status": "error no-article"}
-        text, method = arxiv_html_text(response.text), "arxiv_version_html"
-    else:
-        if response.content[:5] != b"%PDF-":
-            return {"status": "error not-pdf"}
-        text, method = pdf_text(response.content)[0], "arxiv_version_pdf"
-    record = {"status": "ok", "method": method, "site": "arXiv", "text": text}
-    meta_response = site.get(abstract_page)
-    if meta_response.status_code == 200:
-        doc = lxml.html.fromstring(meta_response.text)
+        return http_failure(response), None
+    doc = lxml.html.fromstring(response.text)
 
-        def meta(name):
-            return [m.get("content") for m in doc.xpath(f"//meta[@name='{name}']")]
+    def meta(name):
+        return [m.get("content") for m in doc.xpath(f"//meta[@name='{name}']")]
 
-        published = first(meta("citation_date"))
-        record.update({
-            "title": first(meta("citation_title")),
-            "author": ", ".join(person_name(a) for a in meta("citation_author")) or None,
-            "published": published.replace("/", "-") if published else None,
-            "license": license_name(
-                first(a.get("href") for a in doc.xpath("//div[contains(@class, 'abs-license')]//a"))
-            ),
-        })
-    return record
+    if not meta("citation_title"):
+        return {"status": "error no-abstract-page"}, None  # a rate-limit reply, say
+    history = " ".join(" ".join(doc.xpath("//div[contains(@class, 'submission-history')]//text()")).split())
+    submitted = None
+    if m := re.search(ARXIV_HISTORY_RE.format(n=version.rsplit("v", 1)[1]), history):
+        submitted = datetime.strptime(m.group(1), "%d %b %Y %H:%M:%S").replace(tzinfo=timezone.utc)
+    published = first(meta("citation_date"))
+    record = {
+        "status": "ok", "site": "arXiv", "title": first(meta("citation_title")),
+        "author": ", ".join(person_name(a) for a in meta("citation_author")) or None,
+        "published": submitted.date().isoformat() if submitted else published and published.replace("/", "-"),
+        "license": license_name(
+            first(a.get("href") for a in doc.xpath("//div[contains(@class, 'abs-license')]//a"))
+        ),
+    }
+    return record, submitted
+
+
+def arxiv_version_source(site, version, directory):
+    """The source of one version as arXiv serves it (gzipped tar or TeX, or
+    a PDF), from directory if it was downloaded before, else downloaded and
+    kept there; or None and a failure."""
+    stem = version.replace("/", "_")
+    kept = sorted(p for p in directory.glob(stem + ".*") if not p.name.endswith(".part"))
+    if kept:
+        return kept[0].read_bytes(), None
+    response = site.get(f"{ARXIV_EXPORT}/src/{version}")
+    if response.status_code != 200:
+        return None, http_failure(response)
+    if rate_limit_page(response) or not response.content:
+        return None, {"status": "error rate-limited"}
+    name = re.findall(r'filename="?([^";]+)', response.headers.get("content-disposition", ""))
+    m = re.search(r"(\.tar\.gz|\.[A-Za-z]+)$", name[0]) if name else None  # arXiv-2601.08850v1.tar.gz
+    suffix = m.group(1) if m else ".bin"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (stem + suffix)
+    partial = path.with_name(path.name + ".part")
+    partial.write_bytes(response.content)
+    partial.rename(path)
+    return response.content, None
+
+
+def arxiv_render(source, submitted, latexml, log_path):
+    """The text of a version's source: LaTeXML's rendering (in the sandbox),
+    with method and a note on how it went; or (None, "pdf", why) if it is a
+    PDF, or LaTeXML failed. LaTeXML's log goes to log_path."""
+    import arxiv_latexml
+
+    sha = hashlib.sha256(source).hexdigest()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        kind, content, info = arxiv_latexml.eprint_html(
+            source, source_date=submitted.timestamp() if submitted else None, keep_log=log_path
+        )
+    except arxiv_latexml.SourceError as e:
+        return None, "pdf", f"source {sha}; {latexml[0]}; {e}"
+    if kind == "pdf":
+        return None, "pdf", f"source {sha} is a PDF"
+    text = arxiv_html_text(content)
+    note = (f"source {sha}; {latexml[0]}; main file {info['main']}; "
+            f"LaTeXML status {info['status']} in {info['seconds']} s: {info['summary']}")
+    if len(text) < 1500:
+        return None, "pdf", note + f"; only {len(text)} characters"
+    return text, f"arxiv_latexml {latexml[1]}", note
+
+
+def run_arxiv_versions(jobs, store, robots, progress, site=None):
+    """Versioned arXiv abstract links (see the module docstring): the
+    abstract pages and sources are fetched one at a time, and the sources
+    rendered LATEXML_WORKERS at a time meanwhile."""
+    import concurrent.futures
+
+    import arxiv_latexml
+
+    site = site or Site("arxiv_version", DELAYS["arxiv_version"])
+    try:
+        latexml = arxiv_latexml.latexml_version()
+        arxiv_latexml.tex_paths()
+    except SystemExit as e:  # no LaTeXML or TeX Live: leave the versions for a later run
+        log(f"arxiv_version: {e}; {len(jobs)} versions skipped")
+        return
+    directory = store.path.parent / "arxiv_source"
+    logs = store.path.parent / "arxiv_logs"  # LaTeXML's, one per version
+    log(f"arxiv_version: {len(jobs)} versions, rendered with {latexml[0]}")
+
+    def finish(key, url, record, text, method, note):
+        if text is None:  # the PDF of that version
+            try:
+                response = site.get(f"{ARXIV_EXPORT}/pdf/{key.split(':', 1)[1]}")
+                if response.status_code == 200 and response.content[:5] == b"%PDF-":
+                    text, method = pdf_text(response.content)[0], "arxiv_pdf"
+                else:
+                    record = {**record, **http_failure(response)} if response.status_code != 200 else {
+                        **record, "status": "error not-pdf"}
+            except Exception as e:  # noqa: BLE001 -- the connection, a broken PDF
+                record = {**record, "status": f"error {type(e).__name__}"}
+        if text is not None:
+            record = {**record, "method": method, "text": text}
+        store.put(key, url, **{**record, "note": note})
+        progress.add("arxiv_version", record["status"])
+
+    with concurrent.futures.ThreadPoolExecutor(LATEXML_WORKERS) as pool:
+        pending = {}
+
+        def settle(block):
+            done, _ = concurrent.futures.wait(
+                pending, timeout=None if block else 0, return_when=concurrent.futures.FIRST_COMPLETED
+            )
+            for future in done:
+                key, url, record = pending.pop(future)
+                try:
+                    text, method, note = future.result()
+                except Exception as e:  # noqa: BLE001 -- one bad paper shouldn't stop the rest
+                    text, method, note = None, "pdf", f"error {type(e).__name__}: {e}"[:300]
+                finish(key, url, record, text, method, note)
+
+        for key, url in jobs:
+            version = key.split(":", 1)[1]
+            try:
+                record, submitted = arxiv_version_metadata(site, version)
+                source = None
+                if record["status"] == "ok":
+                    source, failure = arxiv_version_source(site, version, directory)
+                    record = failure or record
+            except Exception as e:  # noqa: BLE001
+                record, source = {"status": f"error {type(e).__name__}", "note": str(e)[:200]}, None
+            if source is None:
+                store.put(key, url, **record)
+                progress.add("arxiv_version", record["status"])
+            else:
+                log_path = logs / (version.replace("/", "_") + ".log")
+                pending[pool.submit(arxiv_render, source, submitted, latexml, log_path)] = (key, url, record)
+            settle(block=len(pending) >= 2 * LATEXML_WORKERS)
+        while pending:
+            settle(block=True)
 
 
 FORUM_SITES = {
@@ -1260,13 +1417,13 @@ FETCHERS = {
     "wayback": fetch_wayback,
     "wikipedia_revision": fetch_wikipedia_revision,
     "sep_edition": fetch_sep_edition,
-    "arxiv_version": fetch_arxiv_version,
 }
 # Kinds fetched many pages per request, each by its own loop.
 RUNNERS = {
     "se": run_stack_exchange,
     "eaforum": functools.partial(run_forum, "eaforum"),
     "lesswrong": functools.partial(run_forum, "lesswrong"),
+    "arxiv_version": run_arxiv_versions,
 }
 
 
@@ -1383,9 +1540,19 @@ def main():
 
     progress = Progress(totals)
     robots = Robots()
+
+    def run_groups(names):
+        for g in names:
+            run_group(g, groups[g], store, robots, progress)
+
+    # A group in AFTER runs after the group it names, in that group's thread.
+    chains = {g: [g] for g in groups if not (g in AFTER and AFTER[g] in groups)}
+    for g, before in AFTER.items():
+        if g in groups and before in groups:
+            chains[before].append(g)
     threads = [
-        threading.Thread(target=run_group, args=(g, jobs, store, robots, progress), name=g, daemon=True)
-        for g, jobs in groups.items()
+        threading.Thread(target=run_groups, args=(names,), name=names[0], daemon=True)
+        for names in chains.values()
     ]
     for t in threads:
         t.start()

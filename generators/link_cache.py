@@ -95,10 +95,12 @@ STABLE_LINKS = [
     ("sep_edition",
      re.compile(r"^https://plato\.stanford\.edu/archives/((?:spr|sum|fall|win)\d{4})/entries/([^/\s#?]+)/?$"),
      lambda m: f"{m.group(1)}:{m.group(2)}"),
-    # the full text of one version of an arXiv paper, as HTML or PDF
+    # one version of an arXiv paper, by its abstract link: that version's
+    # source (kept by arXiv as submitted) as LaTeXML renders it, or its PDF
+    # (tools/build_link_cache.py)
     ("arxiv_version",
-     re.compile(r"^https://arxiv\.org/(html|pdf)/((?:[a-z-]+(?:\.[A-Z]{2})?/)?\d+(?:\.\d+)?v\d+)(?:\.pdf)?/?$"),
-     lambda m: f"{m.group(1)}/{m.group(2)}"),
+     re.compile(r"^https://arxiv\.org/abs/((?:[a-z-]+(?:\.[A-Z]{2})?/)?\d+(?:\.\d+)?v\d+)$"),
+     lambda m: m.group(1)),
 ]
 
 
