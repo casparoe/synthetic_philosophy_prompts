@@ -131,7 +131,7 @@ DELAYS = {
     "eaforum": 2.0,  # ten posts per request
     "lesswrong": 3.0,  # ten posts per request
     "se": 2.0,
-    "wayback": 5.0,  # a burst of quick requests gets connections refused for a while
+    "wayback": 10.0,  # a burst of quick requests gets connections refused for a while
     "gutenberg": 2.0,
     "sep": 5.0,
     "arxiv": 15.0,
@@ -195,7 +195,7 @@ class Store:
     def __init__(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=120)  # other runs may write too
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(link_cache.SCHEMA)
         self.lock = threading.Lock()
@@ -1267,6 +1267,8 @@ def substack_page(html, host):
     if subtitle and subtitle.strip(".… "):
         text = f"{subtitle}\n\n{text}"
     published = first(doc.xpath("//meta[@property='article:published_time']/@content"))
+    if not published and (m := re.search(r'"datePublished":"(\d{4}-\d\d-\d\d)', html)):
+        published = m.group(1)  # newer pages give the date only in their JSON-LD
     return {
         "method": "substack", "title": first(h.text_content().strip() for h in doc.xpath("//h1[contains(@class, 'post-title')]")),
         "author": first(doc.xpath("//meta[@name='author']/@content")),

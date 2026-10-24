@@ -26,6 +26,11 @@ before, plus exactly the new links.
 
     tools/add_stable_links.py --wikipedia [--dry-run]
     tools/add_stable_links.py --arxiv [--dry-run]
+    tools/add_stable_links.py --links FILE [--dry-run]
+
+With --links, the stable links come from a file instead, one per line after
+the text of the domain they go to and a tab (for links found another way, as
+the arXiv papers matched to domains in 2026-10).
 """
 import argparse
 import collections
@@ -158,7 +163,8 @@ def pinned_papers(stable_urls):
 def insert_stable_urls(text, additions):
     """The file text with additions (domain text -> new stable links) inserted
     line by line: after the entry's stable_urls items if it has them, else
-    after its urls items, as a new stable_urls block."""
+    after its urls items, as a new stable_urls block (or after the entry's
+    last line if it has neither)."""
     lines = text.split("\n")
     starts = [i for i, line in enumerate(lines) if line.startswith("- domain:")]
     out_insertions = {}  # line index -> lines to insert after it
@@ -181,10 +187,16 @@ def insert_stable_urls(text, additions):
                     break
             block = (key, last)
             break
-        if block is None:
-            raise SystemExit(f"{domain[:60]!r}: no urls block to put stable_urls after")
-        key, last = block
         new = [f"    - {url}" for url in additions[domain]]
+        if block is None:  # an entry with no links yet: the block goes after its last line
+            last = start
+            for i in range(start + 1, end):
+                if not lines[i].startswith("  ") or lines[i].lstrip().startswith("#"):
+                    break
+                last = i
+            out_insertions[last] = ["  stable_urls:"] + new
+            continue
+        key, last = block
         out_insertions[last] = new if key == "stable_urls" else ["  stable_urls:"] + new
     result = []
     for i, line in enumerate(lines):
@@ -254,20 +266,57 @@ def arxiv_proposer(client, entries):
     return propose
 
 
+def listed_proposer(path, entries):
+    """For each domain entry, the stable links that the file at path lists for
+    it (lines "domain<TAB>link"; # starts a comment line), except a version of
+    an arXiv paper of which the domain lists a version already."""
+    wanted = collections.defaultdict(list)
+    for n, line in enumerate(Path(path).read_text().splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        domain, _, link = line.rpartition("\t")
+        if not domain or not link_cache.stable_link(link):
+            raise SystemExit(f"{path}:{n}: not a domain and a stable link: {line[:120]!r}")
+        if link not in wanted[domain]:
+            wanted[domain].append(link)
+    known = {entry["domain"] for items in entries.values() for entry in items}
+    unknown = [d for d in wanted if d not in known]
+    if unknown:
+        raise SystemExit(f"{path}: {len(unknown)} domains not in the domain files, e.g. {unknown[0][:80]!r}")
+    print(f"{sum(map(len, wanted.values()))} links listed for {len(wanted)} domains", flush=True)
+
+    def propose(entry):
+        pinned = pinned_papers(entry.get("stable_urls") or [])
+        new = []
+        for link in wanted.get(entry["domain"], []):
+            kind, key = link_cache.stable_link(link)
+            if kind == "arxiv_version":
+                paper = re.sub(r"v\d+$", "", key.split(":", 1)[1])
+                if paper in pinned:
+                    continue
+                pinned.add(paper)
+            new.append(link)
+        return new
+
+    return propose
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--wikipedia", action="store_true", help="pin Wikipedia articles to their current revision")
     parser.add_argument("--arxiv", action="store_true", help="pin arXiv papers to a version (the linked one, else the latest)")
+    parser.add_argument("--links", metavar="FILE", help='add the stable links FILE lists (lines "domain<TAB>link")')
     parser.add_argument("--dry-run", action="store_true", help="look up and report, but change no file")
     args = parser.parse_args()
-    if not (args.wikipedia or args.arxiv):
-        parser.error("say which links to add stable versions of (--wikipedia, --arxiv)")
+    if not (args.wikipedia or args.arxiv or args.links):
+        parser.error("say which links to add (--wikipedia, --arxiv, --links)")
 
     files = sorted(DOMAINS_DIR.glob("*.yaml"))
     entries = {path: yaml.safe_load(path.read_text()) or [] for path in files}
     with httpx.Client(headers={"User-Agent": UA}, timeout=60) as client:
         proposers = ([wikipedia_proposer(client, entries)] if args.wikipedia else []) + (
-            [arxiv_proposer(client, entries)] if args.arxiv else [])
+            [arxiv_proposer(client, entries)] if args.arxiv else []) + (
+            [listed_proposer(args.links, entries)] if args.links else [])
 
     added = changed_files = 0
     for path, items in entries.items():
