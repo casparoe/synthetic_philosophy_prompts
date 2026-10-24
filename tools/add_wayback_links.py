@@ -261,7 +261,7 @@ def main():
     index = Wayback(INDEX_PACE)
     lookups = Wayback(LOOKUP_PACE)
     fetcher = Wayback(CAPTURE_PACE)
-    conn = sqlite3.connect(args.db, timeout=120)
+    conn = sqlite3.connect(args.db, timeout=600)
     statuses = store.statuses()
     index_dir.mkdir(parents=True, exist_ok=True)
     report = open(index_dir / "report.tsv", "w")  # live URL, capture link, coverage, ratio, verdict (this run)

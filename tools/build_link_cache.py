@@ -202,7 +202,7 @@ class Store:
     def __init__(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
-        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=120)  # other runs may write too
+        self.conn = sqlite3.connect(path, check_same_thread=False, timeout=600)  # other runs may write too
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(link_cache.SCHEMA)
         self.lock = threading.Lock()
@@ -237,9 +237,9 @@ class Store:
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 row,
             )
-            self.pending += 1
-            if self.pending >= 50 or time.monotonic() - self.committed_at > 20:
-                self.commit()
+            # committed at once: another run may write to the cache too, and a write
+            # transaction left open would lock it out
+            self.commit()
 
     def commit(self):
         self.conn.commit()
