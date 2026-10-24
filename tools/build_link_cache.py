@@ -135,10 +135,17 @@ DELAYS = {
     "gutenberg": 2.0,
     "sep": 5.0,
     "arxiv": 15.0,
-    "arxiv_version": 10.0,  # export.arxiv.org: HTTP 429 or "Rate exceeded." at a request every 2 to 5 seconds
+    # export.arxiv.org: HTTP 429 or "Rate exceeded." at a request every 2 to 5 seconds (2026-10-22); on
+    # 2026-10-24, for sources (/src), every few minutes even at one request a minute (arXiv tightened its
+    # per-IP limits in 2026 and publishes no numbers)
+    "arxiv_version": 30.0,
     "substack": 1.0,
     "web": 1.0,
 }
+
+# After a 429 from export.arxiv.org: ten minutes, then twenty, then forty (its throttle lasts twenty
+# minutes or more).
+ARXIV_LIMITED_WAIT = 600.0
 
 logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
 logging.getLogger("pypdf").setLevel(logging.CRITICAL)
@@ -259,9 +266,10 @@ class Site:
     """Requests to one site: one at a time, at least delay seconds apart,
     backing off on rate limits and server errors."""
 
-    def __init__(self, name, delay):
+    def __init__(self, name, delay, limited_wait=None):
         self.name = name
         self.delay = self.base_delay = delay
+        self.limited_wait = limited_wait  # seconds after a first rate limit (doubling); default a minute more each time
         self.max_delay = max(60.0, delay)
         self.next_at = 0.0
         self.streak = 0  # successes since the last slow-down
@@ -294,7 +302,8 @@ class Site:
                 self.streak = 0
                 if limited:
                     self.delay = min(self.delay * 1.2, self.max_delay)
-                wait = retry_after(response) or 60 * (attempt + 1)
+                wait = retry_after(response) or (
+                    self.limited_wait * 2 ** attempt if limited and self.limited_wait else 60 * (attempt + 1))
                 self.next_at = time.monotonic() + max(wait, self.delay)
                 if attempt < tries - 1:
                     log(f"{self.name}: HTTP {response.status_code} for {url}, waiting {wait:.0f} s")
@@ -1084,7 +1093,7 @@ def run_arxiv_versions(jobs, store, robots, progress, site=None):
 
     import arxiv_latexml
 
-    site = site or Site("arxiv_version", DELAYS["arxiv_version"])
+    site = site or Site("arxiv_version", DELAYS["arxiv_version"], limited_wait=ARXIV_LIMITED_WAIT)
     try:
         latexml = arxiv_latexml.latexml_version()
         arxiv_latexml.tex_paths()
@@ -1507,6 +1516,8 @@ def main():
     parser.add_argument("--kinds", help="only these kinds, comma-separated: " + ", ".join([*FETCHERS, *RUNNERS]))
     parser.add_argument("--hosts", help="only these hosts (of web and substack links), comma-separated")
     parser.add_argument("--limit", type=int, help="at most this many pages per site (for a trial)")
+    parser.add_argument("--first", type=Path, metavar="FILE",
+                        help="fetch the links FILE lists first, in its order (a URL per line, or domain<TAB>URL)")
     parser.add_argument("--redo-thin", action="store_true", help="fetch pages with thin text again")
     parser.add_argument("--redo-skipped", action="store_true",
                         help="try the arXiv versions skipped before again (after a LaTeXML update, say)")
@@ -1530,8 +1541,13 @@ def main():
     if args.hosts:
         hosts = {h.removeprefix("www.") for h in args.hosts.split(",")}
         todo = {k: u for k, u in todo.items() if k.split("/", 1)[0] in hosts}
+    first = {}
+    if args.first:
+        for line in args.first.read_text().splitlines():
+            if line.strip() and not line.startswith("#"):
+                first.setdefault(link_cache.canonical(line.rpartition("\t")[2]), len(first))
     groups = defaultdict(list)
-    for key, url in sorted(todo.items()):
+    for key, url in sorted(todo.items(), key=lambda kv: (first.get(kv[0], len(first)), kv[0])):
         groups[group_of(key)].append((key, url))
     if args.limit:
         groups = {g: jobs[: args.limit] for g, jobs in groups.items()}
