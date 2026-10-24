@@ -5,7 +5,7 @@ conceptual topics — decision theory, formal epistemology, philosophy of scienc
 mind, and language, ethics, metaphysics, history of philosophy, AI alignment as a
 conceptual topic, and more, with a smaller share of non-Western and historical
 traditions. Each prompt is written as if by a real person (a grad student, a
-retired physicist, a novelist, a committee member, ...) in one of seventy-nine genres
+retired physicist, a novelist, a committee member, ...) in one of eighty genres
 (explanations, essay requests, grading tasks, dialogues, adjudications of
 disagreements, committee memos, interview questions, speeches for occasions,
 rankings, ...).
@@ -60,7 +60,7 @@ meta_prompt/              the meta-prompt: the prompt that asks a model to write
                           each shown to web-enabled generators with probability 0.05,
                           and under stable_urls stable links, which only link
                           prompts attach
-  task_types/             79 prompt genres, one file per genre (NNN_name.yaml, read in
+  task_types/             80 prompt genres, one file per genre (NNN_name.yaml, read in
                           name order), each with examples and notes
   additional_instructions.yaml
                           extra instructions (length, persona, writing style) in
