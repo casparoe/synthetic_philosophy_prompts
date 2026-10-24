@@ -1008,7 +1008,8 @@ ARXIV_HISTORY_RE = r"\[v{n}\]\s+\w{{3}}, (\d{{1,2}} \w{{3}} \d{{4}} \d\d:\d\d:\d
 
 def arxiv_version_metadata(site, version):
     """Title, authors, date and license of one version of an arXiv paper,
-    from its abstract page, and the time it was submitted (or a failure)."""
+    from its abstract page, and the time it was submitted (or a failure, or
+    "skipped pdf-only" if the page offers no TeX source)."""
     response = site.get(f"{ARXIV_EXPORT}/abs/{version}")
     if response.status_code != 200:
         return http_failure(response), None
@@ -1032,6 +1033,9 @@ def arxiv_version_metadata(site, version):
             first(a.get("href") for a in doc.xpath("//div[contains(@class, 'abs-license')]//a"))
         ),
     }
+    if not doc.xpath(f"//a[contains(@href, '/src/{version}')]"):
+        # no "TeX Source" link: the version was submitted as a PDF only, so its source need not be fetched
+        record = {**record, "status": "skipped pdf-only", "note": "the abstract page offers no TeX source"}
     return record, submitted
 
 
