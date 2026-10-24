@@ -22,11 +22,12 @@ Live links stay under urls; nothing maps between them and the captures.
 
 The Wayback Machine limits scripts (HTTP 429, and an hour's block of the IP
 for one that keeps going), so this goes slowly: the index (the CDX server) is
-read a page of about 5,000 captures at a time, one page every 30 seconds, and
-the pages are kept in link_cache/wayback_index/, so a rerun reads none again;
-captures are fetched one every 20 seconds. After a 429 or a server error it
-waits ten minutes; after a failed connection two minutes, and an hour if the
-next one fails too. A run over a few thousand posts takes most of a day, so
+read a page of about 5,000 captures at a time, one page a minute, and
+the pages are kept in link_cache/wayback_index/, so a rerun reads none again
+(the URLs of a page it will not give are looked up one by one instead);
+captures are fetched one every 20 seconds. After a 429 it waits ten minutes,
+after a server error three; after a failed connection two minutes, and an
+hour if the next one fails too. A run over a few thousand posts takes most of a day, so
 start it detached.
 
     tools/add_wayback_links.py --site benthams.substack.com --site www.overcomingbias.com [--dry-run] [--limit N]
@@ -54,9 +55,11 @@ from add_stable_links import DOMAINS_DIR, insert_stable_urls  # noqa: E402
 
 CDX = "https://web.archive.org/cdx/search/cdx"
 FIELDS = "urlkey,timestamp,original,statuscode,mimetype,digest,length"
-INDEX_PACE = 30.0  # seconds between two requests to the index
+INDEX_PACE = 60.0  # seconds between two requests for index pages
+LOOKUP_PACE = 20.0  # seconds between two index lookups of a single URL
 CAPTURE_PACE = 20.0  # seconds between two capture fetches
-LIMITED_WAIT = 600.0  # after a 429 or a server error
+LIMITED_WAIT = 600.0  # after a 429
+SERVER_ERROR_WAIT = 180.0  # after a server error (the index server often answers 503 under load)
 RETRY_WAIT = 120.0  # after a failed connection
 BLOCKED_WAIT = 3600.0  # after a second one in a row: the archive's block lasts an hour
 SHINGLE = 8  # words per shingle in the text comparison
@@ -97,18 +100,27 @@ class Wayback:
             self.failures = 0
             self.next_at = time.monotonic() + self.pace
             if response.status_code == 429 or response.status_code >= 500:
-                blc.log(f"web.archive.org: HTTP {response.status_code}; waiting ten minutes")
-                self.next_at = time.monotonic() + LIMITED_WAIT
+                wait = LIMITED_WAIT if response.status_code == 429 else SERVER_ERROR_WAIT
+                blc.log(f"web.archive.org: HTTP {response.status_code}; waiting {wait / 60:.0f} min")
+                self.next_at = time.monotonic() + wait
                 if attempt < tries - 1:
                     continue
             return response
 
 
-def index_lines(wayback, directory, prefix):
-    """Every index line (FIELDS) for URLs starting with prefix (host and path,
-    no scheme), a page at a time, each page kept in directory."""
+def index_folder(directory, prefix):
     folder = directory / re.sub(r"[^A-Za-z0-9.-]+", "_", prefix).strip("_")
     folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def index_lines(wayback, directory, prefix):
+    """Every index line (FIELDS) for URLs starting with prefix (host and path,
+    no scheme), a page at a time, each page kept in directory; and the urlkey
+    ranges (first, last; inclusive) of the pages the index would not give
+    (it answers some heavy pages with 503 again and again), whose URLs are
+    then looked up one by one (exact_lines)."""
+    folder = index_folder(directory, prefix)
     count = folder / "pages.txt"
     if not count.exists():
         response = wayback.get(CDX, params={"url": prefix, "matchType": "prefix", "showNumPages": "true"})
@@ -116,17 +128,55 @@ def index_lines(wayback, directory, prefix):
             raise SystemExit(f"Wayback index: HTTP {response.status_code} for {prefix}")
         count.write_text(response.text.strip() + "\n")
     pages = int(count.read_text())
-    lines = []
+    lines, gaps = [], []
+    gap_from = None  # the last urlkey before a run of pages not read
+    failed = 0  # pages in a row the index would not give; after two, no more are asked for
     for page in range(pages):
         path = folder / f"page_{page:04d}.txt"
         if not path.exists():
-            response = wayback.get(CDX, params={"url": prefix, "matchType": "prefix", "page": page, "fl": FIELDS})
-            if response.status_code != 200:
-                raise SystemExit(f"Wayback index: HTTP {response.status_code} for {prefix}, page {page}")
+            response = None
+            if failed < 2:
+                try:
+                    response = wayback.get(
+                        CDX, params={"url": prefix, "matchType": "prefix", "page": page, "fl": FIELDS}, tries=2)
+                except httpx.HTTPError:
+                    response = None
+            if response is None or response.status_code != 200:
+                failed += 1
+                if response is not None:
+                    blc.log(f"Wayback index: HTTP {response.status_code} for {prefix} page {page + 1}/{pages}; "
+                            "its URLs will be looked up one by one")
+                if gap_from is None:
+                    gap_from = lines[-1].split(" ")[0] if lines else ""
+                continue
+            failed = 0
             path.write_text(response.text)
             blc.log(f"Wayback index: {prefix} page {page + 1}/{pages}")
-        lines += path.read_text().splitlines()
-    return lines
+        page_lines = path.read_text().splitlines()
+        if gap_from is not None:
+            gaps.append((gap_from, page_lines[0].split(" ")[0] if page_lines else "\uffff"))
+            gap_from = None
+        lines += page_lines
+    if gap_from is not None:
+        gaps.append((gap_from, "\uffff"))
+    return lines, gaps
+
+
+def exact_lines(wayback, directory, prefix, url):
+    """The index lines of one URL (any scheme, with or without www.), kept
+    in directory; None if the index would not answer."""
+    folder = index_folder(directory, prefix) / "exact"
+    folder.mkdir(exist_ok=True)
+    path = folder / (re.sub(r"[^A-Za-z0-9.-]+", "_", urlkey(url)) + ".txt")
+    if not path.exists():
+        try:
+            response = wayback.get(CDX, params={"url": url.split("://", 1)[-1], "fl": FIELDS}, tries=2)
+        except httpx.HTTPError:
+            return None
+        if response.status_code != 200:
+            return None
+        path.write_text(response.text)
+    return path.read_text().splitlines()
 
 
 def urlkey(url):
@@ -209,6 +259,7 @@ def main():
     store = blc.Store(args.db)
     robots = blc.Robots()
     index = Wayback(INDEX_PACE)
+    lookups = Wayback(LOOKUP_PACE)
     fetcher = Wayback(CAPTURE_PACE)
     conn = sqlite3.connect(args.db, timeout=120)
     statuses = store.statuses()
@@ -216,7 +267,9 @@ def main():
     report = open(index_dir / "report.tsv", "w")  # live URL, capture link, coverage, ratio, verdict (this run)
     kept = {}  # live URL -> capture link
     for site in sites:
-        captures = captures_by_key(index_lines(index, index_dir, site.removeprefix("www.") + "/p/"))
+        prefix = site.removeprefix("www.") + "/p/"
+        lines, gaps = index_lines(index, index_dir, prefix)
+        captures = captures_by_key(lines)
         todo = posts[site][: args.limit] if args.limit else posts[site]
         tally = Counter()
         for n, url in enumerate(todo, 1):
@@ -227,6 +280,12 @@ def main():
             if not 0.9 * MIN_PAGE_CHARS <= len(live) <= 1.1 * MAX_PAGE_CHARS:
                 tally["too short or too long to attach"] += 1  # a capture of it could not be attached either
                 continue
+            if any(first <= urlkey(url) <= last for first, last in gaps):
+                found = exact_lines(lookups, index_dir, prefix, url)
+                if found is None:
+                    tally["index lookup failed"] += 1  # a rerun tries again
+                    continue
+                captures.update(captures_by_key(found))
             options = captures.get(urlkey(url), [])
             verdict = "no capture" if not options else "no match"
             for stamp, original in options[: args.tries]:
