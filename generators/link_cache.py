@@ -15,11 +15,12 @@ ea.greaterwrong.com one) is found too.
 
 Stable links are the exception (stable_link): links to a version of a page
 that cannot change, such as a Wayback Machine capture with its full
-timestamp, a Wikipedia revision, a Stanford Encyclopedia archive edition, or
-a versioned arXiv paper. Each is a page of its own: keyed by the link itself,
-fetched from it (tools/build_link_cache.py), and never mapped to the live page
-it is a version of, nor the live page to it. Only stable links can be attached
-to link prompts (generators/attached_pages.py).
+timestamp, a Wikipedia revision, a Stanford Encyclopedia archive edition, a
+revision of a LessWrong post, or a versioned arXiv paper. Each is a page of
+its own: keyed by the link itself, fetched from it
+(tools/build_link_cache.py), and never mapped to the live page it is a
+version of, nor the live page to it. Only stable links can be attached to
+link prompts (generators/attached_pages.py).
 """
 
 import re
@@ -94,6 +95,11 @@ STABLE_LINKS = [
     # an entry in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
     ("sep_edition",
      re.compile(r"^https://plato\.stanford\.edu/archives/((?:spr|sum|fall|win)\d{4})/entries/([^/\s#?]+)/?$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    # a revision of a LessWrong post: LessWrong keeps every revision of a post,
+    # and its page shows the one a ?revision= link names (the slug is free)
+    ("lesswrong_revision",
+     re.compile(r"^https://www\.lesswrong\.com/posts/([A-Za-z0-9]{17}|[0-9a-f]{24})/[^/?#\s]+\?revision=(\d+\.\d+\.\d+)$"),
      lambda m: f"{m.group(1)}:{m.group(2)}"),
     # one version of an arXiv paper, by its abstract link: that version's
     # source (kept by arXiv as submitted) as LaTeXML renders it, or its PDF

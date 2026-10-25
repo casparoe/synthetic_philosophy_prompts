@@ -28,8 +28,10 @@ and only if the archive has a capture at exactly that timestamp), with rules
 for the pages of the forums, Stack Exchange, and Substack, whose text the
 generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
 revision (through its API, since its robots.txt bars scripts from the
-permanent-link pages themselves); an SEP archive edition's page; one version
-of an arXiv paper (its abstract link) as that version's source rendered by
+permanent-link pages themselves); an SEP archive edition's page; a revision
+of a LessWrong post, as LessWrong's GraphQL API returns that revision (any
+other revision in its place is an error, never kept); one version of an
+arXiv paper (its abstract link) as that version's source rendered by
 LaTeXML in a sandbox (tools/arxiv_latexml.py), with title, authors, date, and
 license from the version's abstract page. A version whose source is only a
 PDF, or that LaTeXML cannot render, is skipped (status "skipped pdf-only" or
@@ -182,7 +184,7 @@ def kind_of(key):
 # Stable kinds share the group (and so the pace) of the site they come from.
 SERVICE_OF = {"wikipedia_revision": "wikipedia", "sep_edition": "sep"}
 # Groups that must not run at the same time as another: they run after it, in its thread.
-AFTER = {"arxiv_version": "arxiv"}
+AFTER = {"arxiv_version": "arxiv", "lesswrong_revision": "lesswrong"}
 
 
 def group_of(key):
@@ -584,28 +586,48 @@ def fetch_wikipedia(site, robots, key, url):
     }
 
 
-FORUM_POST_FIELDS = "title postedAt htmlBody user { displayName } coauthors { displayName }"
+FORUM_POST_META = "title postedAt user { displayName } coauthors { displayName }"
+FORUM_POST_FIELDS = f"{FORUM_POST_META} htmlBody"
 
 
-def forum_record(post, forum):
-    """The record of a LessWrong or EA Forum post from the forum's GraphQL API."""
+def forum_record(post, forum, version=None):
+    """The record of a LessWrong or EA Forum post from the forum's GraphQL API:
+    its current text, or the text of the revision version (post["contents"])."""
     authors = [post.get("user") or {}] + (post.get("coauthors") or [])
     published = (post.get("postedAt") or "")[:10] or None
     license_ = None
     if forum == "eaforum" and published and published >= EA_FORUM_CC_BY_SINCE:
         license_ = "CC BY 4.0"
     return {
-        "status": "ok", "method": f"{forum}_graphql", "title": post.get("title"),
+        "status": "ok", "method": f"{forum}_revision" if version else f"{forum}_graphql",
+        "title": post.get("title"),
         "author": ", ".join(a["displayName"] for a in authors if a.get("displayName")) or None,
         "site": "EA Forum" if forum == "eaforum" else "LessWrong",
         "published": published, "license": license_,
-        "text": html_to_text(post.get("htmlBody") or ""),
+        "note": f"revision {version}" if version else None,
+        "text": html_to_text((post["contents"]["html"] if version else post.get("htmlBody")) or ""),
     }
 
 
-def run_forum(forum, jobs, store, robots, progress):
+def forum_post_query(n, key):
+    """The aliased GraphQL query for the post a key names: the post as it is
+    now, or for a revision key (lesswrong_revision:<post>:<version>) the
+    post with that revision as its contents."""
+    kind, rest = key.split(":", 1)
+    if kind.endswith("_revision"):
+        post, version = rest.split(":")
+        fields = f'{FORUM_POST_META} contents(version: "{version}") {{ version html }}'
+    else:
+        post, fields = rest, FORUM_POST_FIELDS
+    return f'p{n}: post(input: {{selector: {{_id: "{post}"}}}}) {{ result {{ {fields} }} }}'
+
+
+def run_forum(forum, jobs, store, robots, progress, group=None):
     """Posts of a forum (eaforum or lesswrong), FORUM_BATCH per request (one
-    aliased post query each), from its GraphQL API."""
+    aliased post query each), from its GraphQL API; posts as they are now, or
+    for revision keys, the revision named. group is the progress group (the
+    forum's by default)."""
+    group = group or forum
     site = Site(forum, DELAYS[forum])
     endpoint = FORUM_GRAPHQL[forum]
     allowed = robots.check(site, endpoint)  # and take its crawl delay
@@ -615,11 +637,7 @@ def run_forum(forum, jobs, store, robots, progress):
         if not allowed:
             failure = "robots"
         else:
-            query = "{ " + " ".join(
-                f'p{n}: post(input: {{selector: {{_id: "{key.split(":", 1)[1]}"}}}}) '
-                f"{{ result {{ {FORUM_POST_FIELDS} }} }}"
-                for n, (key, _) in enumerate(chunk)
-            ) + " }"
+            query = "{ " + " ".join(forum_post_query(n, key) for n, (key, _) in enumerate(chunk)) + " }"
             try:
                 response = site.request("POST", endpoint, json={"query": query})
                 if response.status_code != 200:
@@ -638,8 +656,14 @@ def run_forum(forum, jobs, store, robots, progress):
             if failure:
                 record = {"status": failure}
             elif post:
+                version = key.rsplit(":", 1)[1] if key.split(":", 1)[0].endswith("_revision") else None
+                got = (post.get("contents") or {}).get("version") if version else None
                 try:
-                    record = forum_record(post, forum)
+                    if version and got != version:
+                        # never another revision's text in place of the one asked for
+                        record = {"status": "error version", "note": f"asked for revision {version}, got {got}"}
+                    else:
+                        record = forum_record(post, forum, version)
                 except Exception as e:  # noqa: BLE001 -- one bad post shouldn't stop the rest
                     record = {"status": f"error {type(e).__name__}", "note": str(e)[:200]}
             elif errors.get(f"p{n}") == "app.missing_document":
@@ -647,7 +671,7 @@ def run_forum(forum, jobs, store, robots, progress):
             else:
                 record = {"status": "error api", "note": (errors.get(f"p{n}") or "no result")[:200]}
             store.put(key, url, **record)
-            progress.add(forum, record["status"])
+            progress.add(group, record["status"])
 
 
 def gutenberg_record(raw, method):
@@ -1437,6 +1461,7 @@ RUNNERS = {
     "se": run_stack_exchange,
     "eaforum": functools.partial(run_forum, "eaforum"),
     "lesswrong": functools.partial(run_forum, "lesswrong"),
+    "lesswrong_revision": functools.partial(run_forum, "lesswrong", group="lesswrong_revision"),
     "arxiv_version": run_arxiv_versions,
 }
 
