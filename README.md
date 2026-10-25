@@ -82,8 +82,11 @@ tools/
   arxiv_latexml.py          renders an arXiv paper's source with LaTeXML, in a sandbox (--self-test)
   install_latexml.sh        installs the pinned LaTeXML and TeX Live 2025 that arxiv_latexml.py uses, into .venv
   add_stable_links.py       adds stable versions of the domains' links under stable_urls
-                            (Wikipedia articles as permanent links to a revision, arXiv
-                            papers as links to a version)
+                            (Wikipedia articles and LessWrong posts as links to a revision,
+                            SEP entries in an archive edition, arXiv papers as links to a
+                            version), or stable links from a list
+  add_wayback_links.py      adds Wayback Machine captures of the domains' links to blog posts
+                            under stable_urls, each checked against the post's live text
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
@@ -441,16 +444,22 @@ Link prompts are written in link batches of their own (`generate_prompt_oai.py
 --link-prompts`). The generating model picks a domain as usual and chooses the pages
 itself, among stable links only: links to a version of a page that cannot change, such
 as a Wayback Machine capture with its full timestamp
-(`https://web.archive.org/web/20260621024306/https://www.lesswrong.com/posts/...`), a
-Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
+(`https://web.archive.org/web/20260606073342/https://www.overcomingbias.com/p/tell-your-antihtml`),
+a Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
 in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
-(`plato.stanford.edu/archives/fall2026/entries/...`), or one version of an arXiv paper,
-by its abstract link (`https://arxiv.org/abs/2307.04879v2`). `generators/link_cache.py` lists the patterns (`STABLE_LINKS`);
-more kinds can be added. A stable link is a page of its own: `tools/build_link_cache.py`
+(`plato.stanford.edu/archives/fall2026/entries/...`), a revision of a LessWrong post
+(`https://www.lesswrong.com/posts/<id>/<slug>?revision=1.2.0`: LessWrong keeps every
+revision of a post, and the post's page shows the one named), or one version of an arXiv
+paper, by its abstract link (`https://arxiv.org/abs/2307.04879v2`). `generators/link_cache.py`
+lists the patterns (`STABLE_LINKS`); more kinds can be added. (The EA Forum keeps revisions
+too, but its pages ignore `?revision=`, so its posts have no stable links.) A stable link is
+a page of its own: `tools/build_link_cache.py`
 fetches its text from the link itself (for a Wayback capture, the page as archived, and
 only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
 that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
-scripts from the permanent-link pages; for an arXiv version, that version's source, which
+scripts from the permanent-link pages; for a LessWrong revision, that revision as
+LessWrong's API returns it, any other revision in its place being an error; for an arXiv
+version, that version's source, which
 arXiv keeps as it was submitted, rendered by LaTeXML in a sandbox; a version whose source is
 only a PDF, or that LaTeXML cannot render, is skipped rather than taken from a PDF), never
 from the live page it is a version of, and
@@ -459,7 +468,20 @@ re-renders them.) A domain lists its stable links under `stable_urls`,
 apart from the links under `urls`, which remain the inspiration links of ordinary prompts;
 `tools/add_stable_links.py` adds them (on 2026-10-22, for every linked Wikipedia article, the
 revision current that day: 9,891 links on 3,523 domains; and for every linked arXiv paper the
-version the link names, else the latest: 989 links to 816 papers on 455 domains). The five domains offered are drawn
+version the link names, else the latest: 989 links to 816 papers on 455 domains; on
+2026-10-23, from a list (`--links`), 6,163 links to 5,120 more arXiv papers on 2,199 domains,
+which Claude Opus 5.5 chose, at most five a domain, among candidates that text embeddings
+(bge-base-en-v1.5) and a reranker (bge-reranker-base) found in arXiv's metadata (the
+librarian-bots/arxiv-metadata-snapshot dataset); on
+2026-10-25, for every linked LessWrong post, the revision current that day: 11,355 links to
+9,873 posts on 1,810 domains; and for every linked SEP entry, its page in the Fall 2026
+edition: 2,616 links to 1,107 entries on 1,903 domains). `tools/add_wayback_links.py` adds
+Wayback captures of the blog posts the domains link: for each post, the newest capture whose
+text matches the post's live text (at least 90% of its eight-word sequences, at most twice as
+long), else an older one, found through the archive's CDX index at a pace the archive
+tolerates (an index page a minute, a capture every 20 seconds, long waits after a refusal);
+on 2026-10-24, for Bentham's Bulldog and Overcoming Bias, 2,413 links to 1,736 posts on 1,101
+domains. The five domains offered are drawn
 among those with stable links of 1,500 to 100,000 characters of text, and under each the
 meta-prompt lists up to three of them, with URL, title, author, site, date, length, license,
 and opening words.
