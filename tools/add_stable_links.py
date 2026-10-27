@@ -11,7 +11,8 @@ from the link itself.
 
 For Wikipedia articles (--wikipedia): the revision that is current when this
 runs, as a permanent link (https://en.wikipedia.org/w/index.php?title=...&oldid=...,
-with the title the article has after redirects). For arXiv papers (--arxiv):
+with the title the article has after redirects); for Wikisource pages
+(--wikisource), likewise. For arXiv papers (--arxiv):
 the version the link names, else the latest, as its abstract link
 (https://arxiv.org/abs/<id>v<N>; the arXiv API says which version is the
 latest, for 100 papers a request, at most one request every three seconds as
@@ -38,6 +39,7 @@ existing stable_urls block grows). Each file is checked afterwards to load as
 before, plus exactly the new links.
 
     tools/add_stable_links.py --wikipedia [--dry-run]
+    tools/add_stable_links.py --wikisource [--dry-run]
     tools/add_stable_links.py --arxiv [--dry-run]
     tools/add_stable_links.py --lesswrong [--dry-run]
     tools/add_stable_links.py --lesswrong-wiki [--dry-run]
@@ -67,6 +69,11 @@ import link_cache  # noqa: E402
 DOMAINS_DIR = REPO / "meta_prompt" / "domains"
 UA = "synthetic-philosophy-prompts/0.1 (https://github.com/casparoe/synthetic_philosophy_prompts; research script)"
 WIKI_RE = re.compile(r"^https://([a-z][a-z-]*)\.wikipedia\.org/wiki/([^?#\s]+)$")
+# a page of a wiki by its title, for the wikis whose revisions are stable links
+WIKI_PAGE_RES = {
+    "wikipedia": WIKI_RE,
+    "wikisource": re.compile(r"^https://([a-z][a-z-]*)\.wikisource\.org/wiki/([^?#\s]+)$"),
+}
 TITLES_PER_REQUEST = 50  # the API's limit for titles in one query
 SPACING = 1.0  # seconds between API requests
 # Characters a title keeps unencoded in a permanent link (spaces become underscores).
@@ -88,16 +95,17 @@ SEP = "https://plato.stanford.edu"
 SEP_SPACING = 5.0  # the SEP's crawl delay
 
 
-def wikipedia_revisions(client, lang, titles):
+def wikipedia_revisions(client, lang, titles, wiki="wikipedia"):
     """title as linked -> (title after redirects, current revision ID), for
-    the titles that are articles; missing pages are left out."""
+    the titles that are articles (pages of the main namespace) of the wiki
+    (wikipedia or wikisource); missing pages are left out."""
     found = {}
     titles = sorted(titles)
     for i in range(0, len(titles), TITLES_PER_REQUEST):
         batch = titles[i: i + TITLES_PER_REQUEST]
         for attempt in range(5):
             response = client.get(
-                f"https://{lang}.wikipedia.org/w/api.php",
+                f"https://{lang}.{wiki}.org/w/api.php",
                 params={
                     "action": "query", "prop": "revisions", "rvprop": "ids", "titles": "|".join(batch),
                     "redirects": 1, "format": "json", "formatversion": 2, "maxlag": 5,
@@ -109,7 +117,7 @@ def wikipedia_revisions(client, lang, titles):
                 continue
             break
         if "query" not in data:
-            raise SystemExit(f"Wikipedia API: {response.status_code} {str(data)[:200]}")
+            raise SystemExit(f"{wiki} API: {response.status_code} {str(data)[:200]}")
         query = data["query"]
         normalized = {n["from"]: n["to"] for n in query.get("normalized", [])}
         redirects = {r["from"]: r["to"] for r in query.get("redirects", [])}
@@ -125,18 +133,18 @@ def wikipedia_revisions(client, lang, titles):
     return found
 
 
-def permanent_link(lang, title, revid):
-    url = f"https://{lang}.wikipedia.org/w/index.php?title={urllib.parse.quote(title.replace(' ', '_'), safe=TITLE_SAFE)}&oldid={revid}"
-    assert link_cache.stable_link(url) == ("wikipedia_revision", f"wikipedia_revision:{lang}:{revid}"), url
+def permanent_link(lang, title, revid, wiki="wikipedia"):
+    url = f"https://{lang}.{wiki}.org/w/index.php?title={urllib.parse.quote(title.replace(' ', '_'), safe=TITLE_SAFE)}&oldid={revid}"
+    assert link_cache.stable_link(url) == (f"{wiki}_revision", f"{wiki}_revision:{lang}:{revid}"), url
     return url
 
 
-def pinned_titles(stable_urls):
-    """(lang, title) of the Wikipedia revisions a domain already lists."""
+def pinned_titles(stable_urls, wiki="wikipedia"):
+    """(lang, title) of the revisions of the wiki's pages a domain already lists."""
     pinned = set()
     for url in stable_urls:
         kind = link_cache.stable_link(url)
-        if kind and kind[0] == "wikipedia_revision":
+        if kind and kind[0] == f"{wiki}_revision":
             parts = urllib.parse.urlsplit(url)
             title = urllib.parse.parse_qs(parts.query).get("title", [None])[0]
             if title:
@@ -363,31 +371,33 @@ def insert_stable_urls(text, additions):
     return "\n".join(result)
 
 
-def wikipedia_proposer(client, entries):
-    """For each domain entry, the permanent links of its Wikipedia articles that it lacks."""
+def wikipedia_proposer(client, entries, wiki="wikipedia"):
+    """For each domain entry, the permanent links of its pages of the wiki
+    (Wikipedia articles, or Wikisource pages) that it lacks."""
+    page_re = WIKI_PAGE_RES[wiki]
     wanted = collections.defaultdict(set)  # lang -> titles
     for items in entries.values():
         for entry in items:
             for url in entry.get("urls") or []:
-                if m := WIKI_RE.match(url):
+                if m := page_re.match(url):
                     wanted[m.group(1)].add(urllib.parse.unquote(m.group(2)))
-    print(f"{sum(map(len, wanted.values()))} distinct Wikipedia articles linked", flush=True)
+    print(f"{sum(map(len, wanted.values()))} distinct {wiki} pages linked", flush=True)
     revisions = {}
     for lang, titles in wanted.items():
-        for title, found in wikipedia_revisions(client, lang, titles).items():
+        for title, found in wikipedia_revisions(client, lang, titles, wiki).items():
             revisions[(lang, title)] = found
     missing = sum(map(len, wanted.values())) - len(revisions)
-    print(f"current revisions found for {len(revisions)}; not an article (missing, or not in the main namespace): {missing}")
+    print(f"current revisions found for {len(revisions)}; not found (missing, or not in the main namespace): {missing}")
 
     def propose(entry):
-        pinned = pinned_titles(entry.get("stable_urls") or [])
+        pinned = pinned_titles(entry.get("stable_urls") or [], wiki)
         new = []
         for url in entry.get("urls") or []:
-            m = WIKI_RE.match(url)
+            m = page_re.match(url)
             found = m and revisions.get((m.group(1), urllib.parse.unquote(m.group(2))))
             if not found or (m.group(1), found[0]) in pinned:
                 continue
-            new.append(permanent_link(m.group(1), *found))
+            new.append(permanent_link(m.group(1), *found, wiki))
             pinned.add((m.group(1), found[0]))
         return new
 
@@ -538,6 +548,7 @@ def listed_proposer(path, entries):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--wikipedia", action="store_true", help="pin Wikipedia articles to their current revision")
+    parser.add_argument("--wikisource", action="store_true", help="pin Wikisource pages to their current revision")
     parser.add_argument("--arxiv", action="store_true", help="pin arXiv papers to a version (the linked one, else the latest)")
     parser.add_argument("--lesswrong", action="store_true", help="pin LessWrong posts to their current revision")
     parser.add_argument("--lesswrong-wiki", action="store_true",
@@ -547,8 +558,10 @@ def main():
     parser.add_argument("--links", metavar="FILE", help='add the stable links FILE lists (lines "domain<TAB>link")')
     parser.add_argument("--dry-run", action="store_true", help="look up and report, but change no file")
     args = parser.parse_args()
-    if not (args.wikipedia or args.arxiv or args.lesswrong or args.lesswrong_wiki or args.sep or args.links):
-        parser.error("say which links to add (--wikipedia, --arxiv, --lesswrong, --lesswrong-wiki, --sep, --links)")
+    if not (args.wikipedia or args.wikisource or args.arxiv or args.lesswrong or args.lesswrong_wiki or args.sep
+            or args.links):
+        parser.error("say which links to add (--wikipedia, --wikisource, --arxiv, --lesswrong, --lesswrong-wiki, "
+                     "--sep, --links)")
     if args.sep_edition and not re.fullmatch(r"(?:spr|sum|fall|win)\d{4}", args.sep_edition):
         parser.error(f"not an SEP edition: {args.sep_edition}")
 
@@ -556,6 +569,7 @@ def main():
     entries = {path: yaml.safe_load(path.read_text()) or [] for path in files}
     with httpx.Client(headers={"User-Agent": UA}, timeout=60) as client:
         proposers = ([wikipedia_proposer(client, entries)] if args.wikipedia else []) + (
+            [wikipedia_proposer(client, entries, "wikisource")] if args.wikisource else []) + (
             [arxiv_proposer(client, entries)] if args.arxiv else []) + (
             [lesswrong_proposer(client, entries)] if args.lesswrong else []) + (
             [lesswrong_wiki_proposer(client, entries)] if args.lesswrong_wiki else []) + (

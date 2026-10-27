@@ -15,9 +15,9 @@ ea.greaterwrong.com one) is found too.
 
 Stable links are the exception (stable_link): links to a version of a page
 that cannot change, such as a Wayback Machine capture with its full
-timestamp, a Wikipedia revision, a Stanford Encyclopedia archive edition, a
-revision of a LessWrong post or wiki page, or a versioned arXiv paper. Each
-is a page of its own: keyed by the link itself, fetched from it
+timestamp, a Wikipedia or Wikisource revision, a Stanford Encyclopedia
+archive edition, a revision of a LessWrong post or wiki page, or a versioned
+arXiv paper. Each is a page of its own: keyed by the link itself, fetched from it
 (tools/build_link_cache.py), and never mapped to the live page it is a
 version of, nor the live page to it. Only stable links can be attached to
 link prompts (generators/attached_pages.py).
@@ -91,6 +91,10 @@ STABLE_LINKS = [
      re.compile(r"^https://([a-z][a-z-]*)\.wikipedia\.org/w/index\.php\?(?:[^#\s]*&)?oldid=(\d+)(?:&[^#\s]*)?$"),
      lambda m: f"{m.group(1)}:{m.group(2)}"),
     ("wikipedia_revision", re.compile(r"^https://([a-z][a-z-]*)\.wikipedia\.org/wiki/Special:PermanentLink/(\d+)$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    # a Wikisource revision, likewise (a wiki of its own, with its own revision IDs)
+    ("wikisource_revision",
+     re.compile(r"^https://([a-z][a-z-]*)\.wikisource\.org/w/index\.php\?(?:[^#\s]*&)?oldid=(\d+)(?:&[^#\s]*)?$"),
      lambda m: f"{m.group(1)}:{m.group(2)}"),
     # an entry in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
     ("sep_edition",

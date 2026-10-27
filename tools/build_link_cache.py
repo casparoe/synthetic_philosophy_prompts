@@ -26,9 +26,9 @@ Stable links (link_cache.stable_link) are fetched from the link itself and
 from nothing else: a Wayback Machine capture as archived (its raw id_ form,
 and only if the archive has a capture at exactly that timestamp), with rules
 for the pages of the forums, Stack Exchange, and Substack, whose text the
-generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
-revision (through its API, since its robots.txt bars scripts from the
-permanent-link pages themselves); an SEP archive edition's page; a revision
+generic extraction gets wrong; a Wikipedia or Wikisource revision as the
+wiki renders that revision (through its API, since the wikis' robots.txt bars
+scripts from the permanent-link pages themselves); an SEP archive edition's page; a revision
 of a LessWrong post, or of the text of a LessWrong wiki page (the page the
 link's slug names, as the site finds it), as LessWrong's GraphQL API returns
 that revision (any other revision in its place is an error, never kept); one
@@ -131,6 +131,7 @@ WIKIPEDIA_TAIL = (
 # Seconds between two requests to one site, at least (robots.txt may ask for more).
 DELAYS = {
     "wikipedia": 0.1,
+    "wikisource": 1.0,
     "eaforum": 2.0,  # ten posts per request
     "lesswrong": 3.0,  # ten posts per request
     "se": 2.0,
@@ -197,6 +198,8 @@ def group_of(key):
         return "web:" + key.split("/", 1)[0]
     if kind in ("wikipedia", "wikipedia_revision"):
         return "wikipedia:" + key.split(":")[1]
+    if kind == "wikisource_revision":
+        return "wikisource:" + key.split(":")[1]
     return SERVICE_OF.get(kind, kind)
 
 
@@ -1026,39 +1029,53 @@ WIKIPEDIA_DROP = (
 )
 
 
-def fetch_wikipedia_revision(site, robots, key, url):
-    """A Wikipedia revision as Wikipedia renders it (action=parse with its
-    oldid), without edit links, reference markers and lists, infoboxes,
-    navigation boxes, images, and the sections from WIKIPEDIA_TAIL on."""
-    _, lang, revid = key.split(":", 2)
+def parse_revision(site, api, revid):
+    """A revision of a MediaWiki page as the wiki renders it (action=parse
+    with its oldid, through the API at api): (the parse result, None), or
+    (None, the record of a failure)."""
     params = {
         "action": "parse", "oldid": revid, "prop": "text|revid", "format": "json",
         "formatversion": 2, "disableeditsection": 1, "disabletoc": 1, "maxlag": 5,
     }
     for _ in range(4):
-        response = site.get(f"https://{lang}.wikipedia.org/w/api.php", params=params)
+        response = site.get(api, params=params)
         if response.status_code != 200:
-            return http_failure(response)
+            return None, http_failure(response)
         data = response.json()
         if data.get("error", {}).get("code") == "maxlag":
             time.sleep(10)
             continue
         break
     else:
-        return {"status": "error maxlag"}
+        return None, {"status": "error maxlag"}
     if "error" in data:
         code = data["error"].get("code")
-        return {"status": "gone missing" if code in ("nosuchrevid", "missingtitle") else "error api", "note": code}
+        return None, {"status": "gone missing" if code in ("nosuchrevid", "missingtitle") else "error api", "note": code}
     parsed = data["parse"]
     if str(parsed.get("revid")) != revid:
-        return {"status": "error api", "note": f"got revision {parsed.get('revid')}"}
-    root = lxml.html.fragment_fromstring(parsed["text"], create_parent="div")
+        return None, {"status": "error api", "note": f"got revision {parsed.get('revid')}"}
+    return parsed, None
+
+
+def drop_classes(root, classes, more=""):
+    """Remove the elements with any of the classes (and those the XPath more selects)."""
     for el in root.xpath(
-        " | ".join(f".//*[contains(concat(' ', normalize-space(@class), ' '), ' {c} ')]" for c in WIKIPEDIA_DROP)
-        + " | .//figure | .//style | .//*[@id='toc']"
+        " | ".join(f".//*[contains(concat(' ', normalize-space(@class), ' '), ' {c} ')]" for c in classes) + more
     ):
         if el.getparent() is not None:
             el.drop_tree()
+
+
+def fetch_wikipedia_revision(site, robots, key, url):
+    """A Wikipedia revision as Wikipedia renders it (action=parse with its
+    oldid), without edit links, reference markers and lists, infoboxes,
+    navigation boxes, images, and the sections from WIKIPEDIA_TAIL on."""
+    _, lang, revid = key.split(":", 2)
+    parsed, failure = parse_revision(site, f"https://{lang}.wikipedia.org/w/api.php", revid)
+    if failure:
+        return failure
+    root = lxml.html.fragment_fromstring(parsed["text"], create_parent="div")
+    drop_classes(root, WIKIPEDIA_DROP, " | .//figure | .//style | .//*[@id='toc']")
     # Cut at the first tail section ("See also", "References", ...): its heading
     # (or the div that wraps it) and everything after it.
     top = root[0] if len(root) == 1 and root[0].tag == "div" else root
@@ -1072,6 +1089,31 @@ def fetch_wikipedia_revision(site, robots, key, url):
     return {
         "status": "ok", "method": "wikipedia_revision", "title": parsed.get("title"),
         "site": "Wikipedia", "note": f"revision {revid}", "text": html_to_text(root),
+    }
+
+
+# The header (title, author, links to the parts before and after), page
+# numbers, edit links, and licence boxes; a work's own notes stay.
+WIKISOURCE_DROP = (
+    "mw-editsection", "ws-noexport", "ws-header", "wst-header", "headertemplate", "noprint", "searchaux",
+    "licenseContainer", "ws-pagenum", "pagenum", "mw-empty-elt",
+)
+
+
+def fetch_wikisource_revision(site, robots, key, url):
+    """A Wikisource revision as Wikisource renders it (action=parse with its
+    oldid), without what WIKISOURCE_DROP lists; the author from the header's
+    data."""
+    _, lang, revid = key.split(":", 2)
+    parsed, failure = parse_revision(site, f"https://{lang}.wikisource.org/w/api.php", revid)
+    if failure:
+        return failure
+    root = lxml.html.fragment_fromstring(parsed["text"], create_parent="div")
+    author = first(clean(el.text_content()) for el in root.xpath(".//*[@id='ws-author']"))
+    drop_classes(root, WIKISOURCE_DROP, " | .//style | .//*[@id='ws-data']")
+    return {
+        "status": "ok", "method": "wikisource_revision", "title": parsed.get("title"), "author": author,
+        "site": "Wikisource", "note": f"revision {revid}", "text": html_to_text(root),
     }
 
 
@@ -1505,6 +1547,7 @@ FETCHERS = {
     # stable links
     "wayback": fetch_wayback,
     "wikipedia_revision": fetch_wikipedia_revision,
+    "wikisource_revision": fetch_wikisource_revision,
     "sep_edition": fetch_sep_edition,
 }
 # Kinds fetched many pages per request, each by its own loop.
