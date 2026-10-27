@@ -3,18 +3,21 @@
 
 A link prompt can attach only stable links (generators/link_cache.py,
 STABLE_LINKS), and a Wayback Machine capture pinned to its timestamp
-(https://web.archive.org/web/<14 digits>/<url>) is one. For each post on the
-given sites that a domain links to (under urls; posts are /p/<slug> paths, as
-on Substack), this looks up the captures of that same URL in the Wayback
+(https://web.archive.org/web/<14 digits>/<url>) is one. For each page on the
+given sites that a domain links to (under urls): posts (/p/<slug> paths, as
+on Substack), or with --any-path every page but a site's home page (PDFs
+aside), and with the site "stackexchange" the questions of every Stack
+Exchange site (a link to a Wayback copy that names no capture stands for the
+page it copies), this looks up the captures of that same URL in the Wayback
 Machine's index and fetches the newest that was archived as an HTML page with
 status 200, in its raw id_ form, as tools/build_link_cache.py fetches a
-Wayback link. The capture is kept if its text matches the post as cached from
-the live site (link_cache/pages.sqlite): at least MIN_COVERAGE of the live
-text's word 8-grams must be in it, and it must not be more than MAX_RATIO
-times as long. One that fails gives way to the next newest, up to --tries
-captures per post. Posts whose live text is far outside the length a page
-must have to be attached (generators/attached_pages.py) are passed over. A
-kept capture's link goes into the domain's stable_urls, as
+Wayback link. The capture is kept if its text matches the page as cached from
+the live site or its API (link_cache/pages.sqlite): at least MIN_COVERAGE of
+the live text's word 8-grams must be in it, and it must not be more than
+MAX_RATIO times as long. One that fails gives way to the next newest, up to
+--tries captures per page. Pages whose live text is far outside the length a
+page must have to be attached (generators/attached_pages.py) are passed over.
+A kept capture's link goes into the domain's stable_urls, as
 tools/add_stable_links.py puts links there; its text is in the link cache
 already, under the capture's own key, so the link needs no further fetching.
 Every capture fetched is cached, kept or not, and a rerun fetches none again.
@@ -24,13 +27,19 @@ The Wayback Machine limits scripts (HTTP 429, and an hour's block of the IP
 for one that keeps going), so this goes slowly: the index (the CDX server) is
 read a page of about 5,000 captures at a time, one page a minute, and
 the pages are kept in link_cache/wayback_index/, so a rerun reads none again
-(the URLs of a page it will not give are looked up one by one instead);
-captures are fetched one every 20 seconds. After a 429 it waits ten minutes,
-after a server error three; after a failed connection two minutes, and an
-hour if the next one fails too. A run over a few thousand posts takes most of a day, so
-start it detached.
+(the URLs of a page it will not give are looked up one by one instead); with
+--exact, and always for Stack Exchange, each page's captures are looked up by
+themselves, one page every 20 seconds, which suits a few hundred pages of a
+large site; captures are fetched one every 20 seconds. After a 429 it waits
+ten minutes, after a server error three; after a failed connection two
+minutes, and an hour if the next one fails too. A run over a few thousand
+pages takes a day or more, so start it detached. Each run writes its report
+(report_<time>.tsv) and the links it added (additions_<time>.tsv) next to the
+index pages.
 
     tools/add_wayback_links.py --site benthams.substack.com --site www.overcomingbias.com [--dry-run] [--limit N]
+    tools/add_wayback_links.py --site gwern.net --site slatestarcodex.com --any-path --exact
+    tools/add_wayback_links.py --site stackexchange --tries 2
 """
 import argparse
 import re
@@ -40,6 +49,7 @@ import time
 import urllib.parse
 import zlib
 from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -66,6 +76,8 @@ SHINGLE = 8  # words per shingle in the text comparison
 MIN_COVERAGE = 0.9  # share of the live text's shingles the capture must have
 MAX_RATIO = 2.0  # the capture's length (in words) at most this times the live text's (embedded tweets add text)
 POST_RE = re.compile(r"^/p/[^/?#]+$")
+# A question's page on a Stack Exchange site (the site "stackexchange" stands for all of them).
+QUESTION_RE = re.compile(r"^/questions/\d+(?:/[^/?#]*)?$")
 
 
 class Wayback:
@@ -180,10 +192,16 @@ def exact_lines(wayback, directory, prefix, url):
 
 
 def urlkey(url):
-    """The index's key for a URL (SURT form, as the CDX server writes it)."""
+    """The index's key for a URL (SURT form, as the CDX server writes it),
+    without a trailing slash."""
     parts = urllib.parse.urlsplit(url)
     host = (parts.hostname or "").lower().removeprefix("www.")
-    return ",".join(reversed(host.split("."))) + ")" + parts.path.lower()
+    return trimmed(",".join(reversed(host.split("."))) + ")" + parts.path.lower())
+
+
+def trimmed(key):
+    """An index key without its path's trailing slash (a page is captured with and without one)."""
+    return key[:-1] if key.endswith("/") and not key.endswith(")/") else key
 
 
 def captures_by_key(lines):
@@ -192,8 +210,38 @@ def captures_by_key(lines):
     for line in lines:
         fields = line.split(" ")
         if len(fields) == 7 and fields[3] == "200" and fields[4] == "text/html":
-            found[fields[0]].add((fields[1], fields[2]))
+            found[trimmed(fields[0])].add((fields[1], fields[2]))
     return {key: sorted(caps, reverse=True) for key, caps in found.items()}
+
+
+def stack_exchange(host):
+    return host.endswith(".stackexchange.com") or host in link_cache.STACK_EXCHANGE_HOSTS
+
+
+def linked_page(url, sites, any_path):
+    """For a domain's link: (site, URL of the page to look for) if it links one
+    of the sites; the URL is None if the link is not to a page this looks for.
+    Pages are posts (/p/<slug>, as on Substack), with any_path any page but a
+    site's home page (PDFs aside), and on Stack Exchange questions. A link to
+    a Wayback copy that is not pinned to a capture stands for the page it
+    copies. None for other links, and for stable links, which need no
+    capture."""
+    if link_cache.stable_link(url):
+        return None
+    wayback = link_cache.WAYBACK_RE.match(url)
+    page = wayback.group(1) if wayback else url
+    parts = urllib.parse.urlsplit(page)
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    if "stackexchange" in sites and stack_exchange(host):
+        ok = QUESTION_RE.match(parts.path) and not parts.query and not parts.fragment
+        return "stackexchange", page if ok else None
+    site = next((s for s in sites if host == s.removeprefix("www.")), None)
+    if site is None:
+        return None
+    ok = not parts.query and not parts.fragment and (
+        POST_RE.match(parts.path)
+        or (any_path and parts.path not in ("", "/") and not parts.path.lower().endswith(".pdf")))
+    return site, page if ok else None
 
 
 def shingles(text):
@@ -225,36 +273,40 @@ def cached_text(conn, key):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--site", action="append", required=True, help="host of the posts (repeatable)")
+    parser.add_argument("--site", action="append", required=True,
+                        help="host of the pages (repeatable; stackexchange: the questions of every Stack Exchange site)")
+    parser.add_argument("--any-path", action="store_true",
+                        help="any page of the sites but their home pages and PDFs, not only /p/<slug> posts")
+    parser.add_argument("--exact", action="store_true",
+                        help="look up each page's captures by itself rather than reading the site's index "
+                             "(always so for stackexchange)")
     parser.add_argument("--db", type=Path, default=link_cache.DEFAULT_PATH)
     parser.add_argument("--index-dir", type=Path, help="where the index pages are kept (default: next to the db)")
-    parser.add_argument("--tries", type=int, default=3, help="captures tried per post, newest first")
-    parser.add_argument("--limit", type=int, help="at most this many posts per site (for a trial)")
+    parser.add_argument("--tries", type=int, default=3, help="captures tried per page, newest first")
+    parser.add_argument("--limit", type=int, help="at most this many pages per site (for a trial)")
     parser.add_argument("--dry-run", action="store_true", help="fetch and compare, but change no domain file")
     args = parser.parse_args()
     sites = [s.lower() for s in args.site]
     index_dir = args.index_dir or args.db.parent / "wayback_index"
 
-    # the posts the domains link to
+    # the pages the domains link to
     files = sorted(DOMAINS_DIR.glob("*.yaml"))
     entries = {path: yaml.safe_load(path.read_text()) or [] for path in files}
-    posts = defaultdict(list)  # site -> live post URLs, in file order
+    posts = defaultdict(dict)  # site -> {link as the domains have it: URL of the page}, in file order
     other = Counter()
     for items in entries.values():
         for entry in items:
             for url in entry.get("urls") or []:
-                parts = urllib.parse.urlsplit(url)
-                host = (parts.hostname or "").lower()
-                site = next((s for s in sites if host.removeprefix("www.") == s.removeprefix("www.")), None)
-                if site is None:
+                found = linked_page(url, sites, args.any_path)
+                if found is None:
                     continue
-                if POST_RE.match(parts.path) and not parts.query and not parts.fragment:
-                    if url not in posts[site]:
-                        posts[site].append(url)
-                else:
+                site, page = found
+                if page is None:
                     other[site] += 1
+                else:
+                    posts[site].setdefault(url, page)
     for site in sites:
-        blc.log(f"{site}: {len(posts[site])} posts linked" + (f" (and {other[site]} other links, left alone)" if other[site] else ""))
+        blc.log(f"{site}: {len(posts[site])} pages linked" + (f" (and {other[site]} other links, left alone)" if other[site] else ""))
 
     store = blc.Store(args.db)
     robots = blc.Robots()
@@ -264,15 +316,20 @@ def main():
     conn = sqlite3.connect(args.db, timeout=600)
     statuses = store.statuses()
     index_dir.mkdir(parents=True, exist_ok=True)
-    report = open(index_dir / "report.tsv", "w")  # live URL, capture link, coverage, ratio, verdict (this run)
-    kept = {}  # live URL -> capture link
+    run = datetime.now().strftime("%Y%m%d-%H%M")
+    report = open(index_dir / f"report_{run}.tsv", "w")  # link, capture link, coverage, ratio, verdict
+    kept = {}  # link as the domains have it -> capture link
     for site in sites:
-        prefix = site.removeprefix("www.") + "/p/"
-        lines, gaps = index_lines(index, index_dir, prefix)
-        captures = captures_by_key(lines)
-        todo = posts[site][: args.limit] if args.limit else posts[site]
+        if args.exact or site == "stackexchange":
+            prefix, captures, gaps = site, {}, [("", "￿")]  # every page looked up by itself
+        else:
+            prefix = site.removeprefix("www.") + ("/" if args.any_path else "/p/")
+            lines, gaps = index_lines(index, index_dir, prefix)
+            captures = captures_by_key(lines)
+        todo = list(posts[site].items())
+        todo = todo[: args.limit] if args.limit else todo
         tally = Counter()
-        for n, url in enumerate(todo, 1):
+        for n, (url, page) in enumerate(todo, 1):
             live, note = cached_text(conn, link_cache.canonical(url))
             if live is None or "paywalled" in note:
                 tally["no live text" if live is None else "paywalled"] += 1
@@ -280,13 +337,13 @@ def main():
             if not 0.9 * MIN_PAGE_CHARS <= len(live) <= 1.1 * MAX_PAGE_CHARS:
                 tally["too short or too long to attach"] += 1  # a capture of it could not be attached either
                 continue
-            if any(first <= urlkey(url) <= last for first, last in gaps):
-                found = exact_lines(lookups, index_dir, prefix, url)
+            if any(first <= urlkey(page) <= last for first, last in gaps):
+                found = exact_lines(lookups, index_dir, prefix, page)
                 if found is None:
                     tally["index lookup failed"] += 1  # a rerun tries again
                     continue
                 captures.update(captures_by_key(found))
-            options = captures.get(urlkey(url), [])
+            options = captures.get(urlkey(page), [])
             verdict = "no capture" if not options else "no match"
             for stamp, original in options[: args.tries]:
                 link = f"https://web.archive.org/web/{stamp}/{original}"
@@ -320,7 +377,7 @@ def main():
             tally[verdict] += 1
             report.flush()
             if n % 50 == 0:
-                blc.log(f"{site}: {n}/{len(todo)} posts, {dict(tally)}")
+                blc.log(f"{site}: {n}/{len(todo)} pages, {dict(tally)}")
         blc.log(f"{site}: done, {dict(tally)}")
     store.close()
 
@@ -357,9 +414,9 @@ def main():
         changed += 1
         if not args.dry_run:
             path.write_text(new_text)
-    (index_dir / "additions.tsv").write_text("".join(line + "\n" for line in listed))
+    (index_dir / f"additions_{run}.tsv").write_text("".join(line + "\n" for line in listed))
     blc.log(f"{'would add' if args.dry_run else 'added'} {added} capture links in {changed} files "
-            f"({len(kept)} posts kept; listed in {index_dir / 'additions.tsv'})")
+            f"({len(kept)} pages kept; listed in {index_dir / f'additions_{run}.tsv'})")
 
 
 if __name__ == "__main__":
