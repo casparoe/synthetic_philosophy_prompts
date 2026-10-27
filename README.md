@@ -82,9 +82,9 @@ tools/
   arxiv_latexml.py          renders an arXiv paper's source with LaTeXML, in a sandbox (--self-test)
   install_latexml.sh        installs the pinned LaTeXML and TeX Live 2025 that arxiv_latexml.py uses, into .venv
   add_stable_links.py       adds stable versions of the domains' links under stable_urls
-                            (Wikipedia articles and LessWrong posts as links to a revision,
-                            SEP entries in an archive edition, arXiv papers as links to a
-                            version), or stable links from a list
+                            (Wikipedia articles and LessWrong posts and wiki pages as links
+                            to a revision, SEP entries in an archive edition, arXiv papers
+                            as links to a version), or stable links from a list
   add_wayback_links.py      adds Wayback Machine captures of the domains' links to blog posts
                             under stable_urls, each checked against the post's live text
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
@@ -449,7 +449,10 @@ a Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=..
 in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
 (`plato.stanford.edu/archives/fall2026/entries/...`), a revision of a LessWrong post
 (`https://www.lesswrong.com/posts/<id>/<slug>?revision=1.2.0`: LessWrong keeps every
-revision of a post, and the post's page shows the one named), or one version of an arXiv
+revision of a post, and the post's page shows the one named) or of the text of a LessWrong
+wiki page (`https://www.lesswrong.com/w/<slug>?revision=1.2.0`, likewise; wiki pages have
+no links by ID, so the link names the page by its slug, and a renamed page's old slugs
+redirect), or one version of an arXiv
 paper, by its abstract link (`https://arxiv.org/abs/2307.04879v2`). `generators/link_cache.py`
 lists the patterns (`STABLE_LINKS`); more kinds can be added. (The EA Forum keeps revisions
 too, but its pages ignore `?revision=`, so its posts have no stable links.) A stable link is
@@ -475,7 +478,9 @@ which Claude Opus 5.5 chose, at most five a domain, among candidates that text e
 librarian-bots/arxiv-metadata-snapshot dataset); on
 2026-10-25, for every linked LessWrong post, the revision current that day: 11,355 links to
 9,873 posts on 1,810 domains; and for every linked SEP entry, its page in the Fall 2026
-edition: 2,616 links to 1,107 entries on 1,903 domains). `tools/add_wayback_links.py` adds
+edition: 2,616 links to 1,107 entries on 1,903 domains; on 2026-10-26, for every linked
+LessWrong wiki page, the revision of its text current that day: 327 links to 252 pages on
+271 domains). `tools/add_wayback_links.py` adds
 Wayback captures of the blog posts the domains link: for each post, the newest capture whose
 text matches the post's live text (at least 90% of its eight-word sequences, at most twice as
 long), else an older one, found through the archive's CDX index at a pace the archive
