@@ -16,8 +16,8 @@ ea.greaterwrong.com one) is found too.
 Stable links are the exception (stable_link): links to a version of a page
 that cannot change, such as a Wayback Machine capture with its full
 timestamp, a Wikipedia revision, a Stanford Encyclopedia archive edition, a
-revision of a LessWrong post, or a versioned arXiv paper. Each is a page of
-its own: keyed by the link itself, fetched from it
+revision of a LessWrong post or wiki page, or a versioned arXiv paper. Each
+is a page of its own: keyed by the link itself, fetched from it
 (tools/build_link_cache.py), and never mapped to the live page it is a
 version of, nor the live page to it. Only stable links can be attached to
 link prompts (generators/attached_pages.py).
@@ -100,6 +100,12 @@ STABLE_LINKS = [
     # and its page shows the one a ?revision= link names (the slug is free)
     ("lesswrong_revision",
      re.compile(r"^https://www\.lesswrong\.com/posts/([A-Za-z0-9]{17}|[0-9a-f]{24})/[^/?#\s]+\?revision=(\d+\.\d+\.\d+)$"),
+     lambda m: f"{m.group(1)}:{m.group(2)}"),
+    # a revision of the text of a LessWrong wiki page, which LessWrong keeps
+    # likewise; the page goes by its slug alone (a renamed page keeps its old
+    # slugs, which redirect to the new one)
+    ("lesswrong_wiki_revision",
+     re.compile(r"^https://www\.lesswrong\.com/w/([a-z0-9]+(?:-[a-z0-9]+)*)\?revision=(\d+\.\d+\.\d+)$"),
      lambda m: f"{m.group(1)}:{m.group(2)}"),
     # one version of an arXiv paper, by its abstract link: that version's
     # source (kept by arXiv as submitted) as LaTeXML renders it, or its PDF

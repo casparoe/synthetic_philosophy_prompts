@@ -29,21 +29,22 @@ for the pages of the forums, Stack Exchange, and Substack, whose text the
 generic extraction gets wrong; a Wikipedia revision as Wikipedia renders that
 revision (through its API, since its robots.txt bars scripts from the
 permanent-link pages themselves); an SEP archive edition's page; a revision
-of a LessWrong post, as LessWrong's GraphQL API returns that revision (any
-other revision in its place is an error, never kept); one version of an
-arXiv paper (its abstract link) as that version's source rendered by
-LaTeXML in a sandbox (tools/arxiv_latexml.py), with title, authors, date, and
-license from the version's abstract page. A version whose source is only a
-PDF, or that LaTeXML cannot render, is skipped (status "skipped pdf-only" or
-"skipped latexml"), never taken from its PDF; skipped versions are not tried
-again unless asked (--redo-skipped). These come from export.arxiv.org, the copy of arXiv
-that arXiv sets aside for programmatic access ("We ask that users intent on
-harvesting use the dedicated site export.arxiv.org",
-https://info.arxiv.org/help/bulk_data.html; arxiv.org's robots.txt bars
-/src, and export.arxiv.org's turns away all crawlers), one request at a time,
-after any arxiv.org requests (arXiv asks for one connection at a time). The
-sources are kept in link_cache/arxiv_source, so another rendering of them
-needs no download.
+of a LessWrong post, or of the text of a LessWrong wiki page (the page the
+link's slug names, as the site finds it), as LessWrong's GraphQL API returns
+that revision (any other revision in its place is an error, never kept); one
+version of an arXiv paper (its abstract link) as that version's source
+rendered by LaTeXML in a sandbox (tools/arxiv_latexml.py), with title,
+authors, date, and license from the version's abstract page. A version whose
+source is only a PDF, or that LaTeXML cannot render, is skipped (status
+"skipped pdf-only" or "skipped latexml"), never taken from its PDF; skipped
+versions are not tried again unless asked (--redo-skipped). These come from
+export.arxiv.org, the copy of arXiv that arXiv sets aside for programmatic
+access ("We ask that users intent on harvesting use the dedicated site
+export.arxiv.org", https://info.arxiv.org/help/bulk_data.html; arxiv.org's
+robots.txt bars /src, and export.arxiv.org's turns away all crawlers), one
+request at a time, after any arxiv.org requests (arXiv asks for one
+connection at a time). The sources are kept in link_cache/arxiv_source, so
+another rendering of them needs no download.
 
 Usage:
     # everything not yet cached; runs for hours, so start it detached
@@ -183,8 +184,10 @@ def kind_of(key):
 
 # Stable kinds share the group (and so the pace) of the site they come from.
 SERVICE_OF = {"wikipedia_revision": "wikipedia", "sep_edition": "sep"}
-# Groups that must not run at the same time as another: they run after it, in its thread.
-AFTER = {"arxiv_version": "arxiv", "lesswrong_revision": "lesswrong"}
+# Groups that must not run at the same time as another: they run after it, in
+# its thread, one after the other if several name it (even when it has nothing
+# to fetch).
+AFTER = {"arxiv_version": "arxiv", "lesswrong_revision": "lesswrong", "lesswrong_wiki_revision": "lesswrong"}
 
 
 def group_of(key):
@@ -622,6 +625,22 @@ def forum_post_query(n, key):
     return f'p{n}: post(input: {{selector: {{_id: "{post}"}}}}) {{ result {{ {fields} }} }}'
 
 
+def graphql_request(site, endpoint, parts, allowed=True):
+    """One request to a GraphQL API for the aliased parts of a query: a failure
+    status or None, the data, and the error messages by alias."""
+    if not allowed:
+        return "robots", {}, {}
+    try:
+        response = site.request("POST", endpoint, json={"query": "{ " + " ".join(parts) + " }"})
+        if response.status_code != 200:
+            return http_failure(response)["status"], {}, {}
+        body = response.json()
+    except (httpx.HTTPError, ValueError) as e:
+        return f"error {type(e).__name__}", {}, {}
+    errors = {(e.get("path") or [None])[0]: e.get("message", "") for e in body.get("errors") or []}
+    return None, body.get("data") or {}, errors
+
+
 def run_forum(forum, jobs, store, robots, progress, group=None):
     """Posts of a forum (eaforum or lesswrong), FORUM_BATCH per request (one
     aliased post query each), from its GraphQL API; posts as they are now, or
@@ -633,24 +652,8 @@ def run_forum(forum, jobs, store, robots, progress, group=None):
     allowed = robots.check(site, endpoint)  # and take its crawl delay
     for i in range(0, len(jobs), FORUM_BATCH):
         chunk = jobs[i: i + FORUM_BATCH]
-        failure, data, errors = None, {}, {}
-        if not allowed:
-            failure = "robots"
-        else:
-            query = "{ " + " ".join(forum_post_query(n, key) for n, (key, _) in enumerate(chunk)) + " }"
-            try:
-                response = site.request("POST", endpoint, json={"query": query})
-                if response.status_code != 200:
-                    failure = http_failure(response)["status"]
-                else:
-                    body = response.json()
-                    data = body.get("data") or {}
-                    errors = {
-                        (e.get("path") or [None])[0]: e.get("message", "")
-                        for e in body.get("errors") or []
-                    }
-            except (httpx.HTTPError, ValueError) as e:
-                failure = f"error {type(e).__name__}"
+        failure, data, errors = graphql_request(
+            site, endpoint, [forum_post_query(n, key) for n, (key, _) in enumerate(chunk)], allowed)
         for n, (key, url) in enumerate(chunk):
             post = ((data.get(f"p{n}") or {}).get("result")) if not failure else None
             if failure:
@@ -672,6 +675,54 @@ def run_forum(forum, jobs, store, robots, progress, group=None):
                 record = {"status": "error api", "note": (errors.get(f"p{n}") or "no result")[:200]}
             store.put(key, url, **record)
             progress.add(group, record["status"])
+
+
+def lesswrong_wiki_query(n, key):
+    """The aliased GraphQL query for a revision of the text of a LessWrong wiki
+    page (lesswrong_wiki_revision:<slug>:<version>): the pages the slug names,
+    as the site finds them (by slug or former slug), with that revision."""
+    _, slug, version = key.split(":")
+    return (f'w{n}: tags(input: {{terms: {{view: "tagBySlug", slug: "{slug}"}}}}) '
+            f'{{ results {{ name deleted description(version: "{version}") {{ version html }} }} }}')
+
+
+def run_lesswrong_wiki(jobs, store, robots, progress):
+    """Revisions of the text of LessWrong wiki pages, FORUM_BATCH per request,
+    from LessWrong's GraphQL API. A slug that names no page (or a deleted one)
+    is gone, and one that names more than one page is an error, since the
+    link would not say which."""
+    site = Site("lesswrong", DELAYS["lesswrong"])
+    endpoint = FORUM_GRAPHQL["lesswrong"]
+    allowed = robots.check(site, endpoint)  # and take its crawl delay
+    for i in range(0, len(jobs), FORUM_BATCH):
+        chunk = jobs[i: i + FORUM_BATCH]
+        failure, data, errors = graphql_request(
+            site, endpoint, [lesswrong_wiki_query(n, key) for n, (key, _) in enumerate(chunk)], allowed)
+        for n, (key, url) in enumerate(chunk):
+            version = key.rsplit(":", 1)[1]
+            pages = None if failure else (data.get(f"w{n}") or {}).get("results")
+            if failure:
+                record = {"status": failure}
+            elif pages is None:
+                record = {"status": "error api", "note": (errors.get(f"w{n}") or "no result")[:200]}
+            elif not pages or pages[0].get("deleted"):
+                record = {"status": "gone missing"}
+            elif len(pages) > 1:
+                record = {"status": "error api", "note": f"the slug names {len(pages)} pages"}
+            elif (got := (pages[0].get("description") or {}).get("version")) != version:
+                # never another revision's text in place of the one asked for
+                record = {"status": "error version", "note": f"asked for revision {version}, got {got}"}
+            else:
+                try:
+                    record = {
+                        "status": "ok", "method": "lesswrong_wiki_revision", "title": pages[0].get("name"),
+                        "site": "LessWrong", "note": f"revision {version}",
+                        "text": html_to_text(pages[0]["description"].get("html") or ""),
+                    }
+                except Exception as e:  # noqa: BLE001 -- one bad page shouldn't stop the rest
+                    record = {"status": f"error {type(e).__name__}", "note": str(e)[:200]}
+            store.put(key, url, **record)
+            progress.add("lesswrong_wiki_revision", record["status"])
 
 
 def gutenberg_record(raw, method):
@@ -1462,6 +1513,7 @@ RUNNERS = {
     "eaforum": functools.partial(run_forum, "eaforum"),
     "lesswrong": functools.partial(run_forum, "lesswrong"),
     "lesswrong_revision": functools.partial(run_forum, "lesswrong", group="lesswrong_revision"),
+    "lesswrong_wiki_revision": run_lesswrong_wiki,
     "arxiv_version": run_arxiv_versions,
 }
 
@@ -1591,11 +1643,11 @@ def main():
         for g in names:
             run_group(g, groups[g], store, robots, progress)
 
-    # A group in AFTER runs after the group it names, in that group's thread.
-    chains = {g: [g] for g in groups if not (g in AFTER and AFTER[g] in groups)}
-    for g, before in AFTER.items():
-        if g in groups and before in groups:
-            chains[before].append(g)
+    # A group in AFTER runs after the group it names, in that group's thread
+    # (the groups after a group with nothing to fetch still share one).
+    chains = defaultdict(list)
+    for g in sorted(groups, key=lambda g: g in AFTER):
+        chains[AFTER.get(g, g)].append(g)
     threads = [
         threading.Thread(target=run_groups, args=(names,), name=names[0], daemon=True)
         for names in chains.values()

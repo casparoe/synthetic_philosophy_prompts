@@ -19,9 +19,13 @@ arXiv asks). For LessWrong posts (--lesswrong): the revision that is current
 when this runs, as a link to the post that names it
 (https://www.lesswrong.com/posts/<id>/<slug>?revision=1.2.0; LessWrong keeps
 every revision, and its page shows the one named), looked up through
-LessWrong's GraphQL API, 50 posts a request, at its crawl delay. For entries
-of the Stanford Encyclopedia of Philosophy (--sep): the entry in the newest
-quarterly archive edition (or --sep-edition), if that edition has it
+LessWrong's GraphQL API, 50 posts a request, at its crawl delay. For
+LessWrong wiki pages (--lesswrong-wiki): likewise, the revision of the page's
+text that is current (https://www.lesswrong.com/w/<slug>?revision=1.2.0, with
+the slug the page has now), 50 pages a request; a slug that names more than
+one page is left out. For entries of the Stanford Encyclopedia of Philosophy
+(--sep): the entry in the newest quarterly archive edition (or
+--sep-edition), if that edition has it
 (https://plato.stanford.edu/archives/fall2026/entries/<entry>/; the edition's
 table of contents says which entries it has). A domain that already lists a
 revision of a page, a version of a paper, or an edition of an entry, keeps it,
@@ -36,6 +40,7 @@ before, plus exactly the new links.
     tools/add_stable_links.py --wikipedia [--dry-run]
     tools/add_stable_links.py --arxiv [--dry-run]
     tools/add_stable_links.py --lesswrong [--dry-run]
+    tools/add_stable_links.py --lesswrong-wiki [--dry-run]
     tools/add_stable_links.py --sep [--sep-edition fall2026] [--dry-run]
     tools/add_stable_links.py --links FILE [--dry-run]
 
@@ -78,6 +83,7 @@ ATOM = {"a": "http://www.w3.org/2005/Atom"}
 LESSWRONG_GRAPHQL = "https://www.lesswrong.com/graphql"
 LESSWRONG_PER_REQUEST = 50
 LESSWRONG_SPACING = 3.0  # LessWrong's crawl delay
+WIKI_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")  # a LessWrong wiki page's slug
 SEP = "https://plato.stanford.edu"
 SEP_SPACING = 5.0  # the SEP's crawl delay
 
@@ -184,32 +190,71 @@ def lesswrong_current_revisions(client, posts):
     posts = sorted(posts)
     for i in range(0, len(posts), LESSWRONG_PER_REQUEST):
         batch = posts[i: i + LESSWRONG_PER_REQUEST]
-        query = "{ " + " ".join(
+        # a post that is gone comes back as an error for its alias, and its result as null
+        data = lesswrong_query(client, "{ " + " ".join(
             f'p{n}: post(input: {{selector: {{_id: "{post}"}}}}) {{ result {{ _id slug contents {{ version }} }} }}'
             for n, post in enumerate(batch)
-        ) + " }"
-        for attempt in range(5):
-            response = client.post(LESSWRONG_GRAPHQL, json={"query": query})
-            if response.status_code == 200:
-                break
-            time.sleep(60 * (attempt + 1))
-        else:
-            raise SystemExit(f"LessWrong API: {response.status_code} {response.text[:200]}")
-        # a post that is gone comes back as an error for its alias, and its result as null
-        data = response.json().get("data") or {}
+        ) + " }")
         for n, linked in enumerate(batch):
             post = (data.get(f"p{n}") or {}).get("result")
             if post and post.get("slug") and (post.get("contents") or {}).get("version"):
                 found[linked] = (post["_id"], post["slug"], post["contents"]["version"])
-        time.sleep(LESSWRONG_SPACING)
         print(f"  LessWrong: {min(i + LESSWRONG_PER_REQUEST, len(posts))}/{len(posts)} posts looked up", flush=True)
     return found
 
 
+def lesswrong_query(client, query):
+    """The data of a query to LessWrong's GraphQL API (sent again after a pause
+    if it fails), then a wait of LessWrong's crawl delay."""
+    for attempt in range(5):
+        response = client.post(LESSWRONG_GRAPHQL, json={"query": query})
+        if response.status_code == 200:
+            break
+        time.sleep(60 * (attempt + 1))
+    else:
+        raise SystemExit(f"LessWrong API: {response.status_code} {response.text[:200]}")
+    time.sleep(LESSWRONG_SPACING)
+    return response.json().get("data") or {}
+
+
+def lesswrong_wiki_current_revisions(client, slugs):
+    """wiki page slug as linked -> (the page's slug now, version of the current
+    revision of its text), for the slugs that name one page (not deleted) with
+    text."""
+    found = {}
+    slugs = sorted(slugs)
+    for i in range(0, len(slugs), LESSWRONG_PER_REQUEST):
+        batch = slugs[i: i + LESSWRONG_PER_REQUEST]
+        data = lesswrong_query(client, "{ " + " ".join(
+            f'w{n}: tags(input: {{terms: {{view: "tagBySlug", slug: "{slug}"}}}}) '
+            f'{{ results {{ _id slug deleted description {{ version }} }} }}'
+            for n, slug in enumerate(batch)
+        ) + " }")
+        for n, linked in enumerate(batch):
+            pages = (data.get(f"w{n}") or {}).get("results") or []
+            if len(pages) != 1 or pages[0].get("deleted") or not WIKI_SLUG_RE.match(pages[0].get("slug") or ""):
+                continue
+            version = (pages[0].get("description") or {}).get("version") or newest_wiki_revision(client, pages[0]["_id"])
+            if version:
+                found[linked] = (pages[0]["slug"], version)
+        print(f"  LessWrong wiki: {min(i + LESSWRONG_PER_REQUEST, len(slugs))}/{len(slugs)} pages looked up", flush=True)
+    return found
+
+
+def newest_wiki_revision(client, page):
+    """The newest revision of a wiki page's text, for the few pages whose
+    current revision the API leaves out (though their page shows it)."""
+    data = lesswrong_query(client, (
+        '{ revisions(input: {terms: {view: "revisionsOnDocument", documentId: "%s", fieldName: "description", '
+        'limit: 1000}}) { results { version } } }') % page)
+    versions = [r["version"] for r in (data.get("revisions") or {}).get("results") or [] if r.get("version")]
+    return max(versions, key=lambda v: tuple(map(int, v.split(".")))) if versions else None
+
+
 def linked_name(url, prefix):
     """The rest of a link's cache key if it links a page of one kind directly
-    (prefix "lesswrong:" or "sep:"), else None: a Wayback copy of the page is
-    not the page."""
+    (prefix "lesswrong:", "lesswrong.com/w/", or "sep:"), else None: a
+    Wayback copy of the page is not the page."""
     key = link_cache.canonical(url)
     if key.startswith(prefix) and not link_cache.WAYBACK_RE.match(url):
         return key[len(prefix):]
@@ -222,16 +267,28 @@ def lesswrong_revision_link(post, slug, version):
     return url
 
 
+def wiki_slug(url):
+    """The slug of the LessWrong wiki page a link names directly, else None."""
+    name = linked_name(url, "lesswrong.com/w/")
+    return name if name and WIKI_SLUG_RE.match(name) else None
+
+
+def lesswrong_wiki_link(slug, version):
+    url = f"https://www.lesswrong.com/w/{slug}?revision={version}"
+    assert link_cache.stable_link(url) == ("lesswrong_wiki_revision", f"lesswrong_wiki_revision:{slug}:{version}"), url
+    return url
+
+
 def pinned_of_kind(stable_urls, kind):
     """The pages of which a domain already lists a stable link of the kind:
-    its cache key without the kind and the version (a LessWrong post's ID, an
-    SEP entry's name)."""
+    its cache key without the kind and the version (a LessWrong post's ID or
+    wiki page's slug, an SEP entry's name)."""
     pinned = set()
     for url in stable_urls:
         found = link_cache.stable_link(url)
         if found and found[0] == kind:
             rest = found[1].split(":", 1)[1]
-            pinned.add(rest.rsplit(":", 1)[0] if kind == "lesswrong_revision" else rest.split(":", 1)[1])
+            pinned.add(rest.rsplit(":", 1)[0] if kind.startswith("lesswrong") else rest.split(":", 1)[1])
     return pinned
 
 
@@ -392,6 +449,31 @@ def lesswrong_proposer(client, entries):
     return propose
 
 
+def lesswrong_wiki_proposer(client, entries):
+    """For each domain entry, links to the current revisions of its LessWrong wiki pages that it lacks."""
+    linked = set()
+    for items in entries.values():
+        for entry in items:
+            linked.update(filter(None, (wiki_slug(url) for url in entry.get("urls") or [])))
+    print(f"{len(linked)} distinct LessWrong wiki pages linked", flush=True)
+    current = lesswrong_wiki_current_revisions(client, linked)
+    print(f"current revisions found for {len(current)}; not found (no such page, more than one, or no text): "
+          f"{len(linked) - len(current)}")
+
+    def propose(entry):
+        pinned = pinned_of_kind(entry.get("stable_urls") or [], "lesswrong_wiki_revision")
+        new = []
+        for url in entry.get("urls") or []:
+            slug = wiki_slug(url)
+            if slug not in current or current[slug][0] in pinned:
+                continue
+            new.append(lesswrong_wiki_link(*current[slug]))
+            pinned.add(current[slug][0])
+        return new
+
+    return propose
+
+
 def sep_proposer(client, entries, edition=None):
     """For each domain entry, links to its SEP entries in an archive edition
     (the newest, unless given) that it lacks, for the entries the edition has."""
@@ -458,13 +540,15 @@ def main():
     parser.add_argument("--wikipedia", action="store_true", help="pin Wikipedia articles to their current revision")
     parser.add_argument("--arxiv", action="store_true", help="pin arXiv papers to a version (the linked one, else the latest)")
     parser.add_argument("--lesswrong", action="store_true", help="pin LessWrong posts to their current revision")
+    parser.add_argument("--lesswrong-wiki", action="store_true",
+                        help="pin LessWrong wiki pages to the current revision of their text")
     parser.add_argument("--sep", action="store_true", help="pin SEP entries to an archive edition")
     parser.add_argument("--sep-edition", metavar="EDITION", help="that edition (like fall2026; default: the newest)")
     parser.add_argument("--links", metavar="FILE", help='add the stable links FILE lists (lines "domain<TAB>link")')
     parser.add_argument("--dry-run", action="store_true", help="look up and report, but change no file")
     args = parser.parse_args()
-    if not (args.wikipedia or args.arxiv or args.lesswrong or args.sep or args.links):
-        parser.error("say which links to add (--wikipedia, --arxiv, --lesswrong, --sep, --links)")
+    if not (args.wikipedia or args.arxiv or args.lesswrong or args.lesswrong_wiki or args.sep or args.links):
+        parser.error("say which links to add (--wikipedia, --arxiv, --lesswrong, --lesswrong-wiki, --sep, --links)")
     if args.sep_edition and not re.fullmatch(r"(?:spr|sum|fall|win)\d{4}", args.sep_edition):
         parser.error(f"not an SEP edition: {args.sep_edition}")
 
@@ -474,6 +558,7 @@ def main():
         proposers = ([wikipedia_proposer(client, entries)] if args.wikipedia else []) + (
             [arxiv_proposer(client, entries)] if args.arxiv else []) + (
             [lesswrong_proposer(client, entries)] if args.lesswrong else []) + (
+            [lesswrong_wiki_proposer(client, entries)] if args.lesswrong_wiki else []) + (
             [sep_proposer(client, entries, args.sep_edition)] if args.sep else []) + (
             [listed_proposer(args.links, entries)] if args.links else [])
 
