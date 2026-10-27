@@ -29,8 +29,8 @@ read a page of about 5,000 captures at a time, one page a minute, and
 the pages are kept in link_cache/wayback_index/, so a rerun reads none again
 (the URLs of a page it will not give are looked up one by one instead); with
 --exact, and always for Stack Exchange, each page's captures are looked up by
-themselves, one page every 20 seconds, which suits a few hundred pages of a
-large site; captures are fetched one every 20 seconds. After a 429 it waits
+themselves, one page every 30 seconds, which suits a few hundred pages of a
+large site; captures are fetched one every 30 seconds. After a 429 it waits
 ten minutes, after a server error three; after a failed connection two
 minutes, and an hour if the next one fails too. A run over a few thousand
 pages takes a day or more, so start it detached. Each run writes its report
@@ -66,8 +66,10 @@ from add_stable_links import DOMAINS_DIR, insert_stable_urls  # noqa: E402
 CDX = "https://web.archive.org/cdx/search/cdx"
 FIELDS = "urlkey,timestamp,original,statuscode,mimetype,digest,length"
 INDEX_PACE = 60.0  # seconds between two requests for index pages
-LOOKUP_PACE = 20.0  # seconds between two index lookups of a single URL
-CAPTURE_PACE = 20.0  # seconds between two capture fetches
+# seconds between two index lookups of a single URL, and between two capture fetches (at 20 s each,
+# on 2026-10-27, the archive refused a connection every five minutes or so)
+LOOKUP_PACE = 30.0
+CAPTURE_PACE = 30.0
 LIMITED_WAIT = 600.0  # after a 429
 SERVER_ERROR_WAIT = 180.0  # after a server error (the index server often answers 503 under load)
 RETRY_WAIT = 120.0  # after a failed connection
