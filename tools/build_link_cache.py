@@ -130,7 +130,7 @@ WIKIPEDIA_TAIL = (
 )
 # Seconds between two requests to one site, at least (robots.txt may ask for more).
 DELAYS = {
-    "wikipedia": 0.1,
+    "wikipedia": 1.0,  # 0.1 drew 429s from Wikimedia (2026-10-27) alongside searches
     "wikisource": 1.0,
     "eaforum": 2.0,  # ten posts per request
     "lesswrong": 3.0,  # ten posts per request
