@@ -82,11 +82,12 @@ tools/
   arxiv_latexml.py          renders an arXiv paper's source with LaTeXML, in a sandbox (--self-test)
   install_latexml.sh        installs the pinned LaTeXML and TeX Live 2025 that arxiv_latexml.py uses, into .venv
   add_stable_links.py       adds stable versions of the domains' links under stable_urls
-                            (Wikipedia articles and LessWrong posts and wiki pages as links
-                            to a revision, SEP entries in an archive edition, arXiv papers
-                            as links to a version), or stable links from a list
-  add_wayback_links.py      adds Wayback Machine captures of the domains' links to blog posts
-                            under stable_urls, each checked against the post's live text
+                            (Wikipedia and Wikisource pages and LessWrong posts and wiki
+                            pages as links to a revision, SEP entries in an archive edition,
+                            arXiv papers as links to a version), or stable links from a list
+  add_wayback_links.py      adds Wayback Machine captures of the domains' links to blog posts,
+                            other pages of a site, and Stack Exchange questions under
+                            stable_urls, each checked against the page's live text
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
@@ -445,7 +446,7 @@ Link prompts are written in link batches of their own (`generate_prompt_oai.py
 itself, among stable links only: links to a version of a page that cannot change, such
 as a Wayback Machine capture with its full timestamp
 (`https://web.archive.org/web/20260606073342/https://www.overcomingbias.com/p/tell-your-antihtml`),
-a Wikipedia revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
+a Wikipedia or Wikisource revision (the page's "Permanent link", `index.php?title=...&oldid=...`), an entry
 in a quarterly archive edition of the Stanford Encyclopedia of Philosophy
 (`plato.stanford.edu/archives/fall2026/entries/...`), a revision of a LessWrong post
 (`https://www.lesswrong.com/posts/<id>/<slug>?revision=1.2.0`: LessWrong keeps every
@@ -458,9 +459,10 @@ lists the patterns (`STABLE_LINKS`); more kinds can be added. (The EA Forum keep
 too, but its pages ignore `?revision=`, so its posts have no stable links.) A stable link is
 a page of its own: `tools/build_link_cache.py`
 fetches its text from the link itself (for a Wayback capture, the page as archived, and
-only if the archive has a capture at exactly that timestamp; for a Wikipedia revision,
-that revision as Wikipedia renders it, through its API, since Wikipedia's robots.txt bars
-scripts from the permanent-link pages; for a LessWrong revision, that revision as
+only if the archive has a capture at exactly that timestamp; for a Wikipedia or Wikisource
+revision, that revision as the wiki renders it, through its API, since the wikis' robots.txt
+bars scripts from the permanent-link pages (Wikisource's header and page-number templates
+left out); for a LessWrong revision, that revision as
 LessWrong's API returns it, any other revision in its place being an error; for an arXiv
 version, that version's source, which
 arXiv keeps as it was submitted, rendered by LaTeXML in a sandbox; a version whose source is
@@ -480,13 +482,26 @@ librarian-bots/arxiv-metadata-snapshot dataset); on
 9,873 posts on 1,810 domains; and for every linked SEP entry, its page in the Fall 2026
 edition: 2,616 links to 1,107 entries on 1,903 domains; on 2026-10-26, for every linked
 LessWrong wiki page, the revision of its text current that day: 327 links to 252 pages on
-271 domains). `tools/add_wayback_links.py` adds
-Wayback captures of the blog posts the domains link: for each post, the newest capture whose
-text matches the post's live text (at least 90% of its eight-word sequences, at most twice as
-long), else an older one, found through the archive's CDX index at a pace the archive
-tolerates (an index page a minute, a capture every 20 seconds, long waits after a refusal);
-on 2026-10-24, for Bentham's Bulldog and Overcoming Bias, 2,413 links to 1,736 posts on 1,101
-domains. The five domains offered are drawn
+271 domains; and for every linked Wikisource page, the revision current that day: 72 links to
+66 pages; on 2026-10-27, from lists, 3,891 links to 3,569 more arXiv papers on 1,410 domains,
+a second round of the same picking among each domain's next twelve candidates (a paper goes
+to at most four domains), and 7,358 links to 5,484 more Wikipedia articles on 3,203 domains,
+which Claude Opus 5.5 chose, at most three a domain, among candidates that Wikipedia's own
+search found (the domain's name, and articles like those it links) and the reranker ranked;
+on 2026-10-28, 1,125 links to 1,033 Wikisource texts on 618 domains: Claude Opus 5.5 chose
+them among what Wikisource's search found for the domain's name, then judged each pick again
+with the opening 5,000 characters of its text, keeping 1,125 of 1,827). `tools/add_wayback_links.py` adds
+Wayback captures of the blog posts and other pages the domains link: for each page, the
+newest capture whose text matches the page's live text (at least 90% of its eight-word
+sequences, at most twice as long), else an older one, found through the archive's CDX index
+at a pace the archive tolerates (an index page a minute, or one page's captures every 30
+seconds, a capture every 30 seconds, long waits after a refusal); on 2026-10-24, for
+Bentham's Bulldog and Overcoming Bias, 2,413 links to 1,736 posts on 1,101 domains; on
+2026-10-27, for Slate Star Codex and Aeon, 462 links to 348 pages; on 2026-10-29, for the
+Stack Exchange questions the domains link (a capture must show the answers the live page
+has), 5,200 links to 4,016 questions on 1,202 domains. gwern.net is excluded from the
+Wayback Machine (the archive serves none of its captures), so its pages have no stable
+links. The five domains offered are drawn
 among those with stable links of 1,500 to 100,000 characters of text, and under each the
 meta-prompt lists up to three of them, with URL, title, author, site, date, length, license,
 and opening words.
