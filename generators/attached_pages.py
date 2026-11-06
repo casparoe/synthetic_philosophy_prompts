@@ -353,16 +353,24 @@ def render_message(records, texts, prompt_text):
     return "\n\n".join([*(render_page(r, t) for r, t in zip(records, texts)), prompt_text])
 
 
-URL_RE = re.compile(r"https?://[^\s<>\"'`]+")
-TRAILING_PUNCTUATION = ".,;:!?*”’»"
+# An apostrophe can be part of a URL: 1,121 listed stable links have one in a
+# Wikipedia title (title=Newcomb's_problem&oldid=...), and a URL cut short there
+# names no listed page. A quotation mark or a possessive 's after a URL is
+# trimmed like the other punctuation below.
+URL_RE = re.compile(r"https?://[^\s<>\"`]+")
+TRAILING_PUNCTUATION = ".,;:!?*”’»'"
+POSSESSIVE_ENDINGS = ("'s", "’s")
 
 
 def _strip_one(url):
     """The URL without its last character if that is punctuation around or
-    after a URL in prose or Markdown (a final period, a closing parenthesis
-    that the URL did not open), else None."""
+    after a URL in prose or Markdown (a final period, a closing quotation mark,
+    a closing parenthesis that the URL did not open), or without a possessive
+    's after it, else None."""
     if url and url[-1] in TRAILING_PUNCTUATION:
         return url[:-1]
+    if url.endswith(POSSESSIVE_ENDINGS):
+        return url[:-2]
     if url.endswith(")") and url.count(")") > url.count("("):
         return url[:-1]
     if url.endswith("]") and url.count("]") > url.count("["):
