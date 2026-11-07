@@ -90,6 +90,7 @@ tools/
                             stable_urls, each checked against the page's live text
   check_link_batch.py       report for a link batch: pages, sources, licenses, URL problems, copying
   check_run.py              quality report for a response run: coverage, truncation, missing reasoning, cost
+  check_link_answers.py     report for a link run: copying from the pages; answers repeated, pasted from a page, or overlong
   import_teacher_data.py    converts the cr_training sister repo's teacher-data collections into imported runs
   make_pair_set.py          writes a pair set: complete response pairs from one run (two samples) or two runs, seeded sample
   check_preferences.py      report for a preference run: coverage, verdicts, position balance, cost; agreement of two runs
@@ -539,6 +540,11 @@ exported.
 licenses, whether the store holds every text, URL problems, how much of a page the prompts
 copy, and prompts that seem to ask for a whole page that is not openly licensed to be
 reworked.
+`tools/check_link_answers.py` reports on a run that answers a link batch: how much of the
+answers and their reasoning is copied from the pages, and signs of a broken answer that
+`tools/check_run.py` misses (an answer written out twice, page text pasted into it, one
+sentence opening repeated many times, an answer far longer than the other sample of its
+prompt).
 
 ## Quality control and known limitations
 
