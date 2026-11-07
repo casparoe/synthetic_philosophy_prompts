@@ -109,8 +109,13 @@ length, and from batch 029 on further groups such as epistemic and output-format
 requests; recorded as one `additional_instructions` mapping from batch 029 on and as
 separate `length`/`persona`/`writing_style` keys before), token counts, the number
 of web searches and page fetches the generator performed (from 2026-10-05 also how
-many fetches the link cache answered, `web_fetches_cached`), a summary of the
-generator's reasoning, and a timestamp.
+many fetches the link cache answered, `web_fetches_cached`, and from 2026-11-07 the
+search queries, `web_search_queries`, and the URLs fetched, `web_fetch_urls`), the
+domain and task type the model picked (from 2026-11-07 on: `domains_chosen`, the main
+domain first and a second one if the prompt also draws substantially on it, and
+`task_type_chosen`, plus `picks_from_follow_up` when the model gave them in a follow-up
+message; earlier sidecars record only what was offered), a summary of the generator's
+reasoning, and a timestamp.
 
 ## How the prompts were generated
 
@@ -128,7 +133,14 @@ random order), so that no single example shapes every prompt of a genre. Earlier
 batches showed every example in file order, except that the 10,617 prompts of batch
 044 generated after its pause already used the subsets (their sidecars carry
 `task_type_examples`). The generating models had web search and page
-fetching available for fact-checking and verbatim quotation.
+fetching available for fact-checking and verbatim quotation. The model picks one of the
+offered domains and genres. From 2026-11-07 on, the meta-prompt numbers them and asks
+the model to end its reply with a line such as `Domain: 3. Type: 2.` (or `Domain: 3, 1.
+Type: 2.` when the prompt also draws substantially on a second domain); the generator
+takes the line off the prompt and records the picks in the sidecar. If a reply lacks a
+valid line, the Claude generators generate the prompt again; the OpenRouter generator
+first asks for the line in a short follow-up message (the sidecar then has
+`picks_from_follow_up`).
 
 | Batches | Model | Notes |
 |---|---|---|

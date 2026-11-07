@@ -7,8 +7,11 @@ process notes before the prompt, dataset-construction framing, prompts wrapped
 in quotes), stray East Asian words and word salad, example echo (prompts
 reusing wording from the task-type examples they were shown), verbatim copying
 of the additional-instruction text, near-duplicate prompt pairs, the most
-repeated eight-word phrases, and whether every sidecar re-renders from the
-batch's snapshot. Findings are tracked in QUALITY_NOTES.md.
+repeated eight-word phrases, the domain and task type picks the model
+recorded (from 2026-11-07 on: how many sidecars have them, how many name a
+second domain, the position of each pick among the options offered, and
+lines recording picks left in a prompt), and whether every sidecar
+re-renders from the batch's snapshot. Findings are tracked in QUALITY_NOTES.md.
 
     tools/check_batch.py prompts/batch_033 [--no-pairs] [--top 10]
 """
@@ -374,6 +377,21 @@ def main():
             pos = [i for i in range(len(wa) - 7) if " ".join(wa[i:i + 8]) in allgrams[c]]
             snippet = " ".join(wa[pos[0]:pos[0] + 14]) if pos else ""
             print(f"  {a} ~ {c}: {k} shared, starting '{snippet} ...'")
+
+    # -- the picks the model recorded (prompt.j2 asks for the line from 2026-11-07 on) ----------
+    template = b / "inputs" / assemble.TEMPLATE_FILE
+    if template.exists() and assemble.CHOICE_LINE_MARKER in template.read_text():
+        picked = [m for m in ms if m.get("domains_chosen")]
+        print(f"picks recorded: {len(picked)} of {len(ms)} sidecars; naming a second domain: "
+              f"{sum(len(m['domains_chosen']) > 1 for m in picked)}")
+        if picked:
+            # the options are shown in random order, so a lean toward one position is the model's
+            dpos = collections.Counter(m["domains_offered"].index(m["domains_chosen"][0]) + 1 for m in picked)
+            tpos = collections.Counter(m["task_types_offered"].index(m["task_type_chosen"]) + 1 for m in picked)
+            print("  position of the main domain among those offered: " + ", ".join(f"{k}: {dpos[k]}" for k in sorted(dpos)))
+            print("  position of the task type among those offered: " + ", ".join(f"{k}: {tpos[k]}" for k in sorted(tpos)))
+    left = flag(assemble.CHOICE_LINE_RE)
+    print(f"line recording the picks left at the end of the prompt: {len(left)}", left[:5] or "none")
 
     # -- sidecars re-render ---------------------------------------------------------------------
     try:

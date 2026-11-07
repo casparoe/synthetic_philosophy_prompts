@@ -8,6 +8,14 @@ Claude to write a prompt (picking a domain and task type from the offered
 ones), and saves the result together with a .meta.yaml sidecar recording the
 sampled parameters.
 
+From 2026-11-07 on, the model ends its reply with a line recording which
+domain and task type it picked ("Domain: 3. Type: 2."); the line is taken off
+the saved prompt and the picks go into the sidecar (domains_chosen,
+task_type_chosen; see meta_prompt/assemble.split_choice_line). A reply without
+a valid line is generated again, up to CHOICE_LINE_ATTEMPTS times in all. The
+sidecar also lists the queries of the web searches (web_search_queries) and
+the URLs fetched (web_fetch_urls).
+
 Each invocation creates a fresh batch directory prompts/batch_NNN/ holding the
 generated prompts, a batch.yaml with the run parameters, and an inputs/
 snapshot of the meta-prompt components as they were at startup (the script
@@ -50,6 +58,10 @@ LEGACY_WEB_TOOLS = [
     {"type": "web_search_20250305", "name": "web_search"},
     {"type": "web_fetch_20250910", "name": "web_fetch"},
 ]
+
+# Generations of one prompt, in all, while the reply lacks a valid line
+# recording the picks.
+CHOICE_LINE_ATTEMPTS = 3
 
 
 def uses_legacy_api(model):
@@ -141,6 +153,21 @@ def extract_output(assistant_blocks):
     ).strip()
     tool_calls = [b.name for b in assistant_blocks if b.type == "server_tool_use"]
     return prompt_text, reasoning_summary, tool_calls
+
+
+def web_tool_log(assistant_blocks):
+    """The queries of the web_search calls and the URLs of the web_fetch
+    calls (each URL once, in the order first fetched)."""
+    queries, urls = [], []
+    for block in assistant_blocks:
+        if block.type != "server_tool_use":
+            continue
+        data = block.input if isinstance(block.input, dict) else {}
+        if block.name == "web_search" and data.get("query"):
+            queries.append(str(data["query"]))
+        elif block.name == "web_fetch" and data.get("url") and str(data["url"]) not in urls:
+            urls.append(str(data["url"]))
+    return queries, urls
 
 
 def main():
@@ -243,41 +270,59 @@ def main():
             request["output_config"] = {"effort": args.effort}
         if not args.no_web_tools:
             request["tools"] = LEGACY_WEB_TOOLS if legacy else WEB_TOOLS
+        # the reply ends with a line recording the picks (prompt.j2 from 2026-11-07 on)
+        choice_line = assemble.asks_for_choice_line(meta_prompt)
 
-        # Server tools can pause long turns (stop_reason "pause_turn"); resume
-        # by passing the accumulated assistant content back.
-        messages = [{"role": "user", "content": meta_prompt}]
-        assistant_blocks = []
-        input_tokens = output_tokens = 0
-        try:
-            for _ in range(5):
-                with client.messages.stream(**request, messages=messages) as stream:
-                    response = stream.get_final_message()
-                input_tokens += response.usage.input_tokens
-                output_tokens += response.usage.output_tokens
-                assistant_blocks.extend(response.content)
-                if response.stop_reason != "pause_turn":
-                    break
-                messages = [
-                    {"role": "user", "content": meta_prompt},
-                    {"role": "assistant", "content": assistant_blocks},
-                ]
-        except Exception as e:
-            # Broad on purpose: transport errors (e.g. the burst of broken
-            # connections when the machine wakes from sleep) aren't always
-            # wrapped in anthropic.APIError, and a single escaped exception
-            # would abort the whole run.
-            print(f"warning: error, skipping this prompt: {e!r}", file=sys.stderr)
-            time.sleep(30)
-            return
-        if response.stop_reason != "end_turn":
+        for attempt in range(1, CHOICE_LINE_ATTEMPTS + 1):
+            # Server tools can pause long turns (stop_reason "pause_turn"); resume
+            # by passing the accumulated assistant content back.
+            messages = [{"role": "user", "content": meta_prompt}]
+            assistant_blocks = []
+            input_tokens = output_tokens = 0
+            try:
+                for _ in range(5):
+                    with client.messages.stream(**request, messages=messages) as stream:
+                        response = stream.get_final_message()
+                    input_tokens += response.usage.input_tokens
+                    output_tokens += response.usage.output_tokens
+                    assistant_blocks.extend(response.content)
+                    if response.stop_reason != "pause_turn":
+                        break
+                    messages = [
+                        {"role": "user", "content": meta_prompt},
+                        {"role": "assistant", "content": assistant_blocks},
+                    ]
+            except Exception as e:
+                # Broad on purpose: transport errors (e.g. the burst of broken
+                # connections when the machine wakes from sleep) aren't always
+                # wrapped in anthropic.APIError, and a single escaped exception
+                # would abort the whole run.
+                print(f"warning: error, skipping this prompt: {e!r}", file=sys.stderr)
+                time.sleep(30)
+                return
+            if response.stop_reason != "end_turn":
+                print(
+                    f"warning: skipping response with stop_reason={response.stop_reason!r}",
+                    file=sys.stderr,
+                )
+                return
+
+            prompt_text, reasoning_summary, tool_calls = extract_output(assistant_blocks)
+            picks = None
+            if not choice_line:
+                break
+            prompt_text, picks, problem = assemble.split_choice_line(prompt_text, sample)
+            if problem is None:
+                break
             print(
-                f"warning: skipping response with stop_reason={response.stop_reason!r}",
+                f"warning: {problem}; "
+                + ("generating it again" if attempt < CHOICE_LINE_ATTEMPTS else "skipping this prompt"),
                 file=sys.stderr,
+                flush=True,
             )
+        else:
             return
 
-        prompt_text, reasoning_summary, tool_calls = extract_output(assistant_blocks)
         # Writing the .txt reserves the number, so both happen under the lock.
         with path_lock:
             out_path = next_output_path(batch_dir)
@@ -289,16 +334,23 @@ def main():
             "effort": effort,
             "web_searches": tool_calls.count("web_search"),
             "web_fetches": tool_calls.count("web_fetch"),
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            **sample,
-            "reasoning_summary": reasoning_summary or None,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+        if not args.no_web_tools:
+            metadata["web_search_queries"], metadata["web_fetch_urls"] = web_tool_log(assistant_blocks)
+        metadata.update(
+            {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                **sample,
+                **(picks or {}),
+                "reasoning_summary": reasoning_summary or None,
+                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }
+        )
         out_path.with_suffix(".meta.yaml").write_text(
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
-        offered = " / ".join(sample["task_types_offered"])
+        offered = picks["task_type_chosen"] if picks else " / ".join(sample["task_types_offered"])
         extras = ", ".join(sample["additional_instructions"]) or "none"
         print(
             f"[{offered} | {extras}] -> {out_path.relative_to(REPO_ROOT)}",

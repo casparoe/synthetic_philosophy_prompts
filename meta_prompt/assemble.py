@@ -36,6 +36,19 @@ existing prompt can be rebuilt from its batch's inputs/ snapshot. (Batches
 before 029 predate additional_instructions.yaml; rebuild those with the code at
 commit 515faeef.)
 
+From 2026-11-07 on, prompt.j2 numbers the offered domains and task types and
+asks the model to end its reply with a line that records its picks by number,
+"Domain: 3. Type: 2.", or "Domain: 3, 1. Type: 2." if the prompt also draws
+substantially on a second domain. split_choice_line() takes that line off the
+reply. The generators save the prompt without it and record the picks in the
+sidecar as domains_chosen (offered domains, the main one first) and
+task_type_chosen. A reply without a valid line is generated again;
+generate_prompt_oai.py first asks for the line in a short follow-up turn
+(read_choice_line reads the answer). Whether a
+meta-prompt asks for the line is told by CHOICE_LINE_MARKER, the template's
+wording of the form (asks_for_choice_line), so a batch continued from an
+older snapshot goes on without it.
+
 A task type is a file NNN_name.yaml in task_types/: a mapping with the genre's
 name under type and, optionally, notes (a string) and examples (a list of
 strings). The files are read in name order, so a new genre gets the next
@@ -66,6 +79,7 @@ assembled meta-prompt:
 import argparse
 import collections
 import random
+import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -113,6 +127,78 @@ OPTIONAL_SAMPLE_KEYS = {"task_type_examples", "domain_urls", "pages_offered", "a
 # For each offered task type, how many of its examples are shown: a number
 # from 1 to this drawn uniformly, capped by how many examples the type has.
 MAX_EXAMPLES_SHOWN = 5
+
+# The form of the line that records the model's picks, as prompt.j2 words it
+# (from 2026-11-07 on); a meta-prompt that contains it asks for the line.
+CHOICE_LINE_MARKER = "Domain: N. Type: M."
+_MARKS = r"[*_`]*"  # markdown emphasis or code marks around the parts of the line
+# The line at the very end of a reply, tolerant of markdown, brackets, a missing
+# colon, "and" or "&" between two domains, and the two parts on separate lines.
+CHOICE_LINE_RE = re.compile(
+    r"[*_`(\[]*\bdomains?" + _MARKS + r"\s*[:=]?\s*" + _MARKS + r"\s*#?"
+    r"(?P<domains>\d+(?:\s*(?:,|&|\band\b)\s*#?\d+)*)"
+    r"\s*" + _MARKS + r"\s*[.,;|/·–—-]?\s*" + _MARKS + r"[)\]]?\s*"
+    r"[(\[]?" + _MARKS + r"\btypes?" + _MARKS + r"\s*[:=]?\s*" + _MARKS + r"\s*#?(?P<type>\d+)"
+    r"[\s*_`.)\]]*\Z",
+    re.I,
+)
+_TRAILING_RULE_RE = re.compile(r"(?:\n[ \t]*[-*_=~`]{3,}[ \t]*)+\Z")
+
+
+def asks_for_choice_line(meta_prompt):
+    """Whether a rendered meta-prompt asks the model to end its reply with
+    the line recording its picks."""
+    return CHOICE_LINE_MARKER in meta_prompt
+
+
+def _picks(match, sample):
+    """The picks a matched line records, as (picks, None), or (None, problem)
+    if it names an option that wasn't offered (or a domain twice)."""
+    domains = [int(d) for d in re.findall(r"\d+", match.group("domains"))]
+    task_type = int(match.group("type"))
+    offered_domains, offered_types = sample["domains_offered"], sample["task_types_offered"]
+    if (
+        len(set(domains)) != len(domains)
+        or not all(1 <= d <= len(offered_domains) for d in domains)
+        or not 1 <= task_type <= len(offered_types)
+    ):
+        return None, f"the line recording the picks names an option not offered ({match.group(0).strip()!r})"
+    picks = {
+        "domains_chosen": [offered_domains[d - 1] for d in domains],
+        "task_type_chosen": offered_types[task_type - 1],
+    }
+    return picks, None
+
+
+def split_choice_line(reply, sample):
+    """Take the line recording the model's picks ("Domain: 3. Type: 2.", or
+    "Domain: 3, 1. Type: 2." with a second domain) off the end of its reply.
+
+    Returns (prompt, picks, None): the prompt without the line (or a rule left
+    above it), and the picks as sidecar keys, domains_chosen (offered domains,
+    the main one first) and task_type_chosen. Otherwise picks is None and the
+    third item says what is wrong: if the line is missing, prompt is the whole
+    reply; if it names an option that wasn't offered, the reply without it; if
+    the reply is nothing but the line, an empty string."""
+    text = reply.rstrip()
+    m = CHOICE_LINE_RE.search(text)
+    if m is None:
+        return reply, None, f"no line recording the domain and type picked (the reply ends {text[-60:]!r})"
+    prompt = _TRAILING_RULE_RE.sub("", text[: m.start()].rstrip()).rstrip()
+    if not prompt:
+        return "", None, "the reply is nothing but the line recording the picks"
+    picks, problem = _picks(m, sample)
+    return prompt, picks, problem
+
+
+def read_choice_line(answer, sample):
+    """The picks recorded by an answer that ends with the line (the answer to a
+    follow-up asking for it), as (picks, None), or (None, problem)."""
+    text = answer.rstrip()
+    m = CHOICE_LINE_RE.search(text)
+    if m is None:
+        return None, f"no line recording the domain and type picked (the answer ends {text[-60:]!r})"
+    return _picks(m, sample)
 
 
 def _load_lines(path):

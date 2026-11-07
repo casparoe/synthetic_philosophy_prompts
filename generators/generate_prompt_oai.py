@@ -28,6 +28,16 @@ attaches no page, too many, or too much text, or attaches a page the model did
 not read, is generated again. The sidecar lists the pages offered
 (pages_offered), those attached (attached_pages), and those read
 (pages_read). This needs the link cache and --web-tools.
+
+From 2026-11-07 on, the meta-prompt numbers the offered domains and task
+types and asks the model to end its reply with a line recording its picks
+("Domain: 3. Type: 2."; see meta_prompt/assemble.split_choice_line). The line
+is taken off the saved prompt and the picks go into the sidecar (domains_chosen,
+task_type_chosen). If the reply lacks a valid line, one short follow-up turn
+asks the model for it (the sidecar then has picks_from_follow_up: true, and
+the turn's tokens and cost are included); only if that fails too is the
+prompt generated again. With --web-tools, the sidecar also lists the search
+queries (web_search_queries) and the URLs fetched (web_fetch_urls).
 """
 
 import argparse
@@ -154,6 +164,15 @@ DATASET_FRAMING_RE = re.compile(
 
 MAX_TOOL_ROUNDS = 8
 MAX_ATTEMPTS = 4
+
+# The follow-up turn for a reply that lacks a valid line recording the picks,
+# and its output budget (reasoning included, at low effort).
+CHOICE_LINE_REQUEST = (
+    "Your reply doesn't end with a valid line recording your picks. Reply with that line only, in exactly "
+    "this form, with your numbers in place of N and M: Domain: N. Type: M. (If the prompt also draws "
+    "substantially on a second domain, give both domain numbers, the main one first: Domain: N, K. Type: M.)"
+)
+CHOICE_LINE_REQUEST_TOKENS = 4096
 # Transport and gateway failures (connection errors, HTTP 429/5xx, error
 # bodies in place of choices) cost nothing and get their own budget with a
 # growing pause, so that a provider outage of most of an hour costs retries
@@ -279,6 +298,15 @@ def run_web_fetch(url, offset=0, find=None, listed=None):
     if not text:
         return "Could not extract text content from that page.", "live"
     return link_cache.render(text, [], offset, find, FETCH_CHAR_LIMIT), "live"
+
+
+def tool_arguments(arguments):
+    """A tool call's arguments as a dict ({} if they are not a JSON object)."""
+    try:
+        args = json.loads(arguments or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return args if isinstance(args, dict) else {}
 
 
 def run_tool(name, arguments, listed=None):
@@ -611,6 +639,8 @@ def main():
         )
         if link_prompts and f"{attached_pages.MAX_TOTAL_WORDS:,} words" not in meta_prompt:
             raise SystemExit("prompt.j2 states another word limit than attached_pages.MAX_TOTAL_WORDS")
+        # the reply ends with a line recording the picks (not in older snapshots)
+        choice_line = assemble.asks_for_choice_line(meta_prompt)
 
         def attempt_turns():
             """Run one full tool-round conversation. Returns a dict with the
@@ -622,6 +652,8 @@ def main():
                 "searches": 0,
                 "fetches": 0,
                 "cached_fetches": 0,
+                "search_queries": [],  # as the model sent them
+                "fetch_urls": [],  # each URL once, in the order first fetched
                 "pages_read": set(),  # keys of listed pages fetched
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -701,16 +733,20 @@ def main():
                 for tool_call in tool_calls:
                     function = tool_call.get("function") or {}
                     name = function.get("name", "")
+                    call = tool_arguments(function.get("arguments"))
                     if name == "web_search":
                         stats["searches"] += 1
+                        if call.get("query"):
+                            stats["search_queries"].append(str(call["query"]))
                     elif name == "web_fetch":
                         stats["fetches"] += 1
+                        if call.get("url") and str(call["url"]) not in stats["fetch_urls"]:
+                            stats["fetch_urls"].append(str(call["url"]))
                     content, source = run_tool(name, function.get("arguments"), listed)
                     if source in ("cache", "listed"):
                         stats["cached_fetches"] += 1
                     if source == "listed":
-                        url = json.loads(function.get("arguments") or "{}").get("url", "")
-                        stats["pages_read"].add(link_cache.canonical(url))
+                        stats["pages_read"].add(link_cache.canonical(str(call.get("url", ""))))
                     messages.append(
                         {
                             "role": "tool",
@@ -719,6 +755,46 @@ def main():
                         }
                     )
             return None
+
+        def ask_for_picks(prompt_text, result):
+            """One short follow-up turn asking for the line recording the picks,
+            which the reply lacked; its tokens and cost are added to result.
+            Returns (picks, None) or (None, problem)."""
+            request = {
+                "model": args.model,
+                "messages": [
+                    {"role": "user", "content": meta_prompt},
+                    {"role": "assistant", "content": prompt_text},
+                    {"role": "user", "content": CHOICE_LINE_REQUEST},
+                ],
+                "max_tokens": CHOICE_LINE_REQUEST_TOKENS,
+                "temperature": args.temperature,
+                "top_p": args.top_p,
+            }
+            if args.top_k is not None:
+                request["top_k"] = args.top_k
+            if args.reasoning_effort:
+                request["reasoning"] = {"effort": "low"}
+            if openrouter:
+                request["usage"] = {"include": True}
+            if provider:
+                request["provider"] = provider
+            try:
+                response = client.post("/v1/chat/completions", json=request)
+                response.raise_for_status()
+                data = response.json()
+                answer = data["choices"][0]["message"].get("content") or ""
+            except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as e:
+                return None, f"asking for it failed ({e.__class__.__name__})"
+            usage = data.get("usage") or {}
+            result["input_tokens"] += usage.get("prompt_tokens", 0)
+            result["output_tokens"] += usage.get("completion_tokens", 0)
+            result["cost"] += float(usage.get("cost") or 0)
+            if data.get("provider"):
+                result["providers"].add(data["provider"])
+            if openrouter and data.get("id"):
+                result["generation_ids"].append(data["id"])
+            return assemble.read_choice_line(THINK_RE.sub("", answer).strip(), sample)
 
         # A failed request (server restart, network blip; a minute's pause
         # before the next try) or a defective generation (see
@@ -772,21 +848,32 @@ def main():
                 )
                 return
             problem = generation_defect(result)
-            if problem is None and link_prompts:
-                # which listed pages the prompt attaches, and whether that is allowed
-                attached, problem = attached_pages.choose(
-                    THINK_RE.sub("", result["content"]).strip(), sample["pages_offered"]
-                )
-                unread = [r["url"] for r in attached if link_cache.canonical(r["url"]) not in result["pages_read"]]
-                if problem is None and unread:
-                    problem = f"the prompt attaches a page the model did not read ({unread[0]})"
+            if problem is None:
+                prompt_text = THINK_RE.sub("", result["content"]).strip()
+                picks, picks_asked = None, False
+                if choice_line:
+                    # the line recording the domain and type picked comes off the prompt
+                    prompt_text, picks, problem = assemble.split_choice_line(prompt_text, sample)
+                    if problem and prompt_text:
+                        # missing, or naming an option not offered: ask for it in a short
+                        # follow-up turn rather than generating the prompt again
+                        picks, asked_problem = ask_for_picks(prompt_text, result)
+                        if picks:
+                            problem, picks_asked = None, True
+                        else:
+                            problem += f"; asked for it: {asked_problem}"
+                if problem is None and link_prompts:
+                    # which listed pages the prompt attaches, and whether that is allowed
+                    attached, problem = attached_pages.choose(prompt_text, sample["pages_offered"])
+                    unread = [r["url"] for r in attached if link_cache.canonical(r["url"]) not in result["pages_read"]]
+                    if problem is None and unread:
+                        problem = f"the prompt attaches a page the model did not read ({unread[0]})"
                 if problem:
                     hosts = ",".join(sorted(result["providers"])) or "server"
                     problem += f" (from {hosts}, ${result['cost']:.3f} spent)"
             if problem is None:
                 break
             attempt += 1
-        prompt_text = THINK_RE.sub("", result["content"]).strip()
         reasoning_summary = "\n\n".join(
             p.strip() for p in result["reasoning_parts"] if p.strip()
         )
@@ -805,6 +892,9 @@ def main():
         if LINK_CACHE is not None:
             # how many of the fetches the link cache answered
             metadata["web_fetches_cached"] = result["cached_fetches"]
+        if args.web_tools:
+            metadata["web_search_queries"] = result["search_queries"]
+            metadata["web_fetch_urls"] = result["fetch_urls"]
         metadata["input_tokens"] = result["input_tokens"]
         metadata["output_tokens"] = result["output_tokens"]
         if openrouter:
@@ -821,6 +911,10 @@ def main():
                 for record in records
                 if link_cache.canonical(record["url"]) in result["pages_read"]
             ]
+        if picks:
+            metadata.update(picks)
+            if picks_asked:
+                metadata["picks_from_follow_up"] = True
         metadata["reasoning_summary"] = reasoning_summary or None
         metadata["generated_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds"
@@ -828,8 +922,10 @@ def main():
         out_path.with_suffix(".meta.yaml").write_text(
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
-        offered = " / ".join(sample["task_types_offered"])
+        offered = picks["task_type_chosen"] if picks else " / ".join(sample["task_types_offered"])
         extras = ", ".join(sample["additional_instructions"]) or "none"
+        if picks_asked:
+            extras += "; picks asked for after the prompt"
         if link_prompts:
             n = len(attached)
             extras += f"; {n} page{'s' if n > 1 else ''} attached, {len(result['pages_read'])} read"

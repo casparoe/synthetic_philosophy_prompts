@@ -6,7 +6,12 @@ are submitted as message batches, which are processed server-side at half
 price. A batch request can't be resumed mid-turn, so responses that stop
 with pause_turn (common with web tools) are continued in follow-up batches,
 up to 5 rounds total; requests that error transiently or expire are
-resubmitted once.
+resubmitted once. A reply without a valid line recording the domain and task
+type picked (prompt.j2 asks for one from 2026-11-07 on; see
+meta_prompt/assemble.split_choice_line) is generated again from scratch in the
+next round, once; the line is taken off the saved prompt and the picks go into
+the sidecar (domains_chosen, task_type_chosen), as do the queries of the web
+searches (web_search_queries) and the URLs fetched (web_fetch_urls).
 
 The script only polls between submissions, and all API calls are retried
 on transient failures (laptop sleep/wake cycles break connections). If the
@@ -44,6 +49,7 @@ from generate_prompt import (  # noqa: E402
     extract_output,
     next_output_path,
     uses_legacy_api,
+    web_tool_log,
 )
 
 MAX_ROUNDS = 5
@@ -290,10 +296,18 @@ def main():
         tools = LEGACY_WEB_TOOLS if legacy else WEB_TOOLS
 
     def finalize(cid, state):
+        """Write the prompt and its sidecar. Returns "written", "skipped", or
+        "redo" (the reply lacks a valid line recording the picks)."""
         prompt_text, reasoning_summary, tool_calls = extract_output(state["blocks"])
         if not prompt_text:
             print(f"warning: {cid} produced no prompt text, skipping", file=sys.stderr)
-            return
+            return "skipped"
+        picks = None
+        if assemble.asks_for_choice_line(state["messages"][0]["content"]):
+            prompt_text, picks, problem = assemble.split_choice_line(prompt_text, samples[cid])
+            if problem:
+                print(f"warning: {cid}: {problem}", file=sys.stderr)
+                return "redo"
         out_path = next_output_path(batch_dir)
         out_path.write_text(prompt_text + "\n")
         metadata = {
@@ -303,15 +317,23 @@ def main():
             "effort": effort,
             "web_searches": tool_calls.count("web_search"),
             "web_fetches": tool_calls.count("web_fetch"),
-            "input_tokens": state["input_tokens"],
-            "output_tokens": state["output_tokens"],
-            **samples[cid],
-            "reasoning_summary": reasoning_summary or None,
-            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+        if web_tools_on:
+            metadata["web_search_queries"], metadata["web_fetch_urls"] = web_tool_log(state["blocks"])
+        metadata.update(
+            {
+                "input_tokens": state["input_tokens"],
+                "output_tokens": state["output_tokens"],
+                **samples[cid],
+                **(picks or {}),
+                "reasoning_summary": reasoning_summary or None,
+                "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            }
+        )
         out_path.with_suffix(".meta.yaml").write_text(
             yaml.safe_dump(metadata, sort_keys=False, allow_unicode=True)
         )
+        return "written"
 
     finalized = skipped = 0
     for round_no in range(start_round, MAX_ROUNDS + 1):
@@ -381,9 +403,27 @@ def main():
                     )
                     next_pending[cid] = state
                 elif message.stop_reason == "end_turn":
-                    finalize(cid, state)
+                    status = finalize(cid, state)
+                    if status == "redo" and round_no < MAX_ROUNDS and not state.get("redone"):
+                        # generated again from scratch in the next round, once; the
+                        # sidecar's token counts are those of the generation it keeps
+                        state.update(
+                            messages=state["messages"][:1],
+                            blocks=[],
+                            input_tokens=0,
+                            output_tokens=0,
+                            est_bytes=len(state["messages"][0]["content"].encode()) + 2000,
+                            redone=True,
+                        )
+                        next_pending[cid] = state
+                        continue
                     state["blocks"] = []  # release memory; 10k-scale rounds add up
-                    finalized += 1
+                    if status == "written":
+                        finalized += 1
+                    else:
+                        if status == "redo":
+                            print(f"warning: {cid} still lacks a valid line recording the picks, skipping", file=sys.stderr)
+                        skipped += 1
                 else:
                     print(
                         f"warning: {cid} stop_reason={message.stop_reason!r}, skipping",
